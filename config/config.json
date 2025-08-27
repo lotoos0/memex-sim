@@ -1,0 +1,41 @@
+{
+  "startPrice": 0.05,
+  "initial": { 
+    "price": 5200, 
+    "liquidityK": 1200, 
+    "supply": 420000, 
+    "feesBps": 30, 
+    "bondingCurvePct": 12 
+  },
+
+  "volume": {
+    "base": 120,
+    "sigmaScale": 2500,
+    "retScale": 3000,
+    "ewmaAlpha": 1,
+    "noiseStd": 0.2,
+    "min": 5,
+    "max": 50000
+  },
+
+  "regimes": {
+    "bull":     { "mu": 0.0006,  "sigma": 0.010, "lambda": 0.025, "kappa": 0.021, "eventRate": 0.05 },
+    "bear":     { "mu": -0.0006, "sigma": 0.011, "lambda": 0.024, "kappa": 0.021, "eventRate": 0.04 },
+    "range":    { "mu": 0.0000,  "sigma": 0.015, "lambda": 0.030, "kappa": 0.020, "eventRate": 0.03 },
+    "mania":    { "mu": 0.0030,  "sigma": 0.040, "lambda": 0.120, "kappa": 0.050, "eventRate": 0.09 },
+    "rugRisk":  { "mu": -0.0020, "sigma": 0.050, "lambda": 0.200, "kappa": 0.080, "eventRate": 0.06 }
+  },
+  "transitions": {
+    "bull":    [ { "to": "bull", "p": 0.88 }, { "to": "range", "p": 0.08 }, { "to": "bear", "p": 0.02 }, { "to": "mania", "p": 0.02 } ],
+    "bear":    [ { "to": "bear", "p": 0.88 }, { "to": "range", "p": 0.08 }, { "to": "bull", "p": 0.02 }, { "to": "rugRisk", "p": 0.02 } ],
+    "range":   [ { "to": "range", "p": 0.85 }, { "to": "bull", "p": 0.07 }, { "to": "bear", "p": 0.07 }, { "to": "mania", "p": 0.01 } ],
+    "mania":   [ { "to": "mania", "p": 0.90 }, { "to": "bull", "p": 0.06 }, { "to": "range", "p": 0.03 }, { "to": "rugRisk", "p": 0.01 } ],
+    "rugRisk": [ { "to": "rugRisk", "p": 0.90 }, { "to": "bear", "p": 0.06 }, { "to": "range", "p": 0.03 }, { "to": "bull", "p": 0.01 } ]
+  },
+  "transitionCheckSec": 30,
+  "eventDefs": {
+    "CT_Hype":         { "impactMean": 0.08,  "impactStd": 0.05, "volBoost": 1.8, "muBoost": 0.0020, "halfLifeSec": 45 },
+    "Dev_Rug_Rumor":   { "impactMean": -0.12, "impactStd": 0.07, "volBoost": 1.5, "muBoost": -0.0025, "halfLifeSec": 60 },
+    "Listing_Tier3":   { "impactMean": 0.05,  "impactStd": 0.03, "volBoost": 1.4, "muBoost": 0.0015, "halfLifeSec": 50 }
+  }
+}

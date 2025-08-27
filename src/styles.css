@@ -1,0 +1,246 @@
+:root{ --bg0:#0b0f14; --bg1:#0f141a; --grid:#1b222c; --text:#c7d1db; --up:#2ecc71; --down:#e74c3c; --muted:#6b7a8a; }
+*{box-sizing:border-box}
+html,body,#root,#app{height:100%; margin:0}
+#app{display:flex; flex-direction:column; background:var(--bg0); color:var(--text); font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial}
+
+/* topbar */
+#topbar{display:flex; gap:18px; align-items:center; padding:10px 14px; background:var(--bg1); border-bottom:1px solid var(--grid)}
+.metric{display:flex; gap:6px; align-items:baseline}
+.metric span{color:var(--muted); font-size:12px}
+#topbar button{background:#141b23; color:var(--text); border:1px solid var(--grid); padding:4px 10px; border-radius:6px; cursor:pointer}
+
+/* main layout 3 kolumny + dolny panel */
+#main{
+  flex:1; display:grid; min-height:0;
+  grid-template-columns: 48px minmax(0,1fr) 340px;
+  grid-template-rows: 1fr 220px;
+  grid-template-areas:
+    "rail chart sidebar"
+    "bottom bottom sidebar";
+  gap:10px; padding:10px;
+}
+#rail{grid-area:rail; border:1px solid var(--grid); border-radius:8px; background:var(--bg1); display:flex}
+.toolcol{display:flex; flex-direction:column; width:100%}
+.toolcol button{height:40px; border:0; border-bottom:1px solid var(--grid); background:#0d1319; color:var(--text); cursor:pointer}
+.toolcol button:hover{filter:brightness(1.1)}
+
+#chart-wrap{grid-area:chart; min-width:0}
+#chart{width:100%; height:100%; border:1px solid var(--grid); border-radius:8px; background:var(--bg1)}
+
+#sidebar{grid-area:sidebar; display:flex; flex-direction:column; gap:12px}
+#sidebar > section#controls{display:flex; flex-direction:column; gap:10px; padding:10px; border:1px solid var(--grid); border-radius:8px; background:var(--bg1)}
+#controls .row{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+#controls label{min-width:96px; color:var(--muted)}
+#controls button{background:#141b23; color:var(--text); border:1px solid var(--grid); padding:6px 10px; border-radius:6px; cursor:pointer}
+#controls input[type="number"]{background:#0c1117; color:var(--text); border:1px solid var(--grid); padding:6px 8px; border-radius:6px; min-width:100px}
+small{color:var(--muted)}
+
+/* bottom panel */
+#bottom{grid-area:bottom; min-height:0}
+#bottom .bottom{height:100%; border:1px solid var(--grid); border-radius:8px; background:var(--bg1); display:flex; flex-direction:column; overflow:hidden}
+#bottom .tabbar{display:flex; gap:8px; padding:8px; border-bottom:1px solid var(--grid); background:#0d1319}
+#bottom .tabbar button{background:#141b23; color:var(--text); border:1px solid var(--grid); padding:4px 10px; border-radius:6px; cursor:pointer}
+#bottom .tabbar button.on{background:#1a2330}
+#bottom .grid{width:100%; border-collapse:collapse; font-size:12px}
+#bottom .grid th,#bottom .grid td{border-bottom:1px solid #121820; padding:6px 8px; text-align:left}
+#bottom .grid tbody{display:block; overflow:auto; height:160px}
+#bottom .grid thead, #bottom .grid tr{display:table; width:100%; table-layout:fixed}
+.up{color:var(--up)} .down{color:var(--down)} .muted{color:var(--muted)}
+
+/* context menu on chart */
+#chart .ctx-menu{
+  position:absolute; z-index:200; display:none;
+  min-width:160px; padding:6px; border:1px solid var(--grid);
+  border-radius:6px; background:#0f141a; box-shadow:0 2px 12px rgba(0,0,0,.4);
+}
+#chart .ctx-menu button{
+  width:100%; text-align:left; background:#141b23; color:var(--text);
+  border:1px solid #141b23; padding:6px 8px; border-radius:4px; cursor:pointer; margin:2px 0;
+}
+#chart .ctx-menu hr{ border:none; border-top:1px solid #1b222c; margin:6px 0 }
+#chart .ctx-menu button:hover{ filter:brightness(1.08) }
+
+#bottom .tabbar button{background:#141b23; color:var(--text); border:1px solid var(--grid); padding:4px 10px; border-radius:6px; cursor:pointer}
+
+
+/*DD EE */
+
+/* ==== Axiom-like cosmetics ==== */
+.panel.ax{background:#0e1319;border:1px solid #1a2330;border-radius:12px;padding:12px}
+.panel.ax .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding-bottom:8px;border-bottom:1px solid #1a2330;margin-bottom:10px}
+.panel.ax .kpis span{color:#6b7a8a;font-size:11px}
+.panel.ax .kpis b{font-weight:700}
+
+.seg.ax{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.pill{border-radius:10px}
+.seg.ax .pill{flex:1;padding:10px 12px;border:1px solid #1a2330;background:#101821;color:#c7d1db;cursor:pointer}
+.seg.ax .pill.buy.on{background:#113422;border-color:#113422;color:#2ecc71}
+.seg.ax .pill.sell.on{background:#3a1c1c;border-color:#3a1c1c;color:#e74c3c}
+.seg.ax .drop{width:36px;height:36px;border-radius:8px;border:1px solid #1a2330;background:#101821;color:#c7d1db}
+
+.tabs.ax{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.tabs.ax button{padding:6px 10px;border-radius:8px;border:1px solid #1a2330;background:#101821;color:#c7d1db;cursor:pointer}
+.tabs.ax button.on{background:#16202c}
+.tabs.ax .mini{width:30px;height:30px;border-radius:6px;border:1px solid #1a2330;background:#101821;color:#c7d1db}
+.tabs.ax .spacer{flex:1}
+
+.field.ax label{display:block;color:#6b7a8a;font-size:11px;margin:4px 0}
+.field.ax .input.ax{display:flex;gap:8px;align-items:center}
+.field.ax .input.ax input{flex:1;background:#0b1117;color:#c7d1db;border:1px solid #1a2330;border-radius:10px;padding:10px}
+.field.ax .input.ax .unit{width:36px;height:36px;border-radius:8px;border:1px solid #1a2330;background:#101821;color:#c7d1db}
+.chips.ax{display:flex;gap:6px;margin:8px 0 0}
+.chips.ax button{background:#101821;border:1px solid #1a2330;color:#c7d1db;padding:6px 8px;border-radius:8px;cursor:pointer}
+.chips.ax .unit{width:36px;height:30px;border-radius:6px;border:1px solid #1a2330;background:#101821;color:#c7d1db}
+.row.ax{display:flex;gap:10px;align-items:center;margin-top:6px}
+.row.ax .right{margin-left:auto}
+.row.ax .warn{color:#e79a3c}
+
+.checkbox.ax{display:flex;align-items:center;gap:8px;color:#c7d1db;margin:8px 0}
+.checkbox.ax input{accent-color:#2ecc71}
+
+.primary.big{width:100%;padding:14px;border:0;margin:8px 0 10px;font-weight:800}
+.primary.pill{border-radius:16px}
+.primary.buy{background:#2ecc71;color:#0b0f14}
+.primary.sell{background:#e74c3c;color:#0b0f14}
+.primary .sub{display:block;font-size:12px;opacity:.9}
+
+.mini-kpis.ax{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:6px 0 8px}
+.mini-kpis.ax span{color:#6b7a8a;font-size:11px}
+
+.presets.ax{display:flex;gap:6px;border-top:1px solid #1a2330;padding-top:8px;margin-top:6px}
+.presets.ax button{background:#101821;border:1px solid #1a2330;color:#c7d1db;padding:6px 10px;border-radius:8px}
+.presets.ax button.on{background:#16202c}
+
+.cards.ax{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.cards.ax.small{grid-template-columns:repeat(3,1fr)}
+.card{border:1px solid #1a2330;background:#0b1117;border-radius:10px;padding:10px}
+.card .k{font-weight:800}
+.card .t{color:#6b7a8a;font-size:12px}
+.card.good .k{color:#2ecc71}
+.card.warn .k{color:#e74c3c}
+
+.toggle{font-size:12px;color:#6b7a8a}
+.chip{background:#101821;border:1px solid #1a2330;color:#c7d1db;padding:4px 8px;border-radius:8px;cursor:pointer}
+.error{margin-top:8px;color:#e74c3c;font-size:12px}
+
+/* ==== polish Axiom look ==== */
+/* header kpis spacing */
+.panel.ax .kpis{gap:10px}
+.panel.ax .kpis b{font-weight:800; letter-spacing:.2px}
+
+/* segmented Buy/Sell */
+.seg.ax .pill{
+  transition:filter .12s ease, background .12s ease, border-color .12s ease;
+}
+.seg.ax .pill.buy.on{background:#0f2e1f;border-color:#13412b;box-shadow:inset 0 0 0 1px #1f5a3d}
+.seg.ax .pill.sell.on{background:#3a1b1b;border-color:#5a2424;box-shadow:inset 0 0 0 1px #6b2a2a}
+.seg.ax .pill:hover{filter:brightness(1.08)}
+.seg.ax .drop{background:#111a23}
+
+/* tabs */
+.tabs.ax button{min-width:72px}
+.tabs.ax button.on{
+  background:#16202c;
+  box-shadow:inset 0 -2px 0 0 #2ecc71;
+}
+
+/* amount field + chips */
+.field.ax .input.ax input{
+  height:40px; font-weight:600; letter-spacing:.2px;
+}
+.field.ax .input.ax .unit{height:40px}
+.chips.ax button{
+  padding:6px 10px; border-radius:10px; font-weight:600;
+}
+.chips.ax button:hover{filter:brightness(1.08)}
+.row.ax .muted{color:#93a1b3}
+.row.ax .warn{color:#f0a94b}
+
+/* checkbox row */
+.checkbox.ax{padding:6px 2px}
+.checkbox.ax span{color:#c7d1db}
+
+/* primary CTA – zielony „gumowy” przycisk */
+.primary.big{padding:16px 18px; font-size:15px; letter-spacing:.3px}
+.primary.buy{
+  background:linear-gradient(180deg,#2fd57a 0%, #26be69 100%);
+  color:#08130d;
+}
+.primary.sell{
+  background:linear-gradient(180deg,#f06464 0%, #e24b4b 100%);
+  color:#140808;
+}
+.primary.elev{
+  box-shadow:
+    inset 0 0 0 1px rgba(26,35,48,.8),
+    0 6px 18px rgba(46,204,113,.25);
+}
+.primary.elev:active{transform:translateY(1px)}
+.primary .sub{opacity:.95}
+
+/* mini KPIs */
+.mini-kpis.ax b{font-weight:800}
+.mini-kpis.ax .up{color:#2ecc71}
+.mini-kpis.ax .down{color:#e74c3c}
+
+/* presets row */
+.presets.ax{gap:8px}
+.presets.ax button{border-radius:10px; font-weight:600}
+.presets.ax button.on{background:#1c2838; box-shadow:inset 0 0 0 1px #243244}
+
+/* cards */
+.cards.ax{gap:10px}
+.card{border-radius:12px; box-shadow:inset 0 0 0 1px #182230}
+.card .k{font-size:14px}
+.card .t{font-size:11.5px}
+.card.good{box-shadow:inset 0 0 0 1px rgba(46,204,113,.35)}
+.card.warn{box-shadow:inset 0 0 0 1px rgba(231,76,60,.35)}
+
+/* toggles + close chips */
+.toggle input{accent-color:#2ecc71}
+.chip{padding:6px 10px; border-radius:10px; font-weight:600}
+
+
+/* Chart topbar like TV */
+#chart-wrap{display:flex; flex-direction:column; gap:6px; min-height:0}
+.chart-topbar{
+  display:flex; align-items:center; gap:10px;
+  padding:6px 8px; background:#0e1319; border:1px solid var(--grid); border-radius:8px;
+}
+.chart-topbar .group{display:flex; gap:6px}
+.chart-topbar .sep{flex:0 0 1px; height:20px; background:#1b222c; margin:0 4px}
+.chart-topbar button{
+  padding:6px 10px; border:1px solid #1a2330; background:#101821; color:#c7d1db;
+  border-radius:8px; cursor:pointer; font-size:12px;
+}
+.chart-topbar button.on{background:#16202c; box-shadow:inset 0 -2px 0 0 #2ecc71}
+#chart{flex:1}
+
+/* kontener nie ucina dzieci */
+#controls .field .input.limit { 
+  overflow: visible; 
+  gap: 8px;
+}
+
+/* pozwól przyciskom rosnąć do treści */
+#controls .field .input .unit,
+#controls .field .input .unit.btn {
+  width: auto;            /* kasuje ewentualną szerokość stałą */
+  min-width: 64px;        /* tyle, by "@Last" weszło */
+  padding: 0 12px;
+  height: 32px;
+  line-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  box-sizing: border-box;
+  font-size: 12px;        /* opcjonalnie ciaśniej */
+}
+
+/* węższe pole, żeby zrobić miejsce na przyciski */
+#controls .field .input.limit input {
+  flex: 0 0 160px;        /* dostosuj 150–180px wg layoutu */
+  max-width: 160px;
+}
+
