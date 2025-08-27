@@ -1,8 +1,7 @@
-import type { Order, RiskLimits, Side, Position } from '../store/tradingStore';
+import type { Order, RiskLimits, Position } from '../store/tradingStore';
 
 export function validateRisk(o: Order, lastPrice: number, risk: RiskLimits, pos?: Position): { ok: boolean; reason?: string } {
   if (o.qty <= 0) return { ok: false, reason: 'qty<=0' };
-  const px = o.price ?? lastPrice;
   const slPct = Math.abs(o.slPct ?? 0.01);
   const riskUsd = o.qty * slPct; // qty w USDT, uproszczone
   if (riskUsd > risk.maxRiskUsd) return { ok: false, reason: `risk>${risk.maxRiskUsd}` };

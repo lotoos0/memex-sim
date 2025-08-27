@@ -1,7 +1,13 @@
 import { useMemo, useEffect, useRef } from 'react';
 import {
   createChart,
-  CandlestickSeries, BarSeries, LineSeries, AreaSeries, BaselineSeries, HistogramSeries,
+  CandlestickSeries, 
+  BarSeries, 
+  LineSeries,
+  AreaSeries,
+  BaselineSeries, 
+  HistogramSeries,
+  MouseEventParams,
   type IChartApi, type UTCTimestamp, type ISeriesApi, type IPriceLine,
 } from 'lightweight-charts';
 import { useTradingStore } from '../store/tradingStore';
@@ -116,13 +122,13 @@ export default function Chart() {
     const ch = api.current;
     if (type === 'candles') return ch.addSeries(CandlestickSeries, {
       upColor:'#2ecc71',downColor:'#e74c3c',borderUpColor:'#2ecc71',borderDownColor:'#e74c3c',wickUpColor:'#2ecc71',wickDownColor:'#e74c3c',
-    } as any);
+    });
     if (type === 'bars') return ch.addSeries(BarSeries, {
       upColor:'#2ecc71',downColor:'#e74c3c', thinBars:false,
-    } as any);
-    if (type === 'line') return ch.addSeries(LineSeries, { lineWidth:2 } as any);
-    if (type === 'area') return ch.addSeries(AreaSeries, { lineWidth:2 } as any);
-    return ch.addSeries(BaselineSeries, { baseValue: { type:'price', price: 0 } } as any);
+    });
+    if (type === 'line') return ch.addSeries(LineSeries, { lineWidth:2 });
+    if (type === 'area') return ch.addSeries(AreaSeries, { lineWidth:2 });
+    return ch.addSeries(BaselineSeries, { baseValue: { type:'price', price: 0 } });
   }
 
   // przeliczanie ceny <-> wyświetlanie wg metryki
@@ -174,12 +180,12 @@ export default function Chart() {
 
     sVol.current = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' }, priceScaleId: '', color: '#6b7a8a',
-    } as any);
+    });
     chart.priceScale('')?.applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, borderColor: '#1b222c' });
 
     // overlay lines
-    sSMA20.current = chart.addSeries(LineSeries, { lineWidth:1 } as any);
-    sSMA50.current = chart.addSeries(LineSeries, { lineWidth:1 } as any);
+    sSMA20.current = chart.addSeries(LineSeries, { lineWidth:1 });
+    sSMA50.current = chart.addSeries(LineSeries, { lineWidth:1 });
 
     // resize
     const ro = new ResizeObserver(() => {
@@ -205,19 +211,19 @@ export default function Chart() {
     sPrice.current = createPrice(chartType);
 
     // 3) przemapuj całe dane świec z bieżącym mnożnikiem
-    if (sPrice.current) (sPrice.current as any).setData(mappedCandles);
+    if (sPrice.current) sPrice.current.setData(mappedCandles);
     api.current?.timeScale().fitContent();
 
     // 4) przerysuj SMA (jeśli używasz)
-    if (sSMA20.current) (sSMA20.current as any).setData(showSMA20 ? sma(candles, 20) : []);
-    if (sSMA50.current) (sSMA50.current as any).setData(showSMA50 ? sma(candles, 50) : []);
+    if (sSMA20.current) sSMA20.current.setData(showSMA20 ? sma(candles, 20) : []);
+    if (sSMA50.current) sSMA50.current.setData(showSMA50 ? sma(candles, 50) : []);
 
 
     // 5) zrestartuj linie (last, ghost, entry/sl/tp)
-    if (priceLine.current && sPrice.current) { (sPrice.current as any).removePriceLine(priceLine.current); priceLine.current = null; }
-    if (ghostLine.current && sPrice.current) { (sPrice.current as any).removePriceLine(ghostLine.current); ghostLine.current = null; }
+    if (priceLine.current && sPrice.current) { sPrice.current.removePriceLine(priceLine.current); priceLine.current = null; }
+    if (ghostLine.current && sPrice.current) { sPrice.current.removePriceLine(ghostLine.current); ghostLine.current = null; }
     if (limitLine.current && sPrice.current) {
-      (sPrice.current as any).removePriceLine(limitLine.current);
+      sPrice.current.removePriceLine(limitLine.current);
       limitLine.current = null;
     }
 
@@ -225,12 +231,12 @@ export default function Chart() {
     const f = (metric === 'price') ? 1 : supply;
     if (sPrice.current) {
       const lp = lastPrice || 0;
-      priceLine.current = (sPrice.current as any).createPriceLine({
+      priceLine.current = sPrice.current.createPriceLine({
         price: lp * f, color:'#6b7a8a', lineWidth:1, axisLabelVisible:true,
         title: '⏱ ' + fmt(tfLeft) + ' / ' + (tfSec || 1) + 's',
       });
       if (ghost && ghost.price) {
-        ghostLine.current = (sPrice.current as any).createPriceLine({
+        ghostLine.current = sPrice.current.createPriceLine({
           price: ghost.price * f, color:'#6b7a8a', lineWidth:1, axisLabelVisible:true, title:'Ghost',
         });
       }
@@ -250,14 +256,14 @@ export default function Chart() {
 
     // cena / mcap z mappedCandles
     if (chartType === 'candles' || chartType === 'bars') {
-      (sPrice.current as any).setData(
+      sPrice.current.setData(
         mappedCandles.map(c => ({
           time: c.time,
           open: c.open, high: c.high, low: c.low, close: c.close,
         }))
       );
     } else {
-      (sPrice.current as any).setData(
+      sPrice.current.setData(
         mappedCandles.map(c => ({ time: c.time, value: c.close }))
       );
     }
@@ -269,7 +275,7 @@ export default function Chart() {
     }
 
     // wolumen bez zmian
-    (sVol.current as any).setData(
+    sVol.current.setData(
       mappedCandles.map(c => ({
         time: c.time,
         value: c.vol,
@@ -278,8 +284,8 @@ export default function Chart() {
     );
 
     // SMA licz z oryginalnych świec, mnożenie robi sma()
-    if (sSMA20.current) (sSMA20.current as any).setData(showSMA20 ? sma(candles, 20) : []);
-    if (sSMA50.current) (sSMA50.current as any).setData(showSMA50 ? sma(candles, 50) : []);
+    if (sSMA20.current) sSMA20.current.setData(showSMA20 ? sma(candles, 20) : []);
+    if (sSMA50.current) sSMA50.current.setData(showSMA50 ? sma(candles, 50) : []);
 
     if (!didInitialFit.current && candles.length > 5) {
       fitBoth();
@@ -293,8 +299,8 @@ export default function Chart() {
   useEffect(() => {
     if (!sPrice.current) return;
     const f = metric === 'price' ? 1 : supply;
-    if (priceLine.current) (sPrice.current as any).removePriceLine(priceLine.current);
-    priceLine.current = (sPrice.current as any).createPriceLine({
+    if (priceLine.current) sPrice.current.removePriceLine(priceLine.current);
+    priceLine.current = sPrice.current.createPriceLine({
       price: (lastPrice || 0) * f,
       color:'#6b7a8a', lineWidth:1, axisLabelVisible:true,
       title:'⏱ ' + fmt(tfLeft) + ' / ' + (tfSec || 1) + 's',
@@ -305,9 +311,9 @@ export default function Chart() {
   useEffect(() => {
     if (!sPrice.current) return;
     const f = metric === 'price' ? 1 : supply;
-    if (ghostLine.current) (sPrice.current as any).removePriceLine(ghostLine.current);
+    if (ghostLine.current) sPrice.current.removePriceLine(ghostLine.current);
     if (ghost?.price)
-      ghostLine.current = (sPrice.current as any).createPriceLine({
+      ghostLine.current = sPrice.current.createPriceLine({
         price: ghost.price * f, color:'#6b7a8a', lineWidth:1, axisLabelVisible:true, title:'Ghost'
       });
   }, [ghost?.price, metric, supply]);
@@ -315,7 +321,7 @@ export default function Chart() {
   // limit order line
   useEffect(() => {
     if (!sPrice.current) return;
-    const sp = sPrice.current as any;
+    const sp = sPrice.current;
 
     // usuń starą
     if (limitLine.current) { sp.removePriceLine(limitLine.current); limitLine.current = null; }
@@ -337,7 +343,7 @@ export default function Chart() {
   // Rysowanie i aktualizacja linii LIMIT 
   useEffect(() => {
     if (!sPrice.current) return;
-    const sp = sPrice.current as any;
+    const sp = sPrice.current;
     // usuń poprzednią
     if (limitLine.current) { sp.removePriceLine(limitLine.current); limitLine.current = null; }
     // rysuj tylko gdy LIMIT on + target jest
@@ -356,7 +362,7 @@ export default function Chart() {
   // SL/TP lines for current position
   useEffect(() => {
     if (!sPrice.current) return;
-      const sp = sPrice.current as any;
+      const sp = sPrice.current;
 
     // znajdź pozycję dla symbolu
     const pos = positions.find(p => p.symbol === symbol);
@@ -398,14 +404,14 @@ export default function Chart() {
     function fitBoth() {
     if (!api.current || !sPrice.current) return;
     api.current.timeScale().fitContent();                    // X
-    (sPrice.current as any).priceScale().applyOptions({      // Y
+    sPrice.current.priceScale().applyOptions({      // Y
      autoScale: true,
     });
   }
 
   useEffect(() => {
     if (!sPrice.current) return;
-    const sp = sPrice.current as any;
+    const sp = sPrice.current;
     if (plEntry.current) sp.removePriceLine(plEntry.current);
     if (plSL.current) sp.removePriceLine(plSL.current);
     if (plTP.current) sp.removePriceLine(plTP.current);
@@ -424,14 +430,17 @@ export default function Chart() {
   useEffect(() => {
     if (!api.current || !sPrice.current) return;
     const chart = api.current;
-    const onClick = (param: any) => {
+    const onClick = (param: MouseEventParams) => {
       if (!param?.point) return;
-      const display = (sPrice.current as any).coordinateToPrice(param.point.y);
+      if (!sPrice.current) return;
+      const display = sPrice.current.coordinateToPrice(param.point.y);
       if (display == null) return;
       const px = displayToPx(display as number, metric, supply);
 
-      if (param.event?.altKey)   { setSLTP({ sl: px }); return; }
-      if (param.event?.shiftKey) { setSLTP({ tp: px }); return; }
+      // Use the global MouseEvent from window.event
+      const mouseEvent = window.event as MouseEvent | undefined;
+      if (mouseEvent?.altKey)   { setSLTP({ sl: px }); return; }
+      if (mouseEvent?.shiftKey) { setSLTP({ tp: px }); return; }
       if (ordType === 'limit') { setLT(px); }
     };
     chart.subscribeClick(onClick);
@@ -445,16 +454,18 @@ export default function Chart() {
     if (!el || !api.current || !sPrice.current) return; 
 
     const hitPx = 12; // większy hitbox
-    const sp: any = sPrice.current; 
+    const sp: AnyPriceSeries | null = sPrice.current; 
 
     function priceOfLine(line: IPriceLine | null): number | undefined {
       if (!line) return undefined;
-      const opt = (line as any).options?.() ?? (line as any)._options; // lib różnie expose'uje
+      // Use IPriceLine type and access options via the public API
+      const opt = (typeof line.options === 'function' ? line.options() : (line as IPriceLine & { _options?: { price?: number } })._options);
       return opt?.price as number | undefined;
     }
     function nearLineY(line: IPriceLine | null, y: number) {
       const price = priceOfLine(line);
       if (price == null) return false;
+      if (!sp) return false;
       const yy = sp.priceToCoordinate(price);
       return yy != null && Math.abs(yy - y) <= hitPx;
     } 
@@ -506,9 +517,9 @@ export default function Chart() {
     window.addEventListener('mouseup', endDrag, { passive: true }); 
 
     return () => {
-      el.removeEventListener('mousedown', onDown as any);
-      window.removeEventListener('mousemove', onMove as any);
-      window.removeEventListener('mouseup', endDrag as any);
+      el.removeEventListener('mousedown', onDown);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', endDrag);
     };
   }, [metric, supply, setLT, setSLTP]);
 

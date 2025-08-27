@@ -183,7 +183,7 @@ export const useTradingStore = create<Store>((set, get) => ({
   setLimitTarget: (p) => set({ limitTarget: p }),
 
 
-  applyPreset: (_id) => ({}),
+  applyPreset: () => ({}),
 
   placeOrder: (partial) => {
     const st = get();
@@ -212,8 +212,8 @@ export const useTradingStore = create<Store>((set, get) => ({
   },
 
   cancelOrder: (id) => set((st) => {
-    var arr = st.orders.slice();
-    for (var i = 0; i < arr.length; i++) {
+    const arr = st.orders.slice();
+    for (let i = 0; i < arr.length; i++) {
       if (arr[i].id === id) { arr[i] = { ...arr[i], status: 'canceled' }; break; }
     }
     return { orders: arr };
@@ -221,8 +221,8 @@ export const useTradingStore = create<Store>((set, get) => ({
 
   closePct: (pct) => {
     const st = get();
-    var pos: Position | undefined = undefined;
-    for (var i = 0; i < st.positions.length; i++) {
+    let pos: Position | undefined = undefined;
+    for (let i = 0; i < st.positions.length; i++) {
       if (st.positions[i].symbol === st.symbol) { pos = st.positions[i]; break; }
     }
     if (!pos || pos.qty <= 0) return;
@@ -232,8 +232,8 @@ export const useTradingStore = create<Store>((set, get) => ({
   },
 
   setSLTP: ({ sl, tp }) => set((st) => {
-    var arr = st.positions.slice();
-    for (var i = 0; i < arr.length; i++) {
+    const arr = st.positions.slice();
+    for (let i = 0; i < arr.length; i++) {
       if (arr[i].symbol === st.symbol) {
         arr[i] = { ...arr[i], sl: sl != null ? sl : arr[i].sl, tp: tp != null ? tp : arr[i].tp };
         break;
@@ -247,19 +247,19 @@ export const useTradingStore = create<Store>((set, get) => ({
     const price = tk.p;
     const feePct = st.feeBps / 10000;
 
-    var orders = st.orders.slice();
-    var trades = st.trades.slice();
-    var positions = st.positions.slice();
+    let orders = st.orders.slice();
+    let trades = st.trades.slice();
+    let positions = st.positions.slice();
 
     let positionHistory = st.positionHistory.slice();
     let posAcc: Record<string, PosAcc> = { ...st.posAcc };
 
     // fill + stop logic
-    for (var i = 0; i < orders.length; i++) {
-      var o = orders[i];
+    for (let i = 0; i < orders.length; i++) {
+      const o = orders[i];
       if (o.status !== 'new') continue;
 
-      var triggered = (o.trigger == null) || (o.side === 'buy' ? (price >= o.trigger) : (price <= o.trigger));
+      const triggered = (o.trigger == null) || (o.side === 'buy' ? (price >= o.trigger) : (price <= o.trigger));
       // market 
       if ((o.type === 'market' || o.type === 'ioc') && triggered) {
         const slipMul = o.side === 'buy' ? (1 + o.slippagePct / 100) : (1 - o.slippagePct / 100);
@@ -313,10 +313,10 @@ export const useTradingStore = create<Store>((set, get) => ({
     }
 
     // SL/TP + PnL live
-    var newPositions: Position[] = [];
-    for (var j = 0; j < positions.length; j++) {
-      var p = positions[j];
-      var closed = false;
+    const newPositions: Position[] = [];
+    for (let j = 0; j < positions.length; j++) {
+      const p = positions[j];
+      let closed = false;
       if (p.side === 'buy') {
         if (p.sl != null && price <= p.sl) closed = true;
         if (p.tp != null && price >= p.tp) closed = true;
@@ -324,15 +324,15 @@ export const useTradingStore = create<Store>((set, get) => ({
         if (p.sl != null && price >= p.sl) closed = true;
         if (p.tp != null && price <= p.tp) closed = true;
       }
-      var unreal = (p.side === 'buy' ? (price - p.entry) : (p.entry - price)) * p.qty - p.fees;
+      const unreal = (p.side === 'buy' ? (price - p.entry) : (p.entry - price)) * p.qty - p.fees;
       if (!closed) newPositions.push({ ...p, unrealized: unreal });
     }
 
     // świece
-    var candles = st.candles;
+    let candles = st.candles;
     if (maybeCandle) {
-      var mode = maybeCandle.mode;
-      var c = maybeCandle.candle;
+      const mode = maybeCandle.mode;
+      const c = maybeCandle.candle;
       if (mode === 'new') candles = candles.concat([c]).slice(-3000);
       else if (candles.length) candles = candles.slice(0, -1).concat([c]);
     }
@@ -362,36 +362,6 @@ export const useTradingStore = create<Store>((set, get) => ({
 }));
 
 /* --- pomocnicze --- */
-function applyFill(positions: Position[], symbol: string, side: Side, qty: number, price: number, fee: number): Position[] {
-  var idx = -1;
-  for (var i = 0; i < positions.length; i++) {
-    if (positions[i].symbol === symbol) { idx = i; break; }
-  }
-  if (idx === -1) {
-    return positions.concat([{ symbol, side, qty, entry: price, unrealized: 0, fees: fee }]);
-  }
-  var p = positions[idx];
-
-  if (p.side !== side) {
-    var closeQty = Math.min(p.qty, qty);
-    var remain = p.qty - closeQty;
-    var newFees = p.fees + fee;
-    if (remain <= 0) {
-      var arr = positions.slice();
-      arr.splice(idx, 1);
-      return arr;
-    }
-    var arr2 = positions.slice();
-    arr2[idx] = { ...p, qty: remain, fees: newFees };
-    return arr2;
-  }
-
-  var newQty = p.qty + qty;
-  var newEntry = (p.entry * p.qty + price * qty) / newQty;
-  var arr3 = positions.slice();
-  arr3[idx] = { ...p, qty: newQty, entry: newEntry, fees: p.fees + fee };
-  return arr3;
-}
 
 function applyFillWithRealized(
   positions: Position[],
@@ -453,7 +423,7 @@ function recordFillForHistory(
   }
   // closing against existing lots
   let remaining = qty, closedQty = 0, entryNotional = 0, exitNotional = 0;
-  let openQtyBefore = acc.lots.reduce((s,l)=>s+l.qty,0);
+  const openQtyBefore = acc.lots.reduce((s,l)=>s+l.qty,0);
   while (remaining > 1e-12 && acc.lots.length) {
     const lot = acc.lots[0];
     const use = Math.min(lot.qty, remaining);

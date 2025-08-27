@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // src/components/OrderPanel.tsx
 import { useMemo, useState, useEffect } from 'react';
 import { useTradingStore, Side, OrdType, Order, Position } from '../store/tradingStore';
@@ -5,8 +6,8 @@ import { validateRisk, rateLimit } from '../sim/risk';
 
 export default function OrderPanel() {
   // global state
-  const mode          = useTradingStore(s => s.mode);
-  const setMode       = useTradingStore(s => s.setMode);
+  //const mode          = useTradingStore(s => s.mode);
+  //const setMode       = useTradingStore(s => s.setMode);
   const reduceOnly    = useTradingStore(s => s.reduceOnly);
   const setReduceOnly = (v: boolean) => useTradingStore.setState({ reduceOnly: v });
   const lastPrice     = useTradingStore(s => s.lastPrice);
@@ -198,7 +199,7 @@ export default function OrderPanel() {
             >
               @Last
             </button>
-            <button className="unit btn" onClick={() => { setLT(NaN as any); setLimitStr(''); }}>
+            <button className="unit btn" onClick={() => { setLT(NaN); setLimitStr(''); }}>
               ×
             </button>
           </div>

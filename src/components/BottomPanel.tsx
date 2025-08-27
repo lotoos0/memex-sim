@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTradingStore, Position, Side } from '../store/tradingStore';
-import { downloadCSV, toCSV } from 'src/utils/csv';
+//import { downloadCSV, toCSV } from 'src/utils/csv';
 
 type Tab = 'positions' | 'openOrders' | 'orders' | 'posHistory';
 
@@ -15,12 +15,12 @@ function fmtPx(x: number) {
 export default function BottomPanel() {
   const [tab, setTab] = useState<Tab>('positions');
 
-  const symbol   = useTradingStore(s => s.symbol);
+  //const symbol   = useTradingStore(s => s.symbol);
   const last     = useTradingStore(s => s.lastPrice);
   const risk     = useTradingStore(s => s.risk);
   const positions= useTradingStore(s => s.positions);
   const orders   = useTradingStore(s => s.orders);
-  const trades   = useTradingStore(s => s.trades);
+  //const trades   = useTradingStore(s => s.trades);
   const realized = useTradingStore(s => s.realizedBySymbol);
   const closePct = useTradingStore(s => s.closePct);
   const place    = useTradingStore(s => s.placeOrder);

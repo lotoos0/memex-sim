@@ -45,7 +45,7 @@ export class PriceEngine {
     this.mrAnchor = this.price;
 
     // domyślne + nadpisania z config.json (pole optional: { volume: {...} })
-    const v = (cfg as any).volume || {};
+    const v = (cfg as { volume?: Partial<VolumeCfg> }).volume || {};
     this.volCfg = {
       base: 120,
       sigmaScale: 2500,
@@ -83,7 +83,7 @@ export class PriceEngine {
   nextTick(
     dtSec: number,
     effects: { muBoost: number; volBoost: number; priceJumpMul: number },
-    _nowMs: number
+    //_nowMs: number
   ): { price: number; volume: number } {
     const rCfg = this.cfg.regimes[this.regime];
     const sigmaEff = rCfg.sigma * this.volScale * effects.volBoost;
