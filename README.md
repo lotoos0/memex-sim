@@ -1,74 +1,91 @@
-<<<<<<< HEAD
 # memex-sim
-DEX trading simulator built with React + TypeScript. Features chart with random OHLC candles, pump/dump events, order panel, PnL calculation, and local persistence.
-=======
-# React + TypeScript + Vite
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Crypto trading simulator (DEX-style) built with React + TypeScript.**
+Random OHLC candles, pump/dump events, trading panel, positions, PnL, and persistent storage.
 
-Currently, two official plugins are available:
+## Demo
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+* Live: *TBD (Vercel/Netlify)*
+* GIF/screenshot: *TBD* ()
 
-## Expanding the ESLint configuration
+## Features
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+* 📈 Chart (Lightweight Charts) with volume, crosshair, OHLC tooltip
+* 📰 **Fake news events**: "CT hype", "Dev rug" → drift/volatility spikes
+* 💼 **Trading panel**: Market/Limit, preset amounts, % of balance
+* 📊 **Positions & history**: unrealized/realized PnL, order statuses
+* 💾 **Persistence**: localStorage (v1), IndexedDB planned (v2)
+* ⚙️ Settings: TF, candle type, indicators (EMA/SMMA), reset/lock autoscale
 
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Roadmap (short)
 
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
+* [x] PnL, events, persistence
+* [ ] Limit/Stop lines with drag ↔ input sync
+* [ ] SL/TP with draggable lines and PnL calculator modal
+* [ ] Partial fills, fee model (maker/taker + dex fee)
+* [ ] Leverage, IM/MM, **liq price** (gold line) and liquidation
+* [ ] IndexedDB + migrations, CSV export, sorting/filtering
+* [ ] Seed `?seed=1234` + "Replay run"
+* [ ] Hotkeys: B/S/C/R, Alt-LMB=SL, Shift-LMB=TP
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Tech Stack
+
+* **Frontend:** React, TypeScript, Vite
+* **Charting:** TradingView Lightweight Charts
+* **State:** Zustand
+* **Testing:** Vitest + Cypress (planned)
+* **CI/CD:** GitHub Actions (planned)
+* **Deploy:** Vercel / Netlify
+
+## Architecture (v1)
+
+```
+/src
+  /components    # Chart, Toolbar, TradePanel, Tables
+  /lib           # candle generator, PnL/fees utils, events
+  /store         # trading state (positions, orders, settings)
+  /hooks         # feed/interval, persistence
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Installation
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+git clone https://github.com/lotoos0/memex-sim.git
+cd memex-sim
+npm i
+npm run dev
 ```
->>>>>>> 3e1196c (Initial commit)
+
+## Scripts
+
+```bash
+npm run dev       # start dev
+npm run build     # production build
+npm run preview   # local preview
+npm run test      # tests (when added)
+```
+
+## Hotkeys (planned)
+
+* **B/S** – Buy/Sell
+* **C** – Close 100%
+* **R** – Reset View
+* **Ctrl+0** – Reset zoom
+* **Alt+LMB** – draw SL, **Shift+LMB** – draw TP
+
+## Quality & Performance
+
+* 60 FPS with 5–10k candles (worker + rAF)
+* Zustand selectors for minimal re-renders
+* Unit tests for PnL/avgPrice/liq (planned)
+
+## Contribution / Issues
+
+PRs welcome. Report bugs and feature requests in **Issues**:
+
+* bug: description + steps + screenshot
+* feature: use-case + acceptance criteria
+
+## License
+
+MIT. See `LICENSE` file.
