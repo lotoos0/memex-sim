@@ -1,4 +1,7 @@
-import { useMemo, useEffect, useRef } from 'react';
+// To fix:
+// chart zoom/pan not working
+
+import { useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   createChart,
   CandlestickSeries, 
@@ -85,6 +88,13 @@ export default function Chart() {
   // stan dragowania
   const dragging = useRef<{ kind:'limit'|'sl'|'tp'; y0:number }|null>(null);
 
+  // ostatnia metryka (żeby wykryć zmianę i wymusić fitContent)
+  const entry = pos && pos.entry;
+  const sl = pos && pos.sl;
+  const tp = pos && pos.tp;
+  const side = pos && pos.side;
+
+
 
   // przemapowane świece wg metryki
   // (przy mcap mnożymy close/open/high/low przez supply)
@@ -101,20 +111,20 @@ export default function Chart() {
   }, [candles, metric, supply]);
 
   // helpers
-  function factor() { return metric === 'price' ? 1 : supply; }
+  const factor = useCallback(() => (metric === 'price' ? 1 : supply), [metric, supply]);
 
   // prosta średnia z ostatnich len świec
-  function sma(src: Candle[], len: number) {
-    const out: { time: UTCTimestamp; value: number }[] = [];
-    const f = metric === 'price' ? 1 : supply;
-    let sum = 0;
-    for (let i = 0; i < src.length; i++) {
-      sum += src[i].close * f;
-      if (i >= len) sum -= src[i - len].close * f;
-      if (i >= len - 1) out.push({ time: src[i].time as UTCTimestamp, value: sum / len });
-    }
-    return out;
-}
+  const sma = useCallback((src: Candle[], len: number) => {
+  const out: { time: UTCTimestamp; value: number }[] = [];
+  const f = metric === 'price' ? 1 : supply;
+  let sum = 0;
+  for (let i = 0; i < src.length; i++) {
+    sum += src[i].close * f;
+    if (i >= len) sum -= src[i - len].close * f;
+    if (i >= len - 1) out.push({ time: src[i].time as UTCTimestamp, value: sum / len });
+  }
+  return out;
+}, [metric, supply]);
 
   // create price series of given type
   function createPrice(type: string): AnyPriceSeries | null {
@@ -247,7 +257,7 @@ export default function Chart() {
 
     fitBoth();
     lastMetricRef.current = metric;
-  }, [chartType, metric, supply]);   // <= ważne
+  }, [chartType, metric, supply, candles, ghost, lastPrice, mappedCandles, showSMA20, showSMA50, sma, tfLeft, tfSec ]);   // <= ważne
 
 
   // set data on updates
@@ -292,7 +302,7 @@ export default function Chart() {
       //api.current?.timeScale().fitContent();
       didInitialFit.current = true;
     }
-  }, [mappedCandles, candles, showSMA20, showSMA50, chartType, metric]);
+  }, [mappedCandles, candles, showSMA20, showSMA50, chartType, metric, sma]);
 
 
   // live price line + timer
@@ -424,7 +434,7 @@ export default function Chart() {
       if (pos.sl != null) plSL.current = sp.createPriceLine({ price: pos.sl * f, color: '#e74c3c', lineWidth: 1, title: 'SL' });
       if (pos.tp != null) plTP.current = sp.createPriceLine({ price: pos.tp * f, color: '#2ecc71', lineWidth: 1, title: 'TP' });
     }
-  }, [pos && pos.entry, pos && pos.sl, pos && pos.tp, pos && pos.side, metric, chartType]);
+  }, [entry, sl, tp, side, metric, chartType, factor, pos]);
 
   // Alt/Shift LPM → SL/TP
   useEffect(() => {
@@ -521,7 +531,7 @@ export default function Chart() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', endDrag);
     };
-  }, [metric, supply, setLT, setSLTP]);
+  }, [metric, supply, setLT, setSLTP, containerRef]);
 
 
   useEffect(() => {
@@ -533,7 +543,7 @@ export default function Chart() {
     };
     el.addEventListener('contextmenu', onCtx);
     return () => el.removeEventListener('contextmenu', onCtx);
-  }, [ordType, setLT]);
+  }, [ordType, setLT, containerRef]);
 
   // reset view
   useEffect(() => { fitBoth(); }, [resetSignal]);
