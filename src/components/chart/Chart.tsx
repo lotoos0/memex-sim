@@ -10,7 +10,7 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import { registry } from '../../tokens/registry';
+import { registry, type ChartMetric } from '../../tokens/registry';
 import type { Candle } from '../../engine/types';
 import { useTokenStore } from '../../store/tokenStore';
 import type { TokenChartEvent } from '../../chart/tokenChartEvents';
@@ -54,22 +54,15 @@ export default function Chart({ tokenId }: Props) {
   const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const markerApiRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
-  const token = useTokenStore(s => s.tokensById[tokenId]);
   const selectTokenEvents = useCallback(
     (s: ReturnType<typeof useTokenStore.getState>) => s.eventsByTokenId[tokenId] ?? EMPTY_EVENTS,
     [tokenId]
   );
   const tokenEvents = useTokenStore(selectTokenEvents);
-  const circulatingSupply = useMemo(() => {
-    if (!token) return 1_000_000_000;
-    const derived = token.lastPriceUsd > 0 ? token.mcapUsd / token.lastPriceUsd : token.supply;
-    if (!Number.isFinite(derived) || derived <= 0) return token.supply;
-    return derived;
-  }, [token]);
 
   const [tfSec, setTfSec] = useState(15);
   const [metric, setMetric] = useState<Metric>('mcap');
-  const [lastPriceUsd, setLastPriceUsd] = useState<number | null>(null);
+  const [lastMetricValue, setLastMetricValue] = useState<number | null>(null);
   const [showDisplayOptions, setShowDisplayOptions] = useState(false);
   const [displayOptions, setDisplayOptions] = useState<DisplayOptions>({
     migration: true,
@@ -81,8 +74,6 @@ export default function Chart({ tokenId }: Props) {
     () => (metric === 'mcap' ? fmtCompact : fmtPrice),
     [metric]
   );
-
-  const metricFactor = metric === 'mcap' ? circulatingSupply : 1;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -178,25 +169,24 @@ export default function Chart({ tokenId }: Props) {
 
   useEffect(() => {
     registry.setActiveTfSec(tfSec);
+    registry.setActiveMetric(metric as ChartMetric);
 
     let initialized = false;
 
-    registry.setChartCallback((candles: Candle[], priceUsd: number) => {
+    registry.setChartCallback((candles: Candle[], metricValue: number) => {
       const chart = chartRef.current;
       const cs = candleSeriesRef.current;
       const vs = volSeriesRef.current;
       if (!chart || !cs || !vs) return;
 
-      const safePrice = Number.isFinite(priceUsd) ? priceUsd : 0;
-      setLastPriceUsd(safePrice);
-
-      const f = metricFactor;
+      const safeMetricValue = Number.isFinite(metricValue) ? metricValue : 0;
+      setLastMetricValue(safeMetricValue);
       const candleData = candles.map(c => ({
         time: c.time as UTCTimestamp,
-        open: c.open * f,
-        high: c.high * f,
-        low: c.low * f,
-        close: c.close * f,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
       }));
 
       const volData = candles.map(c => ({
@@ -226,7 +216,7 @@ export default function Chart({ tokenId }: Props) {
     return () => {
       registry.setChartCallback(null);
     };
-  }, [tokenId, tfSec, metricFactor]);
+  }, [tokenId, tfSec, metric]);
 
   useEffect(() => {
     const markerApi = markerApiRef.current;
@@ -237,7 +227,7 @@ export default function Chart({ tokenId }: Props) {
     markerApi.setMarkers(markers);
   }, [tokenEvents, displayOptions]);
 
-  const lastDisplay = (lastPriceUsd ?? 0) * metricFactor;
+  const lastDisplay = lastMetricValue ?? 0;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-ax-bg">
@@ -330,7 +320,7 @@ export default function Chart({ tokenId }: Props) {
 
         <div className="h-3 w-px bg-ax-border" />
 
-        {lastPriceUsd !== null && (
+        {lastMetricValue !== null && (
           <span className="text-xs text-ax-text font-medium font-mono">
             {metric === 'mcap' ? '$' + fmtCompact(lastDisplay) : '$' + fmtPrice(lastDisplay)}
           </span>

@@ -56,6 +56,10 @@ export class TokenSim {
   private aggr15s: CandleAggregator;
   private aggr30s: CandleAggregator;
   private aggr1m: CandleAggregator;
+  private mcapAggr1s: CandleAggregator;
+  private mcapAggr15s: CandleAggregator;
+  private mcapAggr30s: CandleAggregator;
+  private mcapAggr1m: CandleAggregator;
 
   // Time tracking
   private simTimeMs = 0;
@@ -130,6 +134,10 @@ export class TokenSim {
     this.aggr15s = new CandleAggregator(15);
     this.aggr30s = new CandleAggregator(30);
     this.aggr1m = new CandleAggregator(60);
+    this.mcapAggr1s = new CandleAggregator(1);
+    this.mcapAggr15s = new CandleAggregator(15);
+    this.mcapAggr30s = new CandleAggregator(30);
+    this.mcapAggr1m = new CandleAggregator(60);
 
     const startCirculatingSupply = this.getCirculatingSupply(this.bondingProgress);
     const startPriceUsd = startMcapUsd / startCirculatingSupply;
@@ -143,6 +151,10 @@ export class TokenSim {
     this.aggr15s.pushTick(this.spawnRealMs, startPriceUsd, 0);
     this.aggr30s.pushTick(this.spawnRealMs, startPriceUsd, 0);
     this.aggr1m.pushTick(this.spawnRealMs, startPriceUsd, 0);
+    this.mcapAggr1s.pushTick(this.spawnRealMs, startMcapUsd, 0);
+    this.mcapAggr15s.pushTick(this.spawnRealMs, startMcapUsd, 0);
+    this.mcapAggr30s.pushTick(this.spawnRealMs, startMcapUsd, 0);
+    this.mcapAggr1m.pushTick(this.spawnRealMs, startMcapUsd, 0);
   }
 
   tick(fallbackRealDtSec: number): TokenChartEvent[] {
@@ -200,6 +212,7 @@ export class TokenSim {
 
     const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
     const candleTsMs = nowMs;
+    const isLaunchTick = !this.emittedInitialDevBuy;
     const devFlow = this.buildDevFlow(candleTsMs, realDtSec, effectiveBuyBias);
 
     const market = stepMarket(this.rng, {
@@ -207,14 +220,14 @@ export class TokenSim {
       priceUsd: this.lastPriceUsd,
       liquidityUsd,
       attention: this.attention,
-      baseLambda: this.baseLambda * lambdaMul,
+      baseLambda: this.baseLambda * lambdaMul * (isLaunchTick ? 0.15 : 1),
       baseTradeSizeUsd: this.baseTradeSizeUsd,
       tradeSigma: this.tradeSigma,
       driftPerSec,
       volatilityPerSqrtSec: this.baseVol * volMul,
-      buyBias: effectiveBuyBias,
+      buyBias: isLaunchTick ? Math.max(effectiveBuyBias, 0.995) : effectiveBuyBias,
       impactK: this.impactK,
-      whaleChance: this.getWhaleChance(inMigrationChaos),
+      whaleChance: isLaunchTick ? 0 : this.getWhaleChance(inMigrationChaos),
       externalFlow: devFlow?.externalFlow,
     });
 
@@ -244,6 +257,10 @@ export class TokenSim {
     this.aggr15s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
     this.aggr30s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
     this.aggr1m.pushTick(candleTsMs, priceUsd, market.volumeUsd);
+    this.mcapAggr1s.pushTick(candleTsMs, clampedMcap, market.volumeUsd);
+    this.mcapAggr15s.pushTick(candleTsMs, clampedMcap, market.volumeUsd);
+    this.mcapAggr30s.pushTick(candleTsMs, clampedMcap, market.volumeUsd);
+    this.mcapAggr1m.pushTick(candleTsMs, clampedMcap, market.volumeUsd);
 
     const events: TokenChartEvent[] = [];
     if (devFlow?.eventType) {
@@ -483,7 +500,7 @@ export class TokenSim {
   }
 
   getRuntime(): TokenRuntime {
-    const mcap = this.lastPriceUsd * this.getCirculatingSupply(this.bondingProgress);
+    const mcap = this.getLastMcapUsd();
     let vol5m = 0;
     let buys5m = 0;
     let sells5m = 0;
@@ -512,7 +529,13 @@ export class TokenSim {
     };
   }
 
-  getCandles(tfSec: number) {
+  getCandles(tfSec: number, metric: 'price' | 'mcap' = 'price') {
+    if (metric === 'mcap') {
+      if (tfSec <= 1) return this.mcapAggr1s.getSeries();
+      if (tfSec <= 15) return this.mcapAggr15s.getSeries();
+      if (tfSec <= 30) return this.mcapAggr30s.getSeries();
+      return this.mcapAggr1m.getSeries();
+    }
     if (tfSec <= 1) return this.aggr1s.getSeries();
     if (tfSec <= 15) return this.aggr15s.getSeries();
     if (tfSec <= 30) return this.aggr30s.getSeries();
@@ -523,6 +546,7 @@ export class TokenSim {
   getSimTimeMs(): number { return this.simTimeMs; }
   getSpawnRealMs(): number { return this.spawnRealMs; }
   getLastPriceUsd(): number { return this.lastPriceUsd; }
+  getLastMcapUsd(): number { return this.lastPriceUsd * this.getCirculatingSupply(this.bondingProgress); }
 
   private rollArchetype(): TokenArchetype {
     const u = this.rng.next();

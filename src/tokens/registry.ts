@@ -14,7 +14,8 @@ const MAX_FINAL          = 5;
 const MAX_MIGRATED       = 5;
 const INITIAL_TOKENS     = 12;
 
-export type ChartCallback = (candles: Candle[], priceUsd: number) => void;
+export type ChartMetric = 'mcap' | 'price';
+export type ChartCallback = (candles: Candle[], lastValue: number) => void;
 
 // ── Registry ──────────────────────────────────────────────
 class TokenRegistry {
@@ -28,6 +29,7 @@ class TokenRegistry {
   // Chart callback for active token (set by Chart component)
   private chartCb: ChartCallback | null = null;
   private activeTfSec = 60; // default 1m
+  private activeMetric: ChartMetric = 'mcap';
 
   // Track when each token rugged (real time) for cleanup
   private ruggedAt = new Map<string, number>();
@@ -60,7 +62,11 @@ class TokenRegistry {
       if (this.chartCb && activeId) {
         const sim = this.tokens.get(activeId);
         if (sim) {
-          this.chartCb(sim.getCandles(this.activeTfSec), sim.getLastPriceUsd());
+          if (this.activeMetric === 'mcap') {
+            this.chartCb(sim.getCandles(this.activeTfSec, 'mcap'), sim.getLastMcapUsd());
+          } else {
+            this.chartCb(sim.getCandles(this.activeTfSec, 'price'), sim.getLastPriceUsd());
+          }
         }
       }
     }, TICK_MS);
@@ -92,6 +98,10 @@ class TokenRegistry {
 
   setActiveTfSec(tfSec: number): void {
     this.activeTfSec = tfSec;
+  }
+
+  setActiveMetric(metric: ChartMetric): void {
+    this.activeMetric = metric;
   }
 
   getTokenSim(id: string): TokenSim | undefined {
