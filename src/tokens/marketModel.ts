@@ -14,6 +14,10 @@ export interface MarketStepInput {
   volatilityPerSqrtSec: number;
   buyBias: number;
   impactK: number;
+  whaleChance?: number;
+  whaleMinMul?: number;
+  whaleMaxMul?: number;
+  maxWhaleUsd?: number;
   externalFlow?: {
     buyBoostUsd?: number;
     sellBoostUsd?: number;
@@ -54,8 +58,16 @@ export function stepMarket(rng: RNG, input: MarketStepInput): MarketStepOutput {
   let sells = 0;
 
   const bias = clamp(input.buyBias, 0.02, 0.98);
+  const whaleChance = clamp(input.whaleChance ?? 0.05, 0, 0.95);
+  const whaleMinMul = Math.max(1, input.whaleMinMul ?? 10);
+  const whaleMaxMul = Math.max(whaleMinMul, input.whaleMaxMul ?? 80);
+  const maxWhaleUsd = Math.max(avgSize, input.maxWhaleUsd ?? avgSize * 120);
   for (let i = 0; i < tradeCount; i++) {
-    const size = logNormal(rng, muLog, sigma);
+    let size = logNormal(rng, muLog, sigma);
+    if (rng.next() < whaleChance) {
+      const mul = whaleMinMul + (whaleMaxMul - whaleMinMul) * rng.next();
+      size = Math.min(maxWhaleUsd, size * mul);
+    }
     if (rng.next() < bias) {
       buys++;
       buyFlow += size;

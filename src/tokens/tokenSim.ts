@@ -119,6 +119,7 @@ export class TokenSim {
     const regimeBuyBias = this.getRegimeBuyBias();
     const regimeVolMul = this.getRegimeVolMul();
     const regimeLambdaMul = this.getRegimeLambdaMul();
+    const inMigrationChaos = this.postMigrationChaosLeftMs > 0;
 
     if (this.regime === 'IMPULSE') this.attention = Math.min(2.8, this.attention + 0.04 * realDtSec);
     if (this.regime === 'DUMP') this.attention = Math.min(2.8, this.attention + 0.02 * realDtSec);
@@ -161,6 +162,7 @@ export class TokenSim {
       volatilityPerSqrtSec: this.baseVol * volMul,
       buyBias: effectiveBuyBias,
       impactK: this.impactK,
+      whaleChance: this.getWhaleChance(inMigrationChaos),
       externalFlow: devFlow?.externalFlow,
     });
 
@@ -291,6 +293,13 @@ export class TokenSim {
       return this.regime === 'IMPULSE' ? 0.08 : this.regime === 'DUMP' ? 0.09 : 0.03;
     }
     return this.regime === 'IMPULSE' ? 0.07 : this.regime === 'DUMP' ? 0.06 : 0.025;
+  }
+
+  private getWhaleChance(inMigrationChaos: boolean): number {
+    if (inMigrationChaos) return this.regime === 'IMPULSE' ? 0.18 : this.regime === 'DUMP' ? 0.16 : 0.1;
+    if (this.phase === 'MIGRATED') return this.regime === 'IMPULSE' ? 0.08 : this.regime === 'PAUSE' ? 0.02 : 0.05;
+    if (this.phase === 'FINAL') return this.regime === 'IMPULSE' ? 0.11 : this.regime === 'PAUSE' ? 0.03 : 0.07;
+    return this.regime === 'IMPULSE' ? 0.12 : this.regime === 'PAUSE' ? 0.03 : 0.08;
   }
 
   private buildDevFlow(candleTsMs: number, realDtSec: number, buyBias: number): {
