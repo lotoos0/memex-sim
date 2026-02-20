@@ -36,6 +36,30 @@ type ArchetypeProfile = {
   deathSpiralChance: number;
 };
 
+type CurveSwapDebug = {
+  direction: 'BUY' | 'SELL';
+  amountIn: number;
+  amountOut: number;
+  simMs: number;
+};
+
+export type CurveDebugSnapshot = {
+  phase: TokenPhase;
+  hasEnteredFinal: boolean;
+  hasMigrated: boolean;
+  progressNowPct: number;
+  rTok: number;
+  rTok0: number;
+  vTok: number;
+  vBase: number;
+  rBase: number;
+  k: number;
+  priceCurveUsd: number;
+  mcapCurveUsd: number;
+  feeBps: number;
+  lastSwap: CurveSwapDebug | null;
+};
+
 const FINAL_PROGRESS = 0.85;
 const MIGRATE_PROGRESS = 1.0;
 const CURVE_FEE_BPS = 100;
@@ -97,6 +121,7 @@ export class TokenSim {
   private curveRealBase = 0;
   private curveRealToken = 0;
   private curveInitialRealToken = 1;
+  private lastCurveSwap: CurveSwapDebug | null = null;
   private archetype: TokenArchetype = 'HEALTHY';
   private archetypeProfile!: ArchetypeProfile;
 
@@ -237,10 +262,28 @@ export class TokenSim {
     let priceUsd: number;
     let mcapUsd: number;
     if (!this.hasMigrated && this.phase !== 'MIGRATED') {
-      const buyExecutedUsd = this.executeCurveBuy(market.buyUsd);
+      const buyResult = this.executeCurveBuy(market.buyUsd);
       const sellTokenIntent = prevPriceUsd > 0 ? market.sellUsd / prevPriceUsd : 0;
-      const sellExecutedUsd = this.executeCurveSell(sellTokenIntent);
-      volumeUsd = buyExecutedUsd + sellExecutedUsd;
+      const sellResult = this.executeCurveSell(sellTokenIntent);
+      volumeUsd = buyResult.baseInUsd + sellResult.baseOutUsd;
+
+      if (buyResult.baseInUsd > 0 || sellResult.baseOutUsd > 0) {
+        if (buyResult.baseInUsd >= sellResult.baseOutUsd) {
+          this.lastCurveSwap = {
+            direction: 'BUY',
+            amountIn: buyResult.baseInUsd,
+            amountOut: buyResult.tokensOut,
+            simMs: this.simTimeMs,
+          };
+        } else {
+          this.lastCurveSwap = {
+            direction: 'SELL',
+            amountIn: sellResult.tokenIn,
+            amountOut: sellResult.baseOutUsd,
+            simMs: this.simTimeMs,
+          };
+        }
+      }
 
       this.bondingProgress = this.getCurveProgress();
       priceUsd = this.getCurvePriceUsd();
@@ -551,6 +594,24 @@ export class TokenSim {
   getSpawnRealMs(): number { return this.spawnRealMs; }
   getLastPriceUsd(): number { return this.lastPriceUsd; }
   getLastMcapUsd(): number { return this.lastMcapUsd; }
+  getCurveDebugSnapshot(): CurveDebugSnapshot {
+    return {
+      phase: this.phase,
+      hasEnteredFinal: this.hasEnteredFinal,
+      hasMigrated: this.hasMigrated,
+      progressNowPct: this.bondingProgress * 100,
+      rTok: this.curveRealToken,
+      rTok0: this.curveInitialRealToken,
+      vTok: this.curveVirtualToken,
+      vBase: this.curveVirtualBase,
+      rBase: this.curveRealBase,
+      k: this.curveVirtualBase * this.curveVirtualToken,
+      priceCurveUsd: this.getCurvePriceUsd(),
+      mcapCurveUsd: this.getCurveMcapUsd(),
+      feeBps: CURVE_FEE_BPS,
+      lastSwap: this.lastCurveSwap,
+    };
+  }
 
   private rollArchetype(): TokenArchetype {
     const u = this.rng.next();
@@ -644,12 +705,12 @@ export class TokenSim {
     return clamp(1 - (this.curveRealToken / Math.max(CURVE_TOKEN_EPS, this.curveInitialRealToken)), 0, 1);
   }
 
-  private executeCurveBuy(grossBaseInUsd: number): number {
-    if (grossBaseInUsd <= 0 || this.curveRealToken <= CURVE_TOKEN_EPS) return 0;
+  private executeCurveBuy(grossBaseInUsd: number): { baseInUsd: number; tokensOut: number } {
+    if (grossBaseInUsd <= 0 || this.curveRealToken <= CURVE_TOKEN_EPS) return { baseInUsd: 0, tokensOut: 0 };
 
     const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
     const netBaseIn = grossBaseInUsd * feeFactor;
-    if (netBaseIn <= 0) return 0;
+    if (netBaseIn <= 0) return { baseInUsd: 0, tokensOut: 0 };
 
     const x = Math.max(CURVE_TOKEN_EPS, this.curveVirtualBase);
     const y = Math.max(CURVE_TOKEN_EPS, this.curveVirtualToken);
@@ -665,20 +726,20 @@ export class TokenSim {
       const cappedX = k / Math.max(CURVE_TOKEN_EPS, cappedY);
       netBaseUsed = Math.max(0, cappedX - x);
     }
-    if (tokensOut <= 0 || netBaseUsed <= 0) return 0;
+    if (tokensOut <= 0 || netBaseUsed <= 0) return { baseInUsd: 0, tokensOut: 0 };
 
     this.curveVirtualBase = x + netBaseUsed;
     this.curveVirtualToken = y - tokensOut;
     this.curveRealToken = Math.max(0, this.curveRealToken - tokensOut);
     this.curveRealBase += netBaseUsed;
-    return netBaseUsed;
+    return { baseInUsd: netBaseUsed, tokensOut };
   }
 
-  private executeCurveSell(tokenIn: number): number {
-    if (tokenIn <= 0 || this.curveRealBase <= 0) return 0;
+  private executeCurveSell(tokenIn: number): { tokenIn: number; baseOutUsd: number } {
+    if (tokenIn <= 0 || this.curveRealBase <= 0) return { tokenIn: 0, baseOutUsd: 0 };
 
     const cappedTokenIn = Math.min(tokenIn, this.curveInitialRealToken - this.curveRealToken);
-    if (cappedTokenIn <= 0) return 0;
+    if (cappedTokenIn <= 0) return { tokenIn: 0, baseOutUsd: 0 };
 
     const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
     const x = Math.max(CURVE_TOKEN_EPS, this.curveVirtualBase);
@@ -688,18 +749,18 @@ export class TokenSim {
     const newX = k / newY;
     const grossBaseOut = Math.max(0, x - newX);
     let baseOut = grossBaseOut * feeFactor;
-    if (baseOut <= 0) return 0;
+    if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
 
     if (baseOut > this.curveRealBase) {
       baseOut = this.curveRealBase;
     }
-    if (baseOut <= 0) return 0;
+    if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
 
     const grossUsed = baseOut / feeFactor;
     this.curveVirtualBase = Math.max(CURVE_TOKEN_EPS, x - grossUsed);
     this.curveVirtualToken = y + cappedTokenIn;
     this.curveRealBase = Math.max(0, this.curveRealBase - baseOut);
     this.curveRealToken = Math.min(this.curveInitialRealToken, this.curveRealToken + cappedTokenIn);
-    return baseOut;
+    return { tokenIn: cappedTokenIn, baseOutUsd: baseOut };
   }
 }
