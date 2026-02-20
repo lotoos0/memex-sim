@@ -2,7 +2,7 @@ import { RNG } from '../engine/rng';
 import { CandleAggregator } from '../engine/aggregator';
 import type { TokenMeta, TokenRuntime, TokenPhase } from './types';
 import {
-  SUPPLY, MIGRATION_THRESHOLD_USD, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER,
+  SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER,
 } from './types';
 import { stepMarket, type FlowRegime } from './marketModel';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
@@ -28,19 +28,18 @@ type ArchetypeProfile = {
   volMul: number;
   driftBiasPerSec: number;
   maxDevEvents: number;
-  targetRaiseUsdMin: number;
-  targetRaiseUsdMax: number;
-  sellReturnFactorMin: number;
-  sellReturnFactorMax: number;
-  minSupplyRatio: number;
-  maxSupplyRatio: number;
+  initialRealTokenRatioMin: number;
+  initialRealTokenRatioMax: number;
+  virtualTokenLiquidityMulMin: number;
+  virtualTokenLiquidityMulMax: number;
   migrationChaosChance: number;
   deathSpiralChance: number;
 };
 
 const FINAL_PROGRESS = 0.85;
 const MIGRATE_PROGRESS = 1.0;
-const PRE_MIGRATION_MCAP_CAP = MIGRATION_THRESHOLD_USD * 1.2;
+const CURVE_FEE_BPS = 100;
+const CURVE_TOKEN_EPS = 1e-6;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -69,6 +68,7 @@ export class TokenSim {
 
   // Price state
   private lastPriceUsd: number;
+  private lastMcapUsd: number;
   private priceAtSpawn: number;
   private phase: TokenPhase;
   private ruggedAtSimMs: number | null = null;
@@ -91,12 +91,12 @@ export class TokenSim {
   private deathSpiralLeftMs = 0;
   private hasEnteredFinal = false;
   private hasMigrated = false;
-  private raisedUsd = 0;
-  private targetRaiseUsd = 1;
   private bondingProgress = 0;
-  private sellReturnFactor = 0.9;
-  private minCirculatingSupply = SUPPLY * 0.03;
-  private maxCirculatingSupply = SUPPLY;
+  private curveVirtualBase = 0;
+  private curveVirtualToken = 0;
+  private curveRealBase = 0;
+  private curveRealToken = 0;
+  private curveInitialRealToken = 1;
   private archetype: TokenArchetype = 'HEALTHY';
   private archetypeProfile!: ArchetypeProfile;
 
@@ -121,14 +121,7 @@ export class TokenSim {
     this.attention = 0.9 + this.rng.next() * 0.8;
     this.archetype = this.rollArchetype();
     this.archetypeProfile = this.buildArchetypeProfile(this.archetype);
-    this.targetRaiseUsd = this.archetypeProfile.targetRaiseUsdMin
-      + (this.archetypeProfile.targetRaiseUsdMax - this.archetypeProfile.targetRaiseUsdMin) * this.rng.next();
-    this.sellReturnFactor = this.archetypeProfile.sellReturnFactorMin
-      + (this.archetypeProfile.sellReturnFactorMax - this.archetypeProfile.sellReturnFactorMin) * this.rng.next();
-    this.minCirculatingSupply = SUPPLY * this.archetypeProfile.minSupplyRatio;
-    this.maxCirculatingSupply = SUPPLY * this.archetypeProfile.maxSupplyRatio;
-    this.raisedUsd = Math.max(0, startMcapUsd * 0.08);
-    this.bondingProgress = clamp(this.raisedUsd / this.targetRaiseUsd, 0, 1);
+    this.initCurveState(startMcapUsd);
 
     this.aggr1s = new CandleAggregator(1);
     this.aggr15s = new CandleAggregator(15);
@@ -139,9 +132,9 @@ export class TokenSim {
     this.mcapAggr30s = new CandleAggregator(30);
     this.mcapAggr1m = new CandleAggregator(60);
 
-    const startCirculatingSupply = this.getCirculatingSupply(this.bondingProgress);
-    const startPriceUsd = startMcapUsd / startCirculatingSupply;
+    const startPriceUsd = this.getCurvePriceUsd();
     this.lastPriceUsd = startPriceUsd;
+    this.lastMcapUsd = this.getCurveMcapUsd();
     this.priceAtSpawn = startPriceUsd;
     this.phase = 'NEW';
     this.rollRegime();
@@ -151,10 +144,10 @@ export class TokenSim {
     this.aggr15s.pushTick(this.spawnRealMs, startPriceUsd, 0);
     this.aggr30s.pushTick(this.spawnRealMs, startPriceUsd, 0);
     this.aggr1m.pushTick(this.spawnRealMs, startPriceUsd, 0);
-    this.mcapAggr1s.pushTick(this.spawnRealMs, startMcapUsd, 0);
-    this.mcapAggr15s.pushTick(this.spawnRealMs, startMcapUsd, 0);
-    this.mcapAggr30s.pushTick(this.spawnRealMs, startMcapUsd, 0);
-    this.mcapAggr1m.pushTick(this.spawnRealMs, startMcapUsd, 0);
+    this.mcapAggr1s.pushTick(this.spawnRealMs, this.lastMcapUsd, 0);
+    this.mcapAggr15s.pushTick(this.spawnRealMs, this.lastMcapUsd, 0);
+    this.mcapAggr30s.pushTick(this.spawnRealMs, this.lastMcapUsd, 0);
+    this.mcapAggr1m.pushTick(this.spawnRealMs, this.lastMcapUsd, 0);
   }
 
   tick(fallbackRealDtSec: number): TokenChartEvent[] {
@@ -240,32 +233,36 @@ export class TokenSim {
       externalFlow: devFlow?.externalFlow,
     });
 
-    this.raisedUsd = clamp(
-      this.raisedUsd + market.buyUsd - market.sellUsd * this.sellReturnFactor,
-      0,
-      this.targetRaiseUsd
-    );
-    this.bondingProgress = clamp(this.raisedUsd / this.targetRaiseUsd, 0, 1);
+    let volumeUsd = market.volumeUsd;
+    let priceUsd: number;
+    let mcapUsd: number;
+    if (!this.hasMigrated && this.phase !== 'MIGRATED') {
+      const buyExecutedUsd = this.executeCurveBuy(market.buyUsd);
+      const sellTokenIntent = prevPriceUsd > 0 ? market.sellUsd / prevPriceUsd : 0;
+      const sellExecutedUsd = this.executeCurveSell(sellTokenIntent);
+      volumeUsd = buyExecutedUsd + sellExecutedUsd;
 
-    // Clamp price through mcap limits using current circulating supply.
-    const circulatingSupply = this.getCirculatingSupply(this.bondingProgress);
-    const nextMcapUsd = market.nextPriceUsd * circulatingSupply;
-    const migratedOrPastThreshold = this.hasMigrated || this.bondingProgress >= MIGRATE_PROGRESS;
-    const mcapCap = migratedOrPastThreshold
-      ? MCAP_CAP_USD
-      : Math.min(MCAP_CAP_USD, PRE_MIGRATION_MCAP_CAP);
-    const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(mcapCap, nextMcapUsd));
-    const priceUsd = clampedMcap / circulatingSupply;
-    this.lastPriceUsd = priceUsd;
+      this.bondingProgress = this.getCurveProgress();
+      priceUsd = this.getCurvePriceUsd();
+      mcapUsd = this.getCurveMcapUsd();
+      this.lastPriceUsd = priceUsd;
+      this.lastMcapUsd = mcapUsd;
+    } else {
+      const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(MCAP_CAP_USD, market.nextPriceUsd * SUPPLY));
+      priceUsd = clampedMcap / SUPPLY;
+      mcapUsd = clampedMcap;
+      this.lastPriceUsd = priceUsd;
+      this.lastMcapUsd = mcapUsd;
+    }
 
-    this.aggr1s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
-    this.aggr15s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
-    this.aggr30s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
-    this.aggr1m.pushTick(candleTsMs, priceUsd, market.volumeUsd);
-    this.mcapAggr1s.pushTick(candleTsMs, clampedMcap, market.volumeUsd);
-    this.mcapAggr15s.pushTick(candleTsMs, clampedMcap, market.volumeUsd);
-    this.mcapAggr30s.pushTick(candleTsMs, clampedMcap, market.volumeUsd);
-    this.mcapAggr1m.pushTick(candleTsMs, clampedMcap, market.volumeUsd);
+    this.aggr1s.pushTick(candleTsMs, priceUsd, volumeUsd);
+    this.aggr15s.pushTick(candleTsMs, priceUsd, volumeUsd);
+    this.aggr30s.pushTick(candleTsMs, priceUsd, volumeUsd);
+    this.aggr1m.pushTick(candleTsMs, priceUsd, volumeUsd);
+    this.mcapAggr1s.pushTick(candleTsMs, mcapUsd, volumeUsd);
+    this.mcapAggr15s.pushTick(candleTsMs, mcapUsd, volumeUsd);
+    this.mcapAggr30s.pushTick(candleTsMs, mcapUsd, volumeUsd);
+    this.mcapAggr1m.pushTick(candleTsMs, mcapUsd, volumeUsd);
 
     const events: TokenChartEvent[] = [];
     if (devFlow?.eventType) {
@@ -280,7 +277,7 @@ export class TokenSim {
 
     this.statWindow.push({
       simMs: this.simTimeMs,
-      volUsd: market.volumeUsd,
+      volUsd: volumeUsd,
       buys: market.buys,
       sells: market.sells,
     });
@@ -475,7 +472,7 @@ export class TokenSim {
       this.hasEnteredFinal = true;
     }
 
-    if (this.bondingProgress >= MIGRATE_PROGRESS && !this.hasMigrated) {
+    if ((this.bondingProgress >= MIGRATE_PROGRESS || this.curveRealToken <= CURVE_TOKEN_EPS) && !this.hasMigrated) {
       this.hasMigrated = true;
       this.phase = 'MIGRATED';
       this.rollRegime();
@@ -507,7 +504,7 @@ export class TokenSim {
   }
 
   getRuntime(): TokenRuntime {
-    const mcap = this.getLastMcapUsd();
+    const mcap = this.lastMcapUsd;
     let vol5m = 0;
     let buys5m = 0;
     let sells5m = 0;
@@ -553,7 +550,7 @@ export class TokenSim {
   getSimTimeMs(): number { return this.simTimeMs; }
   getSpawnRealMs(): number { return this.spawnRealMs; }
   getLastPriceUsd(): number { return this.lastPriceUsd; }
-  getLastMcapUsd(): number { return this.lastPriceUsd * this.getCirculatingSupply(this.bondingProgress); }
+  getLastMcapUsd(): number { return this.lastMcapUsd; }
 
   private rollArchetype(): TokenArchetype {
     const u = this.rng.next();
@@ -570,12 +567,10 @@ export class TokenSim {
         volMul: 0.5,
         driftBiasPerSec: -0.01,
         maxDevEvents: 2,
-        targetRaiseUsdMin: 110_000,
-        targetRaiseUsdMax: 180_000,
-        sellReturnFactorMin: 0.96,
-        sellReturnFactorMax: 1.0,
-        minSupplyRatio: 0.015,
-        maxSupplyRatio: 0.28,
+        initialRealTokenRatioMin: 0.9,
+        initialRealTokenRatioMax: 0.98,
+        virtualTokenLiquidityMulMin: 1.15,
+        virtualTokenLiquidityMulMax: 1.4,
         migrationChaosChance: 0,
         deathSpiralChance: 0.5,
       };
@@ -586,12 +581,10 @@ export class TokenSim {
         volMul: 0.85,
         driftBiasPerSec: 0.0015,
         maxDevEvents: 3,
-        targetRaiseUsdMin: 100_000,
-        targetRaiseUsdMax: 150_000,
-        sellReturnFactorMin: 0.9,
-        sellReturnFactorMax: 0.97,
-        minSupplyRatio: 0.02,
-        maxSupplyRatio: 0.85,
+        initialRealTokenRatioMin: 0.72,
+        initialRealTokenRatioMax: 0.9,
+        virtualTokenLiquidityMulMin: 1.1,
+        virtualTokenLiquidityMulMax: 1.35,
         migrationChaosChance: 0.03,
         deathSpiralChance: 0.04,
       };
@@ -602,12 +595,10 @@ export class TokenSim {
         volMul: 1.4,
         driftBiasPerSec: 0.003,
         maxDevEvents: 5,
-        targetRaiseUsdMin: 55_000,
-        targetRaiseUsdMax: 90_000,
-        sellReturnFactorMin: 0.75,
-        sellReturnFactorMax: 0.88,
-        minSupplyRatio: 0.018,
-        maxSupplyRatio: 1.0,
+        initialRealTokenRatioMin: 0.42,
+        initialRealTokenRatioMax: 0.62,
+        virtualTokenLiquidityMulMin: 1.05,
+        virtualTokenLiquidityMulMax: 1.2,
         migrationChaosChance: 0.8,
         deathSpiralChance: 0.28,
       };
@@ -617,20 +608,98 @@ export class TokenSim {
       volMul: 0.85,
       driftBiasPerSec: 0.0015,
       maxDevEvents: 3,
-      targetRaiseUsdMin: 60_000,
-      targetRaiseUsdMax: 95_000,
-      sellReturnFactorMin: 0.8,
-      sellReturnFactorMax: 0.9,
-      minSupplyRatio: 0.025,
-      maxSupplyRatio: 1.0,
+      initialRealTokenRatioMin: 0.52,
+      initialRealTokenRatioMax: 0.74,
+      virtualTokenLiquidityMulMin: 1.08,
+      virtualTokenLiquidityMulMax: 1.28,
       migrationChaosChance: 0.15,
       deathSpiralChance: 0.08,
     };
   }
 
-  private getCirculatingSupply(progress: number): number {
-    const clampedProgress = clamp(progress, 0, 1);
-    return this.minCirculatingSupply
-      + (this.maxCirculatingSupply - this.minCirculatingSupply) * clampedProgress;
+  private initCurveState(startMcapUsd: number): void {
+    const initialRatio = this.archetypeProfile.initialRealTokenRatioMin
+      + (this.archetypeProfile.initialRealTokenRatioMax - this.archetypeProfile.initialRealTokenRatioMin) * this.rng.next();
+    const virtualMul = this.archetypeProfile.virtualTokenLiquidityMulMin
+      + (this.archetypeProfile.virtualTokenLiquidityMulMax - this.archetypeProfile.virtualTokenLiquidityMulMin) * this.rng.next();
+    const startPrice = Math.max(1e-12, startMcapUsd / SUPPLY);
+
+    this.curveInitialRealToken = Math.max(CURVE_TOKEN_EPS, SUPPLY * clamp(initialRatio, 0.05, 0.99));
+    this.curveRealToken = this.curveInitialRealToken;
+    this.curveVirtualToken = Math.max(CURVE_TOKEN_EPS, this.curveInitialRealToken * Math.max(1.01, virtualMul));
+    this.curveVirtualBase = Math.max(1, startPrice * this.curveVirtualToken);
+    this.curveRealBase = Math.max(0, startMcapUsd * 0.02);
+    this.bondingProgress = 0;
+  }
+
+  private getCurvePriceUsd(): number {
+    return this.curveVirtualBase / Math.max(CURVE_TOKEN_EPS, this.curveVirtualToken);
+  }
+
+  private getCurveMcapUsd(): number {
+    return this.getCurvePriceUsd() * SUPPLY;
+  }
+
+  private getCurveProgress(): number {
+    return clamp(1 - (this.curveRealToken / Math.max(CURVE_TOKEN_EPS, this.curveInitialRealToken)), 0, 1);
+  }
+
+  private executeCurveBuy(grossBaseInUsd: number): number {
+    if (grossBaseInUsd <= 0 || this.curveRealToken <= CURVE_TOKEN_EPS) return 0;
+
+    const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
+    const netBaseIn = grossBaseInUsd * feeFactor;
+    if (netBaseIn <= 0) return 0;
+
+    const x = Math.max(CURVE_TOKEN_EPS, this.curveVirtualBase);
+    const y = Math.max(CURVE_TOKEN_EPS, this.curveVirtualToken);
+    const k = x * y;
+    const newX = x + netBaseIn;
+    const newY = k / newX;
+    let tokensOut = y - newY;
+    let netBaseUsed = netBaseIn;
+
+    if (tokensOut > this.curveRealToken) {
+      tokensOut = this.curveRealToken;
+      const cappedY = y - tokensOut;
+      const cappedX = k / Math.max(CURVE_TOKEN_EPS, cappedY);
+      netBaseUsed = Math.max(0, cappedX - x);
+    }
+    if (tokensOut <= 0 || netBaseUsed <= 0) return 0;
+
+    this.curveVirtualBase = x + netBaseUsed;
+    this.curveVirtualToken = y - tokensOut;
+    this.curveRealToken = Math.max(0, this.curveRealToken - tokensOut);
+    this.curveRealBase += netBaseUsed;
+    return netBaseUsed;
+  }
+
+  private executeCurveSell(tokenIn: number): number {
+    if (tokenIn <= 0 || this.curveRealBase <= 0) return 0;
+
+    const cappedTokenIn = Math.min(tokenIn, this.curveInitialRealToken - this.curveRealToken);
+    if (cappedTokenIn <= 0) return 0;
+
+    const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
+    const x = Math.max(CURVE_TOKEN_EPS, this.curveVirtualBase);
+    const y = Math.max(CURVE_TOKEN_EPS, this.curveVirtualToken);
+    const k = x * y;
+    const newY = y + cappedTokenIn;
+    const newX = k / newY;
+    const grossBaseOut = Math.max(0, x - newX);
+    let baseOut = grossBaseOut * feeFactor;
+    if (baseOut <= 0) return 0;
+
+    if (baseOut > this.curveRealBase) {
+      baseOut = this.curveRealBase;
+    }
+    if (baseOut <= 0) return 0;
+
+    const grossUsed = baseOut / feeFactor;
+    this.curveVirtualBase = Math.max(CURVE_TOKEN_EPS, x - grossUsed);
+    this.curveVirtualToken = y + cappedTokenIn;
+    this.curveRealBase = Math.max(0, this.curveRealBase - baseOut);
+    this.curveRealToken = Math.min(this.curveInitialRealToken, this.curveRealToken + cappedTokenIn);
+    return baseOut;
   }
 }
