@@ -14,6 +14,8 @@ export interface MarketStepInput {
   volatilityPerSqrtSec: number;
   buyBias: number;
   impactK: number;
+  devSignalChancePerSec?: number;
+  devBuyBias?: number;
 }
 
 export interface MarketStepOutput {
@@ -21,6 +23,7 @@ export interface MarketStepOutput {
   volumeUsd: number;
   buys: number;
   sells: number;
+  devSignal?: 'DEV_BUY' | 'DEV_SELL';
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -69,5 +72,12 @@ export function stepMarket(rng: RNG, input: MarketStepInput): MarketStepOutput {
   const dLog = input.driftPerSec * dtSec + impact + noise;
   const nextPriceUsd = Math.max(1e-12, input.priceUsd * Math.exp(dLog));
 
-  return { nextPriceUsd, volumeUsd, buys, sells };
+  let devSignal: 'DEV_BUY' | 'DEV_SELL' | undefined;
+  const devChance = Math.max(0, input.devSignalChancePerSec ?? 0);
+  if (rng.next() < devChance * dtSec) {
+    const devBuyBias = clamp(input.devBuyBias ?? bias, 0.02, 0.98);
+    devSignal = rng.next() < devBuyBias ? 'DEV_BUY' : 'DEV_SELL';
+  }
+
+  return { nextPriceUsd, volumeUsd, buys, sells, devSignal };
 }

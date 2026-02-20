@@ -44,7 +44,10 @@ class TokenRegistry {
       const realDtSec = TICK_MS / 1000;
 
       for (const [id, sim] of this.tokens) {
-        sim.tick(realDtSec);
+        const events = sim.tick(realDtSec);
+        if (events.length > 0) {
+          useTokenStore.getState().pushTokenEvents(id, events);
+        }
 
         // Track rug time for cleanup
         if (sim.getPhase() === 'RUGGED' && !this.ruggedAt.has(id)) {

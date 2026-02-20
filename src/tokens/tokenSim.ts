@@ -5,6 +5,7 @@ import {
   SUPPLY, MIGRATION_THRESHOLD_USD, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER,
 } from './types';
 import { stepMarket, type FlowRegime } from './marketModel';
+import type { TokenChartEvent } from '../chart/tokenChartEvents';
 
 interface StatBucket {
   simMs: number;
@@ -57,6 +58,7 @@ export class TokenSim {
   private tradeSigma = 0.95;
   private impactK = 0.2;
   private baseVol = 0.04;
+  private lastDevEventRealMs = 0;
 
   // Rolling 5-min stats window (in simMs)
   private statWindow: StatBucket[] = [];
@@ -91,8 +93,8 @@ export class TokenSim {
     this.rollRegime();
   }
 
-  tick(fallbackRealDtSec: number): void {
-    if (this.phase === 'RUGGED' || this.phase === 'DEAD') return;
+  tick(fallbackRealDtSec: number): TokenChartEvent[] {
+    if (this.phase === 'RUGGED' || this.phase === 'DEAD') return [];
 
     const nowMs = Date.now();
     const measuredDtSec = (nowMs - this.lastTickRealMs) / 1000;
@@ -131,6 +133,8 @@ export class TokenSim {
       volatilityPerSqrtSec: this.baseVol * phaseModel.volMul * regimeVolMul,
       buyBias: regimeBuyBias,
       impactK: this.impactK,
+      devSignalChancePerSec: this.getDevSignalChancePerSec(),
+      devBuyBias: regimeBuyBias,
     });
 
     // Clamp price to floor/cap.
@@ -144,6 +148,17 @@ export class TokenSim {
     this.aggr30s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
     this.aggr1m.pushTick(candleTsMs, priceUsd, market.volumeUsd);
 
+    const events: TokenChartEvent[] = [];
+    if (market.devSignal && candleTsMs - this.lastDevEventRealMs >= 2500) {
+      events.push({
+        tokenId: this.meta.id,
+        tMs: candleTsMs,
+        type: market.devSignal,
+        price: priceUsd,
+      });
+      this.lastDevEventRealMs = candleTsMs;
+    }
+
     this.statWindow.push({
       simMs: this.simTimeMs,
       volUsd: market.volumeUsd,
@@ -155,7 +170,9 @@ export class TokenSim {
     while (i < this.statWindow.length && this.statWindow[i]!.simMs < cutoff) i++;
     if (i > 0) this.statWindow.splice(0, i);
 
-    this.updatePhase();
+    const migrationEvent = this.updatePhase(candleTsMs);
+    if (migrationEvent) events.push(migrationEvent);
+    return events;
   }
 
   private getPhaseModel(): PhaseModel {
@@ -240,15 +257,30 @@ export class TokenSim {
     }
   }
 
-  private updatePhase(): void {
-    if (this.phase === 'RUGGED' || this.phase === 'DEAD' || this.phase === 'MIGRATED') return;
+  private getDevSignalChancePerSec(): number {
+    if (this.phase === 'MIGRATED') {
+      return this.regime === 'IMPULSE' ? 0.08 : this.regime === 'DUMP' ? 0.07 : 0.03;
+    }
+    if (this.phase === 'FINAL') {
+      return this.regime === 'IMPULSE' ? 0.16 : this.regime === 'DUMP' ? 0.17 : 0.07;
+    }
+    return this.regime === 'IMPULSE' ? 0.14 : this.regime === 'DUMP' ? 0.12 : 0.05;
+  }
+
+  private updatePhase(candleTsMs: number): TokenChartEvent | null {
+    if (this.phase === 'RUGGED' || this.phase === 'DEAD' || this.phase === 'MIGRATED') return null;
 
     const mcap = this.lastPriceUsd * SUPPLY;
 
     if (mcap >= MIGRATION_THRESHOLD_USD) {
       this.phase = 'MIGRATED';
       this.rollRegime();
-      return;
+      return {
+        tokenId: this.meta.id,
+        tMs: candleTsMs,
+        type: 'MIGRATION',
+        price: this.lastPriceUsd,
+      };
     }
 
     this.phase = mcap >= 30_000 ? 'FINAL' : 'NEW';
@@ -257,6 +289,7 @@ export class TokenSim {
       this.phase = 'RUGGED';
       this.ruggedAtSimMs = this.simTimeMs;
     }
+    return null;
   }
 
   getRuntime(): TokenRuntime {
