@@ -32,6 +32,8 @@ type ArchetypeProfile = {
   targetRaiseUsdMax: number;
   sellReturnFactorMin: number;
   sellReturnFactorMax: number;
+  minSupplyRatio: number;
+  maxSupplyRatio: number;
   migrationChaosChance: number;
   deathSpiralChance: number;
 };
@@ -88,6 +90,8 @@ export class TokenSim {
   private targetRaiseUsd = 1;
   private bondingProgress = 0;
   private sellReturnFactor = 0.9;
+  private minCirculatingSupply = SUPPLY * 0.03;
+  private maxCirculatingSupply = SUPPLY;
   private archetype: TokenArchetype = 'HEALTHY';
   private archetypeProfile!: ArchetypeProfile;
 
@@ -116,6 +120,8 @@ export class TokenSim {
       + (this.archetypeProfile.targetRaiseUsdMax - this.archetypeProfile.targetRaiseUsdMin) * this.rng.next();
     this.sellReturnFactor = this.archetypeProfile.sellReturnFactorMin
       + (this.archetypeProfile.sellReturnFactorMax - this.archetypeProfile.sellReturnFactorMin) * this.rng.next();
+    this.minCirculatingSupply = SUPPLY * this.archetypeProfile.minSupplyRatio;
+    this.maxCirculatingSupply = SUPPLY * this.archetypeProfile.maxSupplyRatio;
     this.raisedUsd = Math.max(0, startMcapUsd * 0.08);
     this.bondingProgress = clamp(this.raisedUsd / this.targetRaiseUsd, 0, 1);
 
@@ -124,7 +130,8 @@ export class TokenSim {
     this.aggr30s = new CandleAggregator(30);
     this.aggr1m = new CandleAggregator(60);
 
-    const startPriceUsd = startMcapUsd / SUPPLY;
+    const startCirculatingSupply = this.getCirculatingSupply(this.bondingProgress);
+    const startPriceUsd = startMcapUsd / startCirculatingSupply;
     this.lastPriceUsd = startPriceUsd;
     this.priceAtSpawn = startPriceUsd;
     this.phase = 'NEW';
@@ -211,9 +218,11 @@ export class TokenSim {
     );
     this.bondingProgress = clamp(this.raisedUsd / this.targetRaiseUsd, 0, 1);
 
-    // Clamp price to floor/cap.
-    const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(MCAP_CAP_USD, market.nextPriceUsd * SUPPLY));
-    const priceUsd = clampedMcap / SUPPLY;
+    // Clamp price through mcap limits using current circulating supply.
+    const circulatingSupply = this.getCirculatingSupply(this.bondingProgress);
+    const nextMcapUsd = market.nextPriceUsd * circulatingSupply;
+    const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(MCAP_CAP_USD, nextMcapUsd));
+    const priceUsd = clampedMcap / circulatingSupply;
     this.lastPriceUsd = priceUsd;
 
     this.aggr1s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
@@ -459,7 +468,7 @@ export class TokenSim {
   }
 
   getRuntime(): TokenRuntime {
-    const mcap = this.lastPriceUsd * SUPPLY;
+    const mcap = this.lastPriceUsd * this.getCirculatingSupply(this.bondingProgress);
     let vol5m = 0;
     let buys5m = 0;
     let sells5m = 0;
@@ -519,6 +528,8 @@ export class TokenSim {
         targetRaiseUsdMax: 180_000,
         sellReturnFactorMin: 0.96,
         sellReturnFactorMax: 1.0,
+        minSupplyRatio: 0.015,
+        maxSupplyRatio: 0.28,
         migrationChaosChance: 0,
         deathSpiralChance: 0.6,
       };
@@ -533,6 +544,8 @@ export class TokenSim {
         targetRaiseUsdMax: 150_000,
         sellReturnFactorMin: 0.9,
         sellReturnFactorMax: 0.97,
+        minSupplyRatio: 0.02,
+        maxSupplyRatio: 0.85,
         migrationChaosChance: 0.2,
         deathSpiralChance: 0.08,
       };
@@ -547,6 +560,8 @@ export class TokenSim {
         targetRaiseUsdMax: 90_000,
         sellReturnFactorMin: 0.75,
         sellReturnFactorMax: 0.88,
+        minSupplyRatio: 0.018,
+        maxSupplyRatio: 1.0,
         migrationChaosChance: 0.9,
         deathSpiralChance: 0.35,
       };
@@ -560,8 +575,16 @@ export class TokenSim {
       targetRaiseUsdMax: 95_000,
       sellReturnFactorMin: 0.8,
       sellReturnFactorMax: 0.9,
+      minSupplyRatio: 0.025,
+      maxSupplyRatio: 1.0,
       migrationChaosChance: 0.45,
       deathSpiralChance: 0.14,
     };
+  }
+
+  private getCirculatingSupply(progress: number): number {
+    const clampedProgress = clamp(progress, 0, 1);
+    return this.minCirculatingSupply
+      + (this.maxCirculatingSupply - this.minCirculatingSupply) * clampedProgress;
   }
 }
