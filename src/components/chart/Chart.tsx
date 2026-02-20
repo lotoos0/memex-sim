@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChart,
+  createSeriesMarkers,
   CandlestickSeries,
   HistogramSeries,
   type IChartApi,
@@ -10,6 +11,7 @@ import {
 import { registry } from '../../tokens/registry';
 import type { Candle } from '../../engine/types';
 import { useTokenStore } from '../../store/tokenStore';
+import { toSeriesMarkers, type DisplayOptions } from '../../chart/tokenChartEvents';
 
 const TF_OPTIONS = [
   { label: '1s', sec: 1 },
@@ -46,13 +48,21 @@ export default function Chart({ tokenId }: Props) {
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const markerApiRef = useRef<any>(null);
 
   const token = useTokenStore(s => s.tokensById[tokenId]);
+  const tokenEvents = useTokenStore(s => s.eventsByTokenId[tokenId] ?? []);
   const supply = token?.supply ?? 1_000_000_000;
 
   const [tfSec, setTfSec] = useState(15);
   const [metric, setMetric] = useState<Metric>('mcap');
   const [lastPriceUsd, setLastPriceUsd] = useState<number | null>(null);
+  const [showDisplayOptions, setShowDisplayOptions] = useState(false);
+  const [displayOptions, setDisplayOptions] = useState<DisplayOptions>({
+    migration: true,
+    devTrades: true,
+    myTrades: true,
+  });
 
   const priceFormatter = useMemo(
     () => (metric === 'mcap' ? fmtCompact : fmtPrice),
@@ -120,6 +130,7 @@ export default function Chart({ tokenId }: Props) {
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volSeriesRef.current = volSeries;
+    markerApiRef.current = createSeriesMarkers(candleSeries);
 
     const ro = new ResizeObserver(() => {
       if (containerRef.current) {
@@ -134,6 +145,7 @@ export default function Chart({ tokenId }: Props) {
       chartRef.current = null;
       candleSeriesRef.current = null;
       volSeriesRef.current = null;
+      markerApiRef.current = null;
     };
   }, []);
 
@@ -203,6 +215,15 @@ export default function Chart({ tokenId }: Props) {
     };
   }, [tokenId, tfSec, metricFactor]);
 
+  useEffect(() => {
+    const markerApi = markerApiRef.current;
+    if (!markerApi) return;
+
+    const minTimeSec = Math.floor((Date.now() - 60 * 60 * 1000) / 1000);
+    const markers = toSeriesMarkers(tokenEvents, displayOptions, minTimeSec);
+    markerApi.setMarkers(markers);
+  }, [tokenEvents, displayOptions]);
+
   const lastDisplay = (lastPriceUsd ?? 0) * metricFactor;
 
   return (
@@ -223,6 +244,57 @@ export default function Chart({ tokenId }: Props) {
               {tf.label}
             </button>
           ))}
+        </div>
+
+        <div className="h-3 w-px bg-ax-border" />
+
+        <div className="relative">
+          <button
+            onClick={() => setShowDisplayOptions(v => !v)}
+            className="text-[11px] text-ax-text-dim hover:text-ax-text"
+          >
+            Display Options
+          </button>
+          {showDisplayOptions && (
+            <div className="absolute top-6 left-0 z-20 min-w-[170px] rounded border border-ax-border bg-ax-surface2 p-2 text-[11px] shadow-lg">
+              <label className="flex items-center gap-2 py-1 text-ax-text-dim">
+                <input
+                  type="checkbox"
+                  checked={displayOptions.migration && displayOptions.devTrades && displayOptions.myTrades}
+                  onChange={(e) => setDisplayOptions({
+                    migration: e.target.checked,
+                    devTrades: e.target.checked,
+                    myTrades: e.target.checked,
+                  })}
+                />
+                Show All Bubbles
+              </label>
+              <label className="flex items-center gap-2 py-1 text-ax-text-dim">
+                <input
+                  type="checkbox"
+                  checked={displayOptions.migration}
+                  onChange={(e) => setDisplayOptions((s) => ({ ...s, migration: e.target.checked }))}
+                />
+                Migration
+              </label>
+              <label className="flex items-center gap-2 py-1 text-ax-text-dim">
+                <input
+                  type="checkbox"
+                  checked={displayOptions.devTrades}
+                  onChange={(e) => setDisplayOptions((s) => ({ ...s, devTrades: e.target.checked }))}
+                />
+                Dev Trades
+              </label>
+              <label className="flex items-center gap-2 py-1 text-ax-text-dim">
+                <input
+                  type="checkbox"
+                  checked={displayOptions.myTrades}
+                  onChange={(e) => setDisplayOptions((s) => ({ ...s, myTrades: e.target.checked }))}
+                />
+                My Trades
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="h-3 w-px bg-ax-border" />
