@@ -59,7 +59,7 @@ export function stepMarket(rng: RNG, input: MarketStepInput): MarketStepOutput {
   let buys = 0;
   let sells = 0;
 
-  const bias = clamp(input.buyBias, 0.02, 0.98);
+  const bias = clamp(input.buyBias, 0, 1);
   const whaleChance = clamp(input.whaleChance ?? 0.05, 0, 0.95);
   const whaleMinMul = Math.max(1, input.whaleMinMul ?? 10);
   const whaleMaxMul = Math.max(whaleMinMul, input.whaleMaxMul ?? 80);

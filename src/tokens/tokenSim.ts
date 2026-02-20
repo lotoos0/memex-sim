@@ -41,6 +41,7 @@ type ArchetypeProfile = {
 const FINAL_PROGRESS = 0.85;
 const MIGRATE_PROGRESS = 1.0;
 const PRE_MIGRATION_MCAP_HEADROOM = 1.2;
+const LAUNCH_PROTECTION_MS = 20_000;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -97,6 +98,8 @@ export class TokenSim {
   private sellReturnFactor = 0.9;
   private minCirculatingSupply = SUPPLY * 0.03;
   private maxCirculatingSupply = SUPPLY;
+  private launchProtectionLeftMs = LAUNCH_PROTECTION_MS;
+  private preMigrationMcapCeiling = 0;
   private archetype: TokenArchetype = 'HEALTHY';
   private archetypeProfile!: ArchetypeProfile;
 
@@ -143,6 +146,7 @@ export class TokenSim {
     const startPriceUsd = startMcapUsd / startCirculatingSupply;
     this.lastPriceUsd = startPriceUsd;
     this.priceAtSpawn = startPriceUsd;
+    this.preMigrationMcapCeiling = Math.max(startMcapUsd, MIGRATION_THRESHOLD_USD * 0.35);
     this.phase = 'NEW';
     this.rollRegime();
 
@@ -212,12 +216,22 @@ export class TokenSim {
 
     const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
     const candleTsMs = nowMs;
+    const inLaunchProtection = this.launchProtectionLeftMs > 0;
     const isLaunchTick = !this.emittedInitialDevBuy;
+    this.launchProtectionLeftMs = Math.max(0, this.launchProtectionLeftMs - realDtSec * 1000);
     const devFlow = this.buildDevFlow(candleTsMs, realDtSec, effectiveBuyBias);
+    const prevPriceUsd = this.lastPriceUsd;
+
+    if (inLaunchProtection) {
+      effectiveBuyBias = 1;
+      driftPerSec = Math.max(driftPerSec, 0.03);
+      volMul *= 0.15;
+      lambdaMul *= 0.65;
+    }
 
     const market = stepMarket(this.rng, {
       dtSec: realDtSec,
-      priceUsd: this.lastPriceUsd,
+      priceUsd: prevPriceUsd,
       liquidityUsd,
       attention: this.attention,
       baseLambda: this.baseLambda * lambdaMul * (isLaunchTick ? 0.15 : 1),
@@ -225,7 +239,7 @@ export class TokenSim {
       tradeSigma: this.tradeSigma,
       driftPerSec,
       volatilityPerSqrtSec: this.baseVol * volMul,
-      buyBias: isLaunchTick ? Math.max(effectiveBuyBias, 0.995) : effectiveBuyBias,
+      buyBias: effectiveBuyBias,
       impactK: this.impactK,
       whaleChance: isLaunchTick ? 0 : this.getWhaleChance(inMigrationChaos),
       externalFlow: devFlow?.externalFlow,
@@ -242,14 +256,20 @@ export class TokenSim {
     const circulatingSupply = this.getCirculatingSupply(this.bondingProgress);
     const nextMcapUsd = market.nextPriceUsd * circulatingSupply;
     const migratedOrPastThreshold = this.hasMigrated || this.bondingProgress >= MIGRATE_PROGRESS;
-    const preMigrationMcapCap = MCAP_FLOOR_USD
-      + (MIGRATION_THRESHOLD_USD - MCAP_FLOOR_USD)
-      * Math.max(0.02, this.bondingProgress)
+    const preMigrationMcapCap = MIGRATION_THRESHOLD_USD
+      * (0.4 + this.bondingProgress * 0.8)
       * PRE_MIGRATION_MCAP_HEADROOM;
+    this.preMigrationMcapCeiling = Math.max(this.preMigrationMcapCeiling, preMigrationMcapCap);
     const mcapCap = migratedOrPastThreshold
       ? MCAP_CAP_USD
-      : Math.min(MCAP_CAP_USD, preMigrationMcapCap);
-    const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(mcapCap, nextMcapUsd));
+      : Math.min(MCAP_CAP_USD, this.preMigrationMcapCeiling);
+    let clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(mcapCap, nextMcapUsd));
+
+    if (inLaunchProtection) {
+      const launchFloorMcap = prevPriceUsd * circulatingSupply * 1.0025;
+      clampedMcap = Math.max(clampedMcap, Math.min(mcapCap, launchFloorMcap));
+    }
+
     const priceUsd = clampedMcap / circulatingSupply;
     this.lastPriceUsd = priceUsd;
 
@@ -434,6 +454,8 @@ export class TokenSim {
         sizeUsd,
       };
     }
+
+    if (this.launchProtectionLeftMs > 0) return null;
 
     if (candleTsMs - this.lastDevEventRealMs < 2500) return null;
     if (this.rng.next() >= this.getDevSignalChancePerSec() * realDtSec) return null;
