@@ -28,9 +28,6 @@ type ArchetypeProfile = {
   volMul: number;
   driftBiasPerSec: number;
   maxDevEvents: number;
-  finalDelaySimMs: number;
-  migrationDelaySimMs: number;
-  canMigrate: boolean;
   migrationChaosChance: number;
   deathSpiralChance: number;
 };
@@ -78,6 +75,8 @@ export class TokenSim {
   private devEventsUsed = 0;
   private postMigrationChaosLeftMs = 0;
   private deathSpiralLeftMs = 0;
+  private hasEnteredFinal = false;
+  private hasMigrated = false;
   private archetype: TokenArchetype = 'HEALTHY';
   private archetypeProfile!: ArchetypeProfile;
 
@@ -397,14 +396,18 @@ export class TokenSim {
     if (this.phase === 'RUGGED' || this.phase === 'DEAD' || this.phase === 'MIGRATED') return null;
 
     const mcap = this.lastPriceUsd * SUPPLY;
-    const age = this.simTimeMs;
-    const canBeFinal = age >= this.archetypeProfile.finalDelaySimMs;
-    const canMigrateByTime = age >= this.archetypeProfile.migrationDelaySimMs;
 
-    if (this.phase === 'FINAL' &&
-        this.archetypeProfile.canMigrate &&
-        canMigrateByTime &&
-        mcap >= MIGRATION_THRESHOLD_USD) {
+    // Monotonic latches:
+    // - once FINAL is entered, token doesn't return to NEW
+    // - once MIGRATED is entered, token doesn't return to FINAL/NEW
+    if (this.hasMigrated) {
+      this.phase = 'MIGRATED';
+      return null;
+    }
+
+    if (mcap >= MIGRATION_THRESHOLD_USD && !this.hasMigrated) {
+      this.hasEnteredFinal = true;
+      this.hasMigrated = true;
       this.phase = 'MIGRATED';
       this.rollRegime();
       if (this.rng.next() < this.archetypeProfile.migrationChaosChance) {
@@ -425,7 +428,8 @@ export class TokenSim {
       };
     }
 
-    this.phase = canBeFinal && mcap >= 30_000 ? 'FINAL' : 'NEW';
+    if (mcap >= 30_000) this.hasEnteredFinal = true;
+    this.phase = this.hasEnteredFinal ? 'FINAL' : 'NEW';
 
     if (this.simTimeMs >= this.fateTimeoutSimMs) {
       this.phase = 'RUGGED';
@@ -491,9 +495,6 @@ export class TokenSim {
         volMul: 0.5,
         driftBiasPerSec: -0.01,
         maxDevEvents: 2,
-        finalDelaySimMs: 24 * 60 * 60_000,
-        migrationDelaySimMs: 24 * 60 * 60_000,
-        canMigrate: false,
         migrationChaosChance: 0,
         deathSpiralChance: 0.6,
       };
@@ -504,9 +505,6 @@ export class TokenSim {
         volMul: 0.85,
         driftBiasPerSec: 0.0015,
         maxDevEvents: 3,
-        finalDelaySimMs: (40 + this.rng.next() * 80) * 60_000,
-        migrationDelaySimMs: (140 + this.rng.next() * 180) * 60_000,
-        canMigrate: true,
         migrationChaosChance: 0.2,
         deathSpiralChance: 0.08,
       };
@@ -517,9 +515,6 @@ export class TokenSim {
         volMul: 1.4,
         driftBiasPerSec: 0.003,
         maxDevEvents: 5,
-        finalDelaySimMs: (5 + this.rng.next() * 20) * 60_000,
-        migrationDelaySimMs: (20 + this.rng.next() * 60) * 60_000,
-        canMigrate: true,
         migrationChaosChance: 0.9,
         deathSpiralChance: 0.35,
       };
@@ -529,9 +524,6 @@ export class TokenSim {
       volMul: 1,
       driftBiasPerSec: 0.002,
       maxDevEvents: 3,
-      finalDelaySimMs: (10 + this.rng.next() * 35) * 60_000,
-      migrationDelaySimMs: (45 + this.rng.next() * 120) * 60_000,
-      canMigrate: true,
       migrationChaosChance: 0.45,
       deathSpiralChance: 0.14,
     };
