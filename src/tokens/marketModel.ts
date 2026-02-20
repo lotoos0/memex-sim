@@ -48,7 +48,7 @@ export function stepMarket(rng: RNG, input: MarketStepInput): MarketStepOutput {
 
   const lambda = Math.max(0.05, input.baseLambda * attention);
   const nTrades = rng.poisson(lambda * dtSec);
-  const tradeCount = Math.max(1, nTrades);
+  const tradeCount = Math.max(0, nTrades);
 
   const avgSize = Math.max(1, input.baseTradeSizeUsd);
   const sigma = Math.max(0.05, input.tradeSigma);
@@ -61,9 +61,9 @@ export function stepMarket(rng: RNG, input: MarketStepInput): MarketStepOutput {
 
   const bias = clamp(input.buyBias, 0, 1);
   const whaleChance = clamp(input.whaleChance ?? 0.05, 0, 0.95);
-  const whaleMinMul = Math.max(1, input.whaleMinMul ?? 10);
-  const whaleMaxMul = Math.max(whaleMinMul, input.whaleMaxMul ?? 80);
-  const maxWhaleUsd = Math.max(avgSize, input.maxWhaleUsd ?? avgSize * 120);
+  const whaleMinMul = Math.max(1, input.whaleMinMul ?? 4);
+  const whaleMaxMul = Math.max(whaleMinMul, input.whaleMaxMul ?? 18);
+  const maxWhaleUsd = Math.max(avgSize, input.maxWhaleUsd ?? avgSize * 35);
   for (let i = 0; i < tradeCount; i++) {
     let size = logNormal(rng, muLog, sigma);
     if (rng.next() < whaleChance) {

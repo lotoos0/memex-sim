@@ -40,8 +40,7 @@ type ArchetypeProfile = {
 
 const FINAL_PROGRESS = 0.85;
 const MIGRATE_PROGRESS = 1.0;
-const PRE_MIGRATION_MCAP_HEADROOM = 1.2;
-const LAUNCH_PROTECTION_MS = 20_000;
+const PRE_MIGRATION_MCAP_CAP = MIGRATION_THRESHOLD_USD * 1.2;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -98,8 +97,6 @@ export class TokenSim {
   private sellReturnFactor = 0.9;
   private minCirculatingSupply = SUPPLY * 0.03;
   private maxCirculatingSupply = SUPPLY;
-  private launchProtectionLeftMs = LAUNCH_PROTECTION_MS;
-  private preMigrationMcapCeiling = 0;
   private archetype: TokenArchetype = 'HEALTHY';
   private archetypeProfile!: ArchetypeProfile;
 
@@ -116,11 +113,11 @@ export class TokenSim {
 
     // Token-specific baseline params.
     this.baseLambda = 8 + this.rng.next() * 16;
-    this.baseLiquidityUsd = startMcapUsd * (0.6 + this.rng.next() * 0.8);
+    this.baseLiquidityUsd = startMcapUsd * (1.2 + this.rng.next() * 1.0);
     this.baseTradeSizeUsd = 120 + this.rng.next() * 680;
     this.tradeSigma = 0.75 + this.rng.next() * 0.45;
-    this.impactK = 0.15 + this.rng.next() * 0.25;
-    this.baseVol = 0.025 + this.rng.next() * 0.06;
+    this.impactK = 0.08 + this.rng.next() * 0.14;
+    this.baseVol = 0.015 + this.rng.next() * 0.035;
     this.attention = 0.9 + this.rng.next() * 0.8;
     this.archetype = this.rollArchetype();
     this.archetypeProfile = this.buildArchetypeProfile(this.archetype);
@@ -146,7 +143,6 @@ export class TokenSim {
     const startPriceUsd = startMcapUsd / startCirculatingSupply;
     this.lastPriceUsd = startPriceUsd;
     this.priceAtSpawn = startPriceUsd;
-    this.preMigrationMcapCeiling = Math.max(startMcapUsd, MIGRATION_THRESHOLD_USD * 0.35);
     this.phase = 'NEW';
     this.rollRegime();
 
@@ -216,17 +212,16 @@ export class TokenSim {
 
     const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
     const candleTsMs = nowMs;
-    const inLaunchProtection = this.launchProtectionLeftMs > 0;
     const isLaunchTick = !this.emittedInitialDevBuy;
-    this.launchProtectionLeftMs = Math.max(0, this.launchProtectionLeftMs - realDtSec * 1000);
-    const devFlow = this.buildDevFlow(candleTsMs, realDtSec, effectiveBuyBias);
+    const devFlow = this.buildDevFlow(candleTsMs, realDtSec, effectiveBuyBias, isLaunchTick);
     const prevPriceUsd = this.lastPriceUsd;
 
-    if (inLaunchProtection) {
+    // Minimal warm-up only for launch tick (avoid scripted behavior).
+    if (isLaunchTick) {
       effectiveBuyBias = 1;
-      driftPerSec = Math.max(driftPerSec, 0.03);
-      volMul *= 0.15;
-      lambdaMul *= 0.65;
+      driftPerSec = Math.max(driftPerSec, 0.01);
+      volMul *= 0.05;
+      lambdaMul *= 0.1;
     }
 
     const market = stepMarket(this.rng, {
@@ -238,7 +233,7 @@ export class TokenSim {
       baseTradeSizeUsd: this.baseTradeSizeUsd,
       tradeSigma: this.tradeSigma,
       driftPerSec,
-      volatilityPerSqrtSec: this.baseVol * volMul,
+      volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
       buyBias: effectiveBuyBias,
       impactK: this.impactK,
       whaleChance: isLaunchTick ? 0 : this.getWhaleChance(inMigrationChaos),
@@ -256,20 +251,10 @@ export class TokenSim {
     const circulatingSupply = this.getCirculatingSupply(this.bondingProgress);
     const nextMcapUsd = market.nextPriceUsd * circulatingSupply;
     const migratedOrPastThreshold = this.hasMigrated || this.bondingProgress >= MIGRATE_PROGRESS;
-    const preMigrationMcapCap = MIGRATION_THRESHOLD_USD
-      * (0.4 + this.bondingProgress * 0.8)
-      * PRE_MIGRATION_MCAP_HEADROOM;
-    this.preMigrationMcapCeiling = Math.max(this.preMigrationMcapCeiling, preMigrationMcapCap);
     const mcapCap = migratedOrPastThreshold
       ? MCAP_CAP_USD
-      : Math.min(MCAP_CAP_USD, this.preMigrationMcapCeiling);
-    let clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(mcapCap, nextMcapUsd));
-
-    if (inLaunchProtection) {
-      const launchFloorMcap = prevPriceUsd * circulatingSupply * 1.0025;
-      clampedMcap = Math.max(clampedMcap, Math.min(mcapCap, launchFloorMcap));
-    }
-
+      : Math.min(MCAP_CAP_USD, PRE_MIGRATION_MCAP_CAP);
+    const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(mcapCap, nextMcapUsd));
     const priceUsd = clampedMcap / circulatingSupply;
     this.lastPriceUsd = priceUsd;
 
@@ -390,10 +375,10 @@ export class TokenSim {
 
   private getRegimeVolMul(): number {
     switch (this.regime) {
-      case 'IMPULSE': return 1.35;
-      case 'PAUSE': return 0.45;
-      case 'PULLBACK': return 0.9;
-      case 'DUMP': return 1.45;
+      case 'IMPULSE': return 1.15;
+      case 'PAUSE': return 0.5;
+      case 'PULLBACK': return 0.8;
+      case 'DUMP': return 1.2;
     }
   }
 
@@ -419,13 +404,13 @@ export class TokenSim {
   }
 
   private getWhaleChance(inMigrationChaos: boolean): number {
-    if (inMigrationChaos) return this.regime === 'IMPULSE' ? 0.18 : this.regime === 'DUMP' ? 0.16 : 0.1;
-    if (this.phase === 'MIGRATED') return this.regime === 'IMPULSE' ? 0.08 : this.regime === 'PAUSE' ? 0.02 : 0.05;
-    if (this.phase === 'FINAL') return this.regime === 'IMPULSE' ? 0.11 : this.regime === 'PAUSE' ? 0.03 : 0.07;
-    return this.regime === 'IMPULSE' ? 0.12 : this.regime === 'PAUSE' ? 0.03 : 0.08;
+    if (inMigrationChaos) return this.regime === 'IMPULSE' ? 0.04 : this.regime === 'DUMP' ? 0.035 : 0.025;
+    if (this.phase === 'MIGRATED') return this.regime === 'IMPULSE' ? 0.012 : this.regime === 'PAUSE' ? 0.006 : 0.009;
+    if (this.phase === 'FINAL') return this.regime === 'IMPULSE' ? 0.014 : this.regime === 'PAUSE' ? 0.007 : 0.011;
+    return this.regime === 'IMPULSE' ? 0.015 : this.regime === 'PAUSE' ? 0.008 : 0.012;
   }
 
-  private buildDevFlow(candleTsMs: number, realDtSec: number, buyBias: number): {
+  private buildDevFlow(candleTsMs: number, realDtSec: number, buyBias: number, isLaunchTick: boolean): {
     eventType: 'DEV_BUY' | 'DEV_SELL';
     externalFlow: { buyBoostUsd?: number; sellBoostUsd?: number };
     sizeUsd: number;
@@ -455,7 +440,7 @@ export class TokenSim {
       };
     }
 
-    if (this.launchProtectionLeftMs > 0) return null;
+    if (isLaunchTick) return null;
 
     if (candleTsMs - this.lastDevEventRealMs < 2500) return null;
     if (this.rng.next() >= this.getDevSignalChancePerSec() * realDtSec) return null;
@@ -495,7 +480,7 @@ export class TokenSim {
       this.phase = 'MIGRATED';
       this.rollRegime();
       if (this.rng.next() < this.archetypeProfile.migrationChaosChance) {
-        this.postMigrationChaosLeftMs = 15_000 + this.rng.next() * 45_000;
+        this.postMigrationChaosLeftMs = 8_000 + this.rng.next() * 17_000;
       } else {
         this.postMigrationChaosLeftMs = 0;
       }
@@ -572,9 +557,9 @@ export class TokenSim {
 
   private rollArchetype(): TokenArchetype {
     const u = this.rng.next();
-    if (u < 0.42) return 'DOA';
-    if (u < 0.55) return 'SLOW_COOK';
-    if (u < 0.93) return 'HEALTHY';
+    if (u < 0.56) return 'DOA';
+    if (u < 0.66) return 'SLOW_COOK';
+    if (u < 0.98) return 'HEALTHY';
     return 'CHAOS';
   }
 
@@ -592,7 +577,7 @@ export class TokenSim {
         minSupplyRatio: 0.015,
         maxSupplyRatio: 0.28,
         migrationChaosChance: 0,
-        deathSpiralChance: 0.6,
+        deathSpiralChance: 0.5,
       };
     }
     if (archetype === 'SLOW_COOK') {
@@ -607,8 +592,8 @@ export class TokenSim {
         sellReturnFactorMax: 0.97,
         minSupplyRatio: 0.02,
         maxSupplyRatio: 0.85,
-        migrationChaosChance: 0.2,
-        deathSpiralChance: 0.08,
+        migrationChaosChance: 0.03,
+        deathSpiralChance: 0.04,
       };
     }
     if (archetype === 'CHAOS') {
@@ -623,14 +608,14 @@ export class TokenSim {
         sellReturnFactorMax: 0.88,
         minSupplyRatio: 0.018,
         maxSupplyRatio: 1.0,
-        migrationChaosChance: 0.9,
-        deathSpiralChance: 0.35,
+        migrationChaosChance: 0.8,
+        deathSpiralChance: 0.28,
       };
     }
     return {
       lambdaMul: 1,
-      volMul: 1,
-      driftBiasPerSec: 0.002,
+      volMul: 0.85,
+      driftBiasPerSec: 0.0015,
       maxDevEvents: 3,
       targetRaiseUsdMin: 60_000,
       targetRaiseUsdMax: 95_000,
@@ -638,8 +623,8 @@ export class TokenSim {
       sellReturnFactorMax: 0.9,
       minSupplyRatio: 0.025,
       maxSupplyRatio: 1.0,
-      migrationChaosChance: 0.45,
-      deathSpiralChance: 0.14,
+      migrationChaosChance: 0.15,
+      deathSpiralChance: 0.08,
     };
   }
 
