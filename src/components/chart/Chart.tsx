@@ -180,23 +180,21 @@ export default function Chart({ tokenId }: Props) {
         color: c.close >= c.open ? '#00d4a144' : '#ff4d6a44',
       }));
 
-      if (!initialized && candleData.length > 0) {
+      if (candleData.length > 0) {
+        // Always apply full snapshot: robust against skipped intervals/tab throttling.
         cs.setData(candleData);
         vs.setData(volData);
 
-        // Stable default viewport: avoid giant candles on fresh token open.
-        const total = candleData.length;
-        const visibleBars = 120;
-        chart.timeScale().setVisibleLogicalRange({
-          from: Math.max(-20, total - visibleBars),
-          to: total + 8,
-        });
-        initialized = true;
-      } else if (candleData.length > 0) {
-        const last = candleData[candleData.length - 1]!;
-        const lastVol = volData[volData.length - 1]!;
-        cs.update(last);
-        vs.update(lastVol);
+        if (!initialized) {
+          // Stable default viewport: avoid giant candles on fresh token open.
+          const total = candleData.length;
+          const visibleBars = 120;
+          chart.timeScale().setVisibleLogicalRange({
+            from: Math.max(-20, total - visibleBars),
+            to: total + 8,
+          });
+          initialized = true;
+        }
       }
     });
 
