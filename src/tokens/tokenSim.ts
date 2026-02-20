@@ -60,6 +60,8 @@ export class TokenSim {
   private baseVol = 0.04;
   private lastDevEventRealMs = 0;
   private emittedInitialDevBuy = false;
+  private postMigrationChaosLeftMs = 0;
+  private deathSpiralLeftMs = 0;
 
   // Rolling 5-min stats window (in simMs)
   private statWindow: StatBucket[] = [];
@@ -121,21 +123,43 @@ export class TokenSim {
     if (this.regime === 'IMPULSE') this.attention = Math.min(2.8, this.attention + 0.04 * realDtSec);
     if (this.regime === 'DUMP') this.attention = Math.min(2.8, this.attention + 0.02 * realDtSec);
 
-    const liquidityUsd = this.baseLiquidityUsd * phaseModel.liquidityMul;
+    let lambdaMul = phaseModel.lambdaMul * regimeLambdaMul;
+    let volMul = phaseModel.volMul * regimeVolMul;
+    let liquidityMul = phaseModel.liquidityMul;
+    let driftPerSec = regimeDriftPerSec;
+    let effectiveBuyBias = regimeBuyBias;
+
+    if (this.postMigrationChaosLeftMs > 0) {
+      this.postMigrationChaosLeftMs = Math.max(0, this.postMigrationChaosLeftMs - realDtSec * 1000);
+      const chaosPulse = 0.9 + this.rng.next() * 0.8;
+      lambdaMul *= (2.0 + this.rng.next() * 4.0) * chaosPulse;
+      volMul *= 1.6 + this.rng.next() * 1.7;
+      liquidityMul *= 0.3 + this.rng.next() * 0.4;
+    }
+    if (this.deathSpiralLeftMs > 0) {
+      this.deathSpiralLeftMs = Math.max(0, this.deathSpiralLeftMs - realDtSec * 1000);
+      driftPerSec -= 0.12;
+      effectiveBuyBias = Math.min(effectiveBuyBias, 0.22);
+      lambdaMul *= 1.4;
+      volMul *= 1.3;
+      liquidityMul *= 0.7;
+    }
+
+    const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
     const candleTsMs = nowMs;
-    const devFlow = this.buildDevFlow(candleTsMs, realDtSec);
+    const devFlow = this.buildDevFlow(candleTsMs, realDtSec, effectiveBuyBias);
 
     const market = stepMarket(this.rng, {
       dtSec: realDtSec,
       priceUsd: this.lastPriceUsd,
       liquidityUsd,
       attention: this.attention,
-      baseLambda: this.baseLambda * phaseModel.lambdaMul * regimeLambdaMul,
+      baseLambda: this.baseLambda * lambdaMul,
       baseTradeSizeUsd: this.baseTradeSizeUsd,
       tradeSigma: this.tradeSigma,
-      driftPerSec: regimeDriftPerSec,
-      volatilityPerSqrtSec: this.baseVol * phaseModel.volMul * regimeVolMul,
-      buyBias: regimeBuyBias,
+      driftPerSec,
+      volatilityPerSqrtSec: this.baseVol * volMul,
+      buyBias: effectiveBuyBias,
       impactK: this.impactK,
       externalFlow: devFlow?.externalFlow,
     });
@@ -269,7 +293,7 @@ export class TokenSim {
     return this.regime === 'IMPULSE' ? 0.07 : this.regime === 'DUMP' ? 0.06 : 0.025;
   }
 
-  private buildDevFlow(candleTsMs: number, realDtSec: number): {
+  private buildDevFlow(candleTsMs: number, realDtSec: number, buyBias: number): {
     eventType: 'DEV_BUY' | 'DEV_SELL';
     externalFlow: { buyBoostUsd?: number; sellBoostUsd?: number };
     sizeUsd: number;
@@ -289,7 +313,7 @@ export class TokenSim {
     if (candleTsMs - this.lastDevEventRealMs < 2500) return null;
     if (this.rng.next() >= this.getDevSignalChancePerSec() * realDtSec) return null;
 
-    const isBuy = this.rng.next() < this.getRegimeBuyBias();
+    const isBuy = this.rng.next() < buyBias;
     const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6);
     this.lastDevEventRealMs = candleTsMs;
     if (isBuy) {
@@ -314,6 +338,10 @@ export class TokenSim {
     if (mcap >= MIGRATION_THRESHOLD_USD) {
       this.phase = 'MIGRATED';
       this.rollRegime();
+      this.postMigrationChaosLeftMs = 15_000 + this.rng.next() * 45_000;
+      if (this.rng.next() < 0.22) {
+        this.deathSpiralLeftMs = 5_000 + this.rng.next() * 15_000;
+      }
       return {
         tokenId: this.meta.id,
         tMs: candleTsMs,
