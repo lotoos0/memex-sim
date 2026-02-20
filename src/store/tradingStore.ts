@@ -2,6 +2,7 @@
 import { create } from 'zustand';
 import type { Candle, Tick } from '../engine/types';
 import { persistOrder, persistTrade, saveOrdersSnapshot, saveTradesSnapshot, savePositionHistorySnapshot, loadSnapshots } from '../sim/journal';
+import { useTokenStore } from './tokenStore';
 
 
 /* --- podstawowe typy --- */
@@ -269,6 +270,16 @@ export const useTradingStore = create<Store>((set, get) => ({
 
         const tr: Trade = { id: makeId(), orderId: o.id, price: fillPrice, qty, fee, ts: tk.t, side: o.side };
         trades.push(tr); persistTrade(tr);
+        const activeTokenId = useTokenStore.getState().activeTokenId;
+        if (activeTokenId) {
+          useTokenStore.getState().pushTokenEvents(activeTokenId, [{
+            tokenId: activeTokenId,
+            tMs: tk.t,
+            type: o.side === 'buy' ? 'USER_BUY' : 'USER_SELL',
+            price: fillPrice,
+            size: qty,
+          }]);
+        }
 
         const res = applyFillWithRealized(positions, st.symbol, o.side, qty, fillPrice, fee);
         positions = res.positions;
@@ -296,6 +307,16 @@ export const useTradingStore = create<Store>((set, get) => ({
 
           const tr: Trade = { id: makeId(), orderId: o.id, price: px, qty: o.qty, fee, ts: tk.t, side: o.side };
           trades.push(tr); persistTrade(tr);
+          const activeTokenId = useTokenStore.getState().activeTokenId;
+          if (activeTokenId) {
+            useTokenStore.getState().pushTokenEvents(activeTokenId, [{
+              tokenId: activeTokenId,
+              tMs: tk.t,
+              type: o.side === 'buy' ? 'USER_BUY' : 'USER_SELL',
+              price: px,
+              size: o.qty,
+            }]);
+          }
 
           const res = applyFillWithRealized(positions, st.symbol, o.side, o.qty, px, fee);
           positions = res.positions;
