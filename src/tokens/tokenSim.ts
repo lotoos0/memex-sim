@@ -59,6 +59,7 @@ export class TokenSim {
   private impactK = 0.2;
   private baseVol = 0.04;
   private lastDevEventRealMs = 0;
+  private emittedInitialDevBuy = false;
 
   // Rolling 5-min stats window (in simMs)
   private statWindow: StatBucket[] = [];
@@ -149,7 +150,16 @@ export class TokenSim {
     this.aggr1m.pushTick(candleTsMs, priceUsd, market.volumeUsd);
 
     const events: TokenChartEvent[] = [];
-    if (market.devSignal && candleTsMs - this.lastDevEventRealMs >= 2500) {
+    if (!this.emittedInitialDevBuy) {
+      events.push({
+        tokenId: this.meta.id,
+        tMs: candleTsMs,
+        type: 'DEV_BUY',
+        price: priceUsd,
+      });
+      this.emittedInitialDevBuy = true;
+      this.lastDevEventRealMs = candleTsMs;
+    } else if (market.devSignal && candleTsMs - this.lastDevEventRealMs >= 2500) {
       events.push({
         tokenId: this.meta.id,
         tMs: candleTsMs,
@@ -259,12 +269,12 @@ export class TokenSim {
 
   private getDevSignalChancePerSec(): number {
     if (this.phase === 'MIGRATED') {
-      return this.regime === 'IMPULSE' ? 0.08 : this.regime === 'DUMP' ? 0.07 : 0.03;
+      return this.regime === 'IMPULSE' ? 0.04 : this.regime === 'DUMP' ? 0.035 : 0.015;
     }
     if (this.phase === 'FINAL') {
-      return this.regime === 'IMPULSE' ? 0.16 : this.regime === 'DUMP' ? 0.17 : 0.07;
+      return this.regime === 'IMPULSE' ? 0.08 : this.regime === 'DUMP' ? 0.09 : 0.03;
     }
-    return this.regime === 'IMPULSE' ? 0.14 : this.regime === 'DUMP' ? 0.12 : 0.05;
+    return this.regime === 'IMPULSE' ? 0.07 : this.regime === 'DUMP' ? 0.06 : 0.025;
   }
 
   private updatePhase(candleTsMs: number): TokenChartEvent | null {
