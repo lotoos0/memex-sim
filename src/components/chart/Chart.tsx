@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChart,
   createSeriesMarkers,
   CandlestickSeries,
   HistogramSeries,
   type IChartApi,
+  type ISeriesMarkersPluginApi,
   type ISeriesApi,
+  type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
 import { registry } from '../../tokens/registry';
 import type { Candle } from '../../engine/types';
 import { useTokenStore } from '../../store/tokenStore';
+import type { TokenChartEvent } from '../../chart/tokenChartEvents';
 import { toSeriesMarkers, type DisplayOptions } from '../../chart/tokenChartEvents';
 
 const TF_OPTIONS = [
@@ -19,6 +22,7 @@ const TF_OPTIONS = [
   { label: '30s', sec: 30 },
   { label: '1m', sec: 60 },
 ];
+const EMPTY_EVENTS: TokenChartEvent[] = [];
 
 type Metric = 'mcap' | 'price';
 
@@ -48,10 +52,14 @@ export default function Chart({ tokenId }: Props) {
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
-  const markerApiRef = useRef<any>(null);
+  const markerApiRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   const token = useTokenStore(s => s.tokensById[tokenId]);
-  const tokenEvents = useTokenStore(s => s.eventsByTokenId[tokenId] ?? []);
+  const selectTokenEvents = useCallback(
+    (s: ReturnType<typeof useTokenStore.getState>) => s.eventsByTokenId[tokenId] ?? EMPTY_EVENTS,
+    [tokenId]
+  );
+  const tokenEvents = useTokenStore(selectTokenEvents);
   const supply = token?.supply ?? 1_000_000_000;
 
   const [tfSec, setTfSec] = useState(15);
