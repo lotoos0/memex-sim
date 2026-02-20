@@ -60,7 +60,12 @@ export default function Chart({ tokenId }: Props) {
     [tokenId]
   );
   const tokenEvents = useTokenStore(selectTokenEvents);
-  const supply = token?.supply ?? 1_000_000_000;
+  const circulatingSupply = useMemo(() => {
+    if (!token) return 1_000_000_000;
+    const derived = token.lastPriceUsd > 0 ? token.mcapUsd / token.lastPriceUsd : token.supply;
+    if (!Number.isFinite(derived) || derived <= 0) return token.supply;
+    return derived;
+  }, [token]);
 
   const [tfSec, setTfSec] = useState(15);
   const [metric, setMetric] = useState<Metric>('mcap');
@@ -77,7 +82,7 @@ export default function Chart({ tokenId }: Props) {
     [metric]
   );
 
-  const metricFactor = metric === 'mcap' ? supply : 1;
+  const metricFactor = metric === 'mcap' ? circulatingSupply : 1;
 
   useEffect(() => {
     if (!containerRef.current) return;

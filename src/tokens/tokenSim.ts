@@ -2,7 +2,7 @@ import { RNG } from '../engine/rng';
 import { CandleAggregator } from '../engine/aggregator';
 import type { TokenMeta, TokenRuntime, TokenPhase } from './types';
 import {
-  SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER,
+  SUPPLY, MIGRATION_THRESHOLD_USD, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER,
 } from './types';
 import { stepMarket, type FlowRegime } from './marketModel';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
@@ -40,6 +40,7 @@ type ArchetypeProfile = {
 
 const FINAL_PROGRESS = 0.85;
 const MIGRATE_PROGRESS = 1.0;
+const PRE_MIGRATION_MCAP_HEADROOM = 1.2;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -136,6 +137,12 @@ export class TokenSim {
     this.priceAtSpawn = startPriceUsd;
     this.phase = 'NEW';
     this.rollRegime();
+
+    // Seed initial flat candle so first dev buy grows from launch baseline.
+    this.aggr1s.pushTick(this.spawnRealMs, startPriceUsd, 0);
+    this.aggr15s.pushTick(this.spawnRealMs, startPriceUsd, 0);
+    this.aggr30s.pushTick(this.spawnRealMs, startPriceUsd, 0);
+    this.aggr1m.pushTick(this.spawnRealMs, startPriceUsd, 0);
   }
 
   tick(fallbackRealDtSec: number): TokenChartEvent[] {
@@ -221,7 +228,15 @@ export class TokenSim {
     // Clamp price through mcap limits using current circulating supply.
     const circulatingSupply = this.getCirculatingSupply(this.bondingProgress);
     const nextMcapUsd = market.nextPriceUsd * circulatingSupply;
-    const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(MCAP_CAP_USD, nextMcapUsd));
+    const migratedOrPastThreshold = this.hasMigrated || this.bondingProgress >= MIGRATE_PROGRESS;
+    const preMigrationMcapCap = MCAP_FLOOR_USD
+      + (MIGRATION_THRESHOLD_USD - MCAP_FLOOR_USD)
+      * Math.max(0.02, this.bondingProgress)
+      * PRE_MIGRATION_MCAP_HEADROOM;
+    const mcapCap = migratedOrPastThreshold
+      ? MCAP_CAP_USD
+      : Math.min(MCAP_CAP_USD, preMigrationMcapCap);
+    const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(mcapCap, nextMcapUsd));
     const priceUsd = clampedMcap / circulatingSupply;
     this.lastPriceUsd = priceUsd;
 
