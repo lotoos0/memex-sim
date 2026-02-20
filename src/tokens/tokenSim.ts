@@ -2,7 +2,7 @@ import { RNG } from '../engine/rng';
 import { CandleAggregator } from '../engine/aggregator';
 import type { TokenMeta, TokenRuntime, TokenPhase } from './types';
 import {
-  SUPPLY, MIGRATION_THRESHOLD_USD, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER,
+  SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER,
 } from './types';
 import { stepMarket, type FlowRegime } from './marketModel';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
@@ -28,9 +28,16 @@ type ArchetypeProfile = {
   volMul: number;
   driftBiasPerSec: number;
   maxDevEvents: number;
+  targetRaiseUsdMin: number;
+  targetRaiseUsdMax: number;
+  sellReturnFactorMin: number;
+  sellReturnFactorMax: number;
   migrationChaosChance: number;
   deathSpiralChance: number;
 };
+
+const FINAL_PROGRESS = 0.85;
+const MIGRATE_PROGRESS = 1.0;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -77,6 +84,10 @@ export class TokenSim {
   private deathSpiralLeftMs = 0;
   private hasEnteredFinal = false;
   private hasMigrated = false;
+  private raisedUsd = 0;
+  private targetRaiseUsd = 1;
+  private bondingProgress = 0;
+  private sellReturnFactor = 0.9;
   private archetype: TokenArchetype = 'HEALTHY';
   private archetypeProfile!: ArchetypeProfile;
 
@@ -89,8 +100,6 @@ export class TokenSim {
     this.fateTimeoutSimMs = fateTimeoutSimMs;
     this.spawnRealMs = Date.now();
     this.lastTickRealMs = this.spawnRealMs;
-
-    const startPriceUsd = startMcapUsd / SUPPLY;
     this.rng = new RNG(meta.id);
 
     // Token-specific baseline params.
@@ -103,12 +112,19 @@ export class TokenSim {
     this.attention = 0.9 + this.rng.next() * 0.8;
     this.archetype = this.rollArchetype();
     this.archetypeProfile = this.buildArchetypeProfile(this.archetype);
+    this.targetRaiseUsd = this.archetypeProfile.targetRaiseUsdMin
+      + (this.archetypeProfile.targetRaiseUsdMax - this.archetypeProfile.targetRaiseUsdMin) * this.rng.next();
+    this.sellReturnFactor = this.archetypeProfile.sellReturnFactorMin
+      + (this.archetypeProfile.sellReturnFactorMax - this.archetypeProfile.sellReturnFactorMin) * this.rng.next();
+    this.raisedUsd = Math.max(0, startMcapUsd * 0.08);
+    this.bondingProgress = clamp(this.raisedUsd / this.targetRaiseUsd, 0, 1);
 
     this.aggr1s = new CandleAggregator(1);
     this.aggr15s = new CandleAggregator(15);
     this.aggr30s = new CandleAggregator(30);
     this.aggr1m = new CandleAggregator(60);
 
+    const startPriceUsd = startMcapUsd / SUPPLY;
     this.lastPriceUsd = startPriceUsd;
     this.priceAtSpawn = startPriceUsd;
     this.phase = 'NEW';
@@ -187,6 +203,13 @@ export class TokenSim {
       whaleChance: this.getWhaleChance(inMigrationChaos),
       externalFlow: devFlow?.externalFlow,
     });
+
+    this.raisedUsd = clamp(
+      this.raisedUsd + market.buyUsd - market.sellUsd * this.sellReturnFactor,
+      0,
+      this.targetRaiseUsd
+    );
+    this.bondingProgress = clamp(this.raisedUsd / this.targetRaiseUsd, 0, 1);
 
     // Clamp price to floor/cap.
     const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(MCAP_CAP_USD, market.nextPriceUsd * SUPPLY));
@@ -395,18 +418,16 @@ export class TokenSim {
   private updatePhase(candleTsMs: number): TokenChartEvent | null {
     if (this.phase === 'RUGGED' || this.phase === 'DEAD' || this.phase === 'MIGRATED') return null;
 
-    const mcap = this.lastPriceUsd * SUPPLY;
-
-    // Monotonic latches:
-    // - once FINAL is entered, token doesn't return to NEW
-    // - once MIGRATED is entered, token doesn't return to FINAL/NEW
     if (this.hasMigrated) {
       this.phase = 'MIGRATED';
       return null;
     }
 
-    if (mcap >= MIGRATION_THRESHOLD_USD && !this.hasMigrated) {
+    if (!this.hasEnteredFinal && this.bondingProgress >= FINAL_PROGRESS) {
       this.hasEnteredFinal = true;
+    }
+
+    if (this.bondingProgress >= MIGRATE_PROGRESS && !this.hasMigrated) {
       this.hasMigrated = true;
       this.phase = 'MIGRATED';
       this.rollRegime();
@@ -428,7 +449,6 @@ export class TokenSim {
       };
     }
 
-    if (mcap >= 30_000) this.hasEnteredFinal = true;
     this.phase = this.hasEnteredFinal ? 'FINAL' : 'NEW';
 
     if (this.simTimeMs >= this.fateTimeoutSimMs) {
@@ -458,7 +478,7 @@ export class TokenSim {
       lastPriceUsd: this.lastPriceUsd,
       mcapUsd: mcap,
       liquidityUsd: mcap * 0.15,
-      bondingCurvePct: Math.min(100, (mcap / MIGRATION_THRESHOLD_USD) * 100),
+      bondingCurvePct: Math.min(100, this.bondingProgress * 100),
       vol5mUsd: vol5m,
       buys5m,
       sells5m,
@@ -495,6 +515,10 @@ export class TokenSim {
         volMul: 0.5,
         driftBiasPerSec: -0.01,
         maxDevEvents: 2,
+        targetRaiseUsdMin: 110_000,
+        targetRaiseUsdMax: 180_000,
+        sellReturnFactorMin: 0.96,
+        sellReturnFactorMax: 1.0,
         migrationChaosChance: 0,
         deathSpiralChance: 0.6,
       };
@@ -505,6 +529,10 @@ export class TokenSim {
         volMul: 0.85,
         driftBiasPerSec: 0.0015,
         maxDevEvents: 3,
+        targetRaiseUsdMin: 100_000,
+        targetRaiseUsdMax: 150_000,
+        sellReturnFactorMin: 0.9,
+        sellReturnFactorMax: 0.97,
         migrationChaosChance: 0.2,
         deathSpiralChance: 0.08,
       };
@@ -515,6 +543,10 @@ export class TokenSim {
         volMul: 1.4,
         driftBiasPerSec: 0.003,
         maxDevEvents: 5,
+        targetRaiseUsdMin: 55_000,
+        targetRaiseUsdMax: 90_000,
+        sellReturnFactorMin: 0.75,
+        sellReturnFactorMax: 0.88,
         migrationChaosChance: 0.9,
         deathSpiralChance: 0.35,
       };
@@ -524,6 +556,10 @@ export class TokenSim {
       volMul: 1,
       driftBiasPerSec: 0.002,
       maxDevEvents: 3,
+      targetRaiseUsdMin: 60_000,
+      targetRaiseUsdMax: 95_000,
+      sellReturnFactorMin: 0.8,
+      sellReturnFactorMax: 0.9,
       migrationChaosChance: 0.45,
       deathSpiralChance: 0.14,
     };

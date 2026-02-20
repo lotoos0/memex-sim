@@ -27,6 +27,8 @@ export interface MarketStepInput {
 export interface MarketStepOutput {
   nextPriceUsd: number;
   volumeUsd: number;
+  buyUsd: number;
+  sellUsd: number;
   buys: number;
   sells: number;
 }
@@ -91,5 +93,5 @@ export function stepMarket(rng: RNG, input: MarketStepInput): MarketStepOutput {
   const noise = Math.max(0, input.volatilityPerSqrtSec) * Math.sqrt(dtSec) * rng.normal();
   const dLog = input.driftPerSec * dtSec + impact + noise;
   const nextPriceUsd = Math.max(1e-12, input.priceUsd * Math.exp(dLog));
-  return { nextPriceUsd, volumeUsd, buys, sells };
+  return { nextPriceUsd, volumeUsd, buyUsd: buyFlow, sellUsd: sellFlow, buys, sells };
 }
