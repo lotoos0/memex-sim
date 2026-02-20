@@ -54,6 +54,8 @@ export type CurveDebugSnapshot = {
   vBase: number;
   rBase: number;
   k: number;
+  kDriftPct: number;
+  invalidState: boolean;
   priceCurveUsd: number;
   mcapCurveUsd: number;
   feeBps: number;
@@ -123,6 +125,8 @@ export class TokenSim {
   private curveRealBase = 0;
   private curveRealToken = 0;
   private curveInitialRealToken = 1;
+  private curveKStart = 1;
+  private invalidCurveState = false;
   private lastCurveSwap: CurveSwapDebug | null = null;
   private archetype: TokenArchetype = 'HEALTHY';
   private archetypeProfile!: ArchetypeProfile;
@@ -276,9 +280,13 @@ export class TokenSim {
     let priceUsd: number;
     let mcapUsd: number;
     if (!this.hasMigrated && this.phase !== 'MIGRATED') {
+      this.sanitizeCurveState();
       const buyResult = this.executeCurveBuy(market.buyUsd);
       const sellTokenIntent = prevPriceUsd > 0 ? market.sellUsd / prevPriceUsd : 0;
-      const sellResult = this.executeCurveSell(sellTokenIntent);
+      const safeSellIntent = Number.isFinite(sellTokenIntent) ? sellTokenIntent : 0;
+      const sellResult = this.curveRealToken <= CURVE_TOKEN_EPS
+        ? { tokenIn: 0, baseOutUsd: 0 }
+        : this.executeCurveSell(safeSellIntent);
       volumeUsd = buyResult.baseInUsd + sellResult.baseOutUsd;
 
       if (buyResult.baseInUsd > 0 || sellResult.baseOutUsd > 0) {
@@ -299,6 +307,7 @@ export class TokenSim {
         }
       }
 
+      this.sanitizeCurveState();
       this.bondingProgress = this.getCurveProgress();
       priceUsd = this.getCurvePriceUsd();
       mcapUsd = this.getCurveMcapUsd();
@@ -619,6 +628,7 @@ export class TokenSim {
   getLastPriceUsd(): number { return this.lastPriceUsd; }
   getLastMcapUsd(): number { return this.lastMcapUsd; }
   getCurveDebugSnapshot(): CurveDebugSnapshot {
+    const k = this.curveVirtualBase * this.curveVirtualToken;
     return {
       phase: this.phase,
       hasEnteredFinal: this.hasEnteredFinal,
@@ -629,7 +639,9 @@ export class TokenSim {
       vTok: this.curveVirtualToken,
       vBase: this.curveVirtualBase,
       rBase: this.curveRealBase,
-      k: this.curveVirtualBase * this.curveVirtualToken,
+      k,
+      kDriftPct: this.curveKStart > 0 ? ((k - this.curveKStart) / this.curveKStart) * 100 : 0,
+      invalidState: this.invalidCurveState,
       priceCurveUsd: this.getCurvePriceUsd(),
       mcapCurveUsd: this.getCurveMcapUsd(),
       feeBps: CURVE_FEE_BPS,
@@ -714,6 +726,8 @@ export class TokenSim {
     this.curveVirtualToken = Math.max(CURVE_TOKEN_EPS, this.curveInitialRealToken * Math.max(1.01, virtualMul));
     this.curveVirtualBase = Math.max(1, startPrice * this.curveVirtualToken);
     this.curveRealBase = Math.max(0, startMcapUsd * 0.02);
+    this.curveKStart = this.curveVirtualBase * this.curveVirtualToken;
+    this.invalidCurveState = false;
     this.bondingProgress = 0;
   }
 
@@ -730,7 +744,9 @@ export class TokenSim {
   }
 
   private executeCurveBuy(grossBaseInUsd: number): { baseInUsd: number; tokensOut: number } {
-    if (grossBaseInUsd <= 0 || this.curveRealToken <= CURVE_TOKEN_EPS) return { baseInUsd: 0, tokensOut: 0 };
+    if (!Number.isFinite(grossBaseInUsd) || grossBaseInUsd <= 0 || this.curveRealToken <= CURVE_TOKEN_EPS) {
+      return { baseInUsd: 0, tokensOut: 0 };
+    }
 
     const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
     const netBaseIn = grossBaseInUsd * feeFactor;
@@ -739,10 +755,24 @@ export class TokenSim {
     const x = Math.max(CURVE_TOKEN_EPS, this.curveVirtualBase);
     const y = Math.max(CURVE_TOKEN_EPS, this.curveVirtualToken);
     const k = x * y;
+    if (!Number.isFinite(k) || k <= 0) {
+      this.invalidCurveState = true;
+      return { baseInUsd: 0, tokensOut: 0 };
+    }
     const newX = x + netBaseIn;
+    if (!Number.isFinite(newX) || newX <= CURVE_TOKEN_EPS) {
+      this.invalidCurveState = true;
+      return { baseInUsd: 0, tokensOut: 0 };
+    }
     const newY = k / newX;
+    if (!Number.isFinite(newY)) {
+      this.invalidCurveState = true;
+      return { baseInUsd: 0, tokensOut: 0 };
+    }
     let tokensOut = y - newY;
     let netBaseUsed = netBaseIn;
+    const maxTokensOut = Math.max(0, Math.min(this.curveRealToken, y - CURVE_TOKEN_EPS));
+    tokensOut = clamp(tokensOut, 0, maxTokensOut);
 
     if (tokensOut > this.curveRealToken) {
       tokensOut = this.curveRealToken;
@@ -753,14 +783,14 @@ export class TokenSim {
     if (tokensOut <= 0 || netBaseUsed <= 0) return { baseInUsd: 0, tokensOut: 0 };
 
     this.curveVirtualBase = x + netBaseUsed;
-    this.curveVirtualToken = y - tokensOut;
+    this.curveVirtualToken = Math.max(CURVE_TOKEN_EPS, y - tokensOut);
     this.curveRealToken = Math.max(0, this.curveRealToken - tokensOut);
     this.curveRealBase += netBaseUsed;
     return { baseInUsd: netBaseUsed, tokensOut };
   }
 
   private executeCurveSell(tokenIn: number): { tokenIn: number; baseOutUsd: number } {
-    if (tokenIn <= 0 || this.curveRealBase <= 0) return { tokenIn: 0, baseOutUsd: 0 };
+    if (!Number.isFinite(tokenIn) || tokenIn <= 0 || this.curveRealBase <= 0) return { tokenIn: 0, baseOutUsd: 0 };
 
     const cappedTokenIn = Math.min(tokenIn, this.curveInitialRealToken - this.curveRealToken);
     if (cappedTokenIn <= 0) return { tokenIn: 0, baseOutUsd: 0 };
@@ -769,8 +799,20 @@ export class TokenSim {
     const x = Math.max(CURVE_TOKEN_EPS, this.curveVirtualBase);
     const y = Math.max(CURVE_TOKEN_EPS, this.curveVirtualToken);
     const k = x * y;
+    if (!Number.isFinite(k) || k <= 0) {
+      this.invalidCurveState = true;
+      return { tokenIn: 0, baseOutUsd: 0 };
+    }
     const newY = y + cappedTokenIn;
+    if (!Number.isFinite(newY) || newY <= CURVE_TOKEN_EPS) {
+      this.invalidCurveState = true;
+      return { tokenIn: 0, baseOutUsd: 0 };
+    }
     const newX = k / newY;
+    if (!Number.isFinite(newX)) {
+      this.invalidCurveState = true;
+      return { tokenIn: 0, baseOutUsd: 0 };
+    }
     const grossBaseOut = Math.max(0, x - newX);
     let baseOut = grossBaseOut * feeFactor;
     if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
@@ -781,10 +823,34 @@ export class TokenSim {
     if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
 
     const grossUsed = baseOut / feeFactor;
+    if (!Number.isFinite(grossUsed) || grossUsed <= 0) {
+      this.invalidCurveState = true;
+      return { tokenIn: 0, baseOutUsd: 0 };
+    }
     this.curveVirtualBase = Math.max(CURVE_TOKEN_EPS, x - grossUsed);
     this.curveVirtualToken = y + cappedTokenIn;
     this.curveRealBase = Math.max(0, this.curveRealBase - baseOut);
     this.curveRealToken = Math.min(this.curveInitialRealToken, this.curveRealToken + cappedTokenIn);
     return { tokenIn: cappedTokenIn, baseOutUsd: baseOut };
+  }
+
+  private sanitizeCurveState(): void {
+    const valid =
+      Number.isFinite(this.curveVirtualBase)
+      && Number.isFinite(this.curveVirtualToken)
+      && Number.isFinite(this.curveRealBase)
+      && Number.isFinite(this.curveRealToken)
+      && Number.isFinite(this.curveInitialRealToken);
+    if (!valid) this.invalidCurveState = true;
+
+    this.curveInitialRealToken = Math.max(CURVE_TOKEN_EPS, Number.isFinite(this.curveInitialRealToken) ? this.curveInitialRealToken : CURVE_TOKEN_EPS);
+    this.curveVirtualToken = Math.max(CURVE_TOKEN_EPS, Number.isFinite(this.curveVirtualToken) ? this.curveVirtualToken : CURVE_TOKEN_EPS);
+    this.curveVirtualBase = Math.max(CURVE_TOKEN_EPS, Number.isFinite(this.curveVirtualBase) ? this.curveVirtualBase : CURVE_TOKEN_EPS);
+    this.curveRealBase = Math.max(0, Number.isFinite(this.curveRealBase) ? this.curveRealBase : 0);
+    this.curveRealToken = clamp(
+      Number.isFinite(this.curveRealToken) ? this.curveRealToken : 0,
+      0,
+      this.curveInitialRealToken
+    );
   }
 }
