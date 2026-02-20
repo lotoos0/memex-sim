@@ -64,6 +64,7 @@ const FINAL_PROGRESS = 0.85;
 const MIGRATE_PROGRESS = 1.0;
 const CURVE_FEE_BPS = 100;
 const CURVE_TOKEN_EPS = 1e-6;
+const POST_MIGRATION_WARMUP_MS = 1_500;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -112,6 +113,7 @@ export class TokenSim {
   private emittedDoaSell = false;
   private devEventsUsed = 0;
   private postMigrationChaosLeftMs = 0;
+  private postMigrationWarmupMs = 0;
   private deathSpiralLeftMs = 0;
   private hasEnteredFinal = false;
   private hasMigrated = false;
@@ -208,6 +210,7 @@ export class TokenSim {
     let liquidityMul = phaseModel.liquidityMul;
     let driftPerSec = regimeDriftPerSec + this.archetypeProfile.driftBiasPerSec;
     let effectiveBuyBias = regimeBuyBias;
+    const inPostMigrationWarmup = this.phase === 'MIGRATED' && this.postMigrationWarmupMs > 0;
 
     lambdaMul *= this.archetypeProfile.lambdaMul;
     volMul *= this.archetypeProfile.volMul;
@@ -227,11 +230,22 @@ export class TokenSim {
       volMul *= 1.3;
       liquidityMul *= 0.7;
     }
+    if (inPostMigrationWarmup) {
+      this.postMigrationWarmupMs = Math.max(0, this.postMigrationWarmupMs - realDtSec * 1000);
+      volMul *= 0.5;
+      lambdaMul *= 0.9;
+    }
 
     const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
     const candleTsMs = nowMs;
     const isLaunchTick = !this.emittedInitialDevBuy;
-    const devFlow = this.buildDevFlow(candleTsMs, realDtSec, effectiveBuyBias, isLaunchTick);
+    const devFlow = this.buildDevFlow(
+      candleTsMs,
+      realDtSec,
+      effectiveBuyBias,
+      isLaunchTick,
+      !inPostMigrationWarmup
+    );
     const prevPriceUsd = this.lastPriceUsd;
 
     // Minimal warm-up only for launch tick (avoid scripted behavior).
@@ -254,7 +268,7 @@ export class TokenSim {
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
       buyBias: effectiveBuyBias,
       impactK: this.impactK,
-      whaleChance: isLaunchTick ? 0 : this.getWhaleChance(inMigrationChaos),
+      whaleChance: (isLaunchTick || inPostMigrationWarmup) ? 0 : this.getWhaleChance(inMigrationChaos),
       externalFlow: devFlow?.externalFlow,
     });
 
@@ -450,7 +464,13 @@ export class TokenSim {
     return this.regime === 'IMPULSE' ? 0.015 : this.regime === 'PAUSE' ? 0.008 : 0.012;
   }
 
-  private buildDevFlow(candleTsMs: number, realDtSec: number, buyBias: number, isLaunchTick: boolean): {
+  private buildDevFlow(
+    candleTsMs: number,
+    realDtSec: number,
+    buyBias: number,
+    isLaunchTick: boolean,
+    allowSignals: boolean
+  ): {
     eventType: 'DEV_BUY' | 'DEV_SELL';
     externalFlow: { buyBoostUsd?: number; sellBoostUsd?: number };
     sizeUsd: number;
@@ -480,7 +500,7 @@ export class TokenSim {
       };
     }
 
-    if (isLaunchTick) return null;
+    if (isLaunchTick || !allowSignals) return null;
 
     if (candleTsMs - this.lastDevEventRealMs < 2500) return null;
     if (this.rng.next() >= this.getDevSignalChancePerSec() * realDtSec) return null;
@@ -518,6 +538,10 @@ export class TokenSim {
     if ((this.bondingProgress >= MIGRATE_PROGRESS || this.curveRealToken <= CURVE_TOKEN_EPS) && !this.hasMigrated) {
       this.hasMigrated = true;
       this.phase = 'MIGRATED';
+      this.postMigrationWarmupMs = POST_MIGRATION_WARMUP_MS;
+      // Seed post-migration liquidity from curve reserves to avoid first-tick teleport.
+      const handoffLiquidity = Math.max(5_000, (this.curveVirtualBase + this.curveRealBase) * 3);
+      this.baseLiquidityUsd = Math.max(this.baseLiquidityUsd, handoffLiquidity);
       this.rollRegime();
       if (this.rng.next() < this.archetypeProfile.migrationChaosChance) {
         this.postMigrationChaosLeftMs = 8_000 + this.rng.next() * 17_000;
