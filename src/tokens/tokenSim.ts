@@ -21,6 +21,20 @@ type PhaseModel = {
   attentionDecayPerSec: number;
 };
 
+type TokenArchetype = 'DOA' | 'SLOW_COOK' | 'HEALTHY' | 'CHAOS';
+
+type ArchetypeProfile = {
+  lambdaMul: number;
+  volMul: number;
+  driftBiasPerSec: number;
+  maxDevEvents: number;
+  finalDelaySimMs: number;
+  migrationDelaySimMs: number;
+  canMigrate: boolean;
+  migrationChaosChance: number;
+  deathSpiralChance: number;
+};
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -60,8 +74,12 @@ export class TokenSim {
   private baseVol = 0.04;
   private lastDevEventRealMs = 0;
   private emittedInitialDevBuy = false;
+  private emittedDoaSell = false;
+  private devEventsUsed = 0;
   private postMigrationChaosLeftMs = 0;
   private deathSpiralLeftMs = 0;
+  private archetype: TokenArchetype = 'HEALTHY';
+  private archetypeProfile!: ArchetypeProfile;
 
   // Rolling 5-min stats window (in simMs)
   private statWindow: StatBucket[] = [];
@@ -84,6 +102,8 @@ export class TokenSim {
     this.impactK = 0.15 + this.rng.next() * 0.25;
     this.baseVol = 0.025 + this.rng.next() * 0.06;
     this.attention = 0.9 + this.rng.next() * 0.8;
+    this.archetype = this.rollArchetype();
+    this.archetypeProfile = this.buildArchetypeProfile(this.archetype);
 
     this.aggr1s = new CandleAggregator(1);
     this.aggr15s = new CandleAggregator(15);
@@ -127,8 +147,11 @@ export class TokenSim {
     let lambdaMul = phaseModel.lambdaMul * regimeLambdaMul;
     let volMul = phaseModel.volMul * regimeVolMul;
     let liquidityMul = phaseModel.liquidityMul;
-    let driftPerSec = regimeDriftPerSec;
+    let driftPerSec = regimeDriftPerSec + this.archetypeProfile.driftBiasPerSec;
     let effectiveBuyBias = regimeBuyBias;
+
+    lambdaMul *= this.archetypeProfile.lambdaMul;
+    volMul *= this.archetypeProfile.volMul;
 
     if (this.postMigrationChaosLeftMs > 0) {
       this.postMigrationChaosLeftMs = Math.max(0, this.postMigrationChaosLeftMs - realDtSec * 1000);
@@ -235,6 +258,21 @@ export class TokenSim {
 
   private rollRegime(): void {
     const u = this.rng.next();
+    if (this.archetype === 'DOA') {
+      this.regime = u < 0.12 ? 'IMPULSE' : u < 0.75 ? 'PAUSE' : 'DUMP';
+      this.regimeTtlSec = 4 + this.rng.next() * 18;
+      return;
+    }
+    if (this.archetype === 'SLOW_COOK') {
+      this.regime = u < 0.2 ? 'IMPULSE' : u < 0.62 ? 'PAUSE' : u < 0.93 ? 'PULLBACK' : 'DUMP';
+      this.regimeTtlSec = 5 + this.rng.next() * 16;
+      return;
+    }
+    if (this.archetype === 'CHAOS') {
+      this.regime = u < 0.3 ? 'IMPULSE' : u < 0.42 ? 'PAUSE' : u < 0.75 ? 'PULLBACK' : 'DUMP';
+      this.regimeTtlSec = 2 + this.rng.next() * 10;
+      return;
+    }
     if (this.phase === 'MIGRATED') {
       this.regime = u < 0.15 ? 'IMPULSE' : u < 0.65 ? 'PAUSE' : u < 0.92 ? 'PULLBACK' : 'DUMP';
       this.regimeTtlSec = 4 + this.rng.next() * 14;
@@ -286,6 +324,8 @@ export class TokenSim {
   }
 
   private getDevSignalChancePerSec(): number {
+    if (this.devEventsUsed >= this.archetypeProfile.maxDevEvents) return 0;
+    if (this.archetype === 'DOA') return 0.015;
     if (this.phase === 'MIGRATED') {
       return this.regime === 'IMPULSE' ? 0.04 : this.regime === 'DUMP' ? 0.035 : 0.015;
     }
@@ -312,9 +352,22 @@ export class TokenSim {
       this.emittedInitialDevBuy = true;
       this.lastDevEventRealMs = candleTsMs;
       const sizeUsd = this.baseTradeSizeUsd * (3 + this.rng.next() * 3.5);
+      this.devEventsUsed += 1;
       return {
         eventType: 'DEV_BUY',
         externalFlow: { buyBoostUsd: sizeUsd },
+        sizeUsd,
+      };
+    }
+
+    if (this.archetype === 'DOA' && !this.emittedDoaSell && this.simTimeMs >= 120_000) {
+      this.emittedDoaSell = true;
+      this.lastDevEventRealMs = candleTsMs;
+      const sizeUsd = this.baseTradeSizeUsd * (6 + this.rng.next() * 8);
+      this.devEventsUsed += 1;
+      return {
+        eventType: 'DEV_SELL',
+        externalFlow: { sellBoostUsd: sizeUsd },
         sizeUsd,
       };
     }
@@ -325,6 +378,7 @@ export class TokenSim {
     const isBuy = this.rng.next() < buyBias;
     const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6);
     this.lastDevEventRealMs = candleTsMs;
+    this.devEventsUsed += 1;
     if (isBuy) {
       return {
         eventType: 'DEV_BUY',
@@ -343,13 +397,25 @@ export class TokenSim {
     if (this.phase === 'RUGGED' || this.phase === 'DEAD' || this.phase === 'MIGRATED') return null;
 
     const mcap = this.lastPriceUsd * SUPPLY;
+    const age = this.simTimeMs;
+    const canBeFinal = age >= this.archetypeProfile.finalDelaySimMs;
+    const canMigrateByTime = age >= this.archetypeProfile.migrationDelaySimMs;
 
-    if (mcap >= MIGRATION_THRESHOLD_USD) {
+    if (this.phase === 'FINAL' &&
+        this.archetypeProfile.canMigrate &&
+        canMigrateByTime &&
+        mcap >= MIGRATION_THRESHOLD_USD) {
       this.phase = 'MIGRATED';
       this.rollRegime();
-      this.postMigrationChaosLeftMs = 15_000 + this.rng.next() * 45_000;
-      if (this.rng.next() < 0.22) {
+      if (this.rng.next() < this.archetypeProfile.migrationChaosChance) {
+        this.postMigrationChaosLeftMs = 15_000 + this.rng.next() * 45_000;
+      } else {
+        this.postMigrationChaosLeftMs = 0;
+      }
+      if (this.rng.next() < this.archetypeProfile.deathSpiralChance) {
         this.deathSpiralLeftMs = 5_000 + this.rng.next() * 15_000;
+      } else {
+        this.deathSpiralLeftMs = 0;
       }
       return {
         tokenId: this.meta.id,
@@ -359,7 +425,7 @@ export class TokenSim {
       };
     }
 
-    this.phase = mcap >= 30_000 ? 'FINAL' : 'NEW';
+    this.phase = canBeFinal && mcap >= 30_000 ? 'FINAL' : 'NEW';
 
     if (this.simTimeMs >= this.fateTimeoutSimMs) {
       this.phase = 'RUGGED';
@@ -409,4 +475,65 @@ export class TokenSim {
   getSimTimeMs(): number { return this.simTimeMs; }
   getSpawnRealMs(): number { return this.spawnRealMs; }
   getLastPriceUsd(): number { return this.lastPriceUsd; }
+
+  private rollArchetype(): TokenArchetype {
+    const u = this.rng.next();
+    if (u < 0.42) return 'DOA';
+    if (u < 0.55) return 'SLOW_COOK';
+    if (u < 0.93) return 'HEALTHY';
+    return 'CHAOS';
+  }
+
+  private buildArchetypeProfile(archetype: TokenArchetype): ArchetypeProfile {
+    if (archetype === 'DOA') {
+      return {
+        lambdaMul: 0.45,
+        volMul: 0.5,
+        driftBiasPerSec: -0.01,
+        maxDevEvents: 2,
+        finalDelaySimMs: 24 * 60 * 60_000,
+        migrationDelaySimMs: 24 * 60 * 60_000,
+        canMigrate: false,
+        migrationChaosChance: 0,
+        deathSpiralChance: 0.6,
+      };
+    }
+    if (archetype === 'SLOW_COOK') {
+      return {
+        lambdaMul: 0.9,
+        volMul: 0.85,
+        driftBiasPerSec: 0.0015,
+        maxDevEvents: 3,
+        finalDelaySimMs: (40 + this.rng.next() * 80) * 60_000,
+        migrationDelaySimMs: (140 + this.rng.next() * 180) * 60_000,
+        canMigrate: true,
+        migrationChaosChance: 0.2,
+        deathSpiralChance: 0.08,
+      };
+    }
+    if (archetype === 'CHAOS') {
+      return {
+        lambdaMul: 1.35,
+        volMul: 1.4,
+        driftBiasPerSec: 0.003,
+        maxDevEvents: 5,
+        finalDelaySimMs: (5 + this.rng.next() * 20) * 60_000,
+        migrationDelaySimMs: (20 + this.rng.next() * 60) * 60_000,
+        canMigrate: true,
+        migrationChaosChance: 0.9,
+        deathSpiralChance: 0.35,
+      };
+    }
+    return {
+      lambdaMul: 1,
+      volMul: 1,
+      driftBiasPerSec: 0.002,
+      maxDevEvents: 3,
+      finalDelaySimMs: (10 + this.rng.next() * 35) * 60_000,
+      migrationDelaySimMs: (45 + this.rng.next() * 120) * 60_000,
+      canMigrate: true,
+      migrationChaosChance: 0.45,
+      deathSpiralChance: 0.14,
+    };
+  }
 }
