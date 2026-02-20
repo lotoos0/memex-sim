@@ -208,7 +208,7 @@ export default function Chart({ tokenId }: Props) {
         if (!initialized) {
           // Stable default viewport: avoid giant candles on fresh token open.
           const total = candleData.length;
-          const visibleBars = 120;
+          const visibleBars = 200;
           chart.timeScale().setVisibleLogicalRange({
             from: Math.max(-20, total - visibleBars),
             to: total + 8,

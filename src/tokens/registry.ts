@@ -156,18 +156,6 @@ class TokenRegistry {
         setTimeout(() => this.maybeSpawn(), 1000);
       }
     }
-
-    // Trim migrated column (keep MAX_MIGRATED newest by mcap)
-    const migrated = [...this.tokens.entries()]
-      .filter(([, s]) => s.getPhase() === 'MIGRATED')
-      .sort(([, a], [, b]) => b.getLastPriceUsd() - a.getLastPriceUsd());
-    if (migrated.length > MAX_MIGRATED) {
-      const toRemove = migrated.slice(MAX_MIGRATED);
-      for (const [id] of toRemove) {
-        this.tokens.delete(id);
-        useTokenStore.getState().removeToken(id);
-      }
-    }
   }
 }
 
