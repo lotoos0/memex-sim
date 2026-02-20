@@ -159,6 +159,8 @@ export default function TokenPage() {
           <span>vBase: <span className="text-ax-text">{fmtDebug(curveDebug.vBase)}</span></span>
           <span>rBase: <span className="text-ax-text">{fmtDebug(curveDebug.rBase)}</span></span>
           <span>k: <span className="text-ax-text">{fmtDebug(curveDebug.k)}</span></span>
+          <span>kDrift: <span className={Math.abs(curveDebug.kDriftPct) > 0.5 ? 'text-ax-red' : 'text-ax-text'}>{curveDebug.kDriftPct.toFixed(4)}%</span></span>
+          <span>invalid: <span className={curveDebug.invalidState ? 'text-ax-red' : 'text-ax-green'}>{curveDebug.invalidState ? 'yes' : 'no'}</span></span>
           <span>priceCurve: <span className="text-ax-text">${fmtDebug(curveDebug.priceCurveUsd)}</span></span>
           <span>mcapCurve: <span className="text-ax-text">${fmtDebug(curveDebug.mcapCurveUsd)}</span></span>
 
