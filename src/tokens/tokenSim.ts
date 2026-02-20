@@ -122,6 +122,9 @@ export class TokenSim {
     if (this.regime === 'DUMP') this.attention = Math.min(2.8, this.attention + 0.02 * realDtSec);
 
     const liquidityUsd = this.baseLiquidityUsd * phaseModel.liquidityMul;
+    const candleTsMs = nowMs;
+    const devFlow = this.buildDevFlow(candleTsMs, realDtSec);
+
     const market = stepMarket(this.rng, {
       dtSec: realDtSec,
       priceUsd: this.lastPriceUsd,
@@ -134,8 +137,7 @@ export class TokenSim {
       volatilityPerSqrtSec: this.baseVol * phaseModel.volMul * regimeVolMul,
       buyBias: regimeBuyBias,
       impactK: this.impactK,
-      devSignalChancePerSec: this.getDevSignalChancePerSec(),
-      devBuyBias: regimeBuyBias,
+      externalFlow: devFlow?.externalFlow,
     });
 
     // Clamp price to floor/cap.
@@ -143,30 +145,20 @@ export class TokenSim {
     const priceUsd = clampedMcap / SUPPLY;
     this.lastPriceUsd = priceUsd;
 
-    const candleTsMs = nowMs;
     this.aggr1s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
     this.aggr15s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
     this.aggr30s.pushTick(candleTsMs, priceUsd, market.volumeUsd);
     this.aggr1m.pushTick(candleTsMs, priceUsd, market.volumeUsd);
 
     const events: TokenChartEvent[] = [];
-    if (!this.emittedInitialDevBuy) {
+    if (devFlow?.eventType) {
       events.push({
         tokenId: this.meta.id,
         tMs: candleTsMs,
-        type: 'DEV_BUY',
+        type: devFlow.eventType,
         price: priceUsd,
+        size: devFlow.sizeUsd,
       });
-      this.emittedInitialDevBuy = true;
-      this.lastDevEventRealMs = candleTsMs;
-    } else if (market.devSignal && candleTsMs - this.lastDevEventRealMs >= 2500) {
-      events.push({
-        tokenId: this.meta.id,
-        tMs: candleTsMs,
-        type: market.devSignal,
-        price: priceUsd,
-      });
-      this.lastDevEventRealMs = candleTsMs;
     }
 
     this.statWindow.push({
@@ -275,6 +267,43 @@ export class TokenSim {
       return this.regime === 'IMPULSE' ? 0.08 : this.regime === 'DUMP' ? 0.09 : 0.03;
     }
     return this.regime === 'IMPULSE' ? 0.07 : this.regime === 'DUMP' ? 0.06 : 0.025;
+  }
+
+  private buildDevFlow(candleTsMs: number, realDtSec: number): {
+    eventType: 'DEV_BUY' | 'DEV_SELL';
+    externalFlow: { buyBoostUsd?: number; sellBoostUsd?: number };
+    sizeUsd: number;
+  } | null {
+    // First visible dev action: seed buy that actually impacts price/volume.
+    if (!this.emittedInitialDevBuy) {
+      this.emittedInitialDevBuy = true;
+      this.lastDevEventRealMs = candleTsMs;
+      const sizeUsd = this.baseTradeSizeUsd * (3 + this.rng.next() * 3.5);
+      return {
+        eventType: 'DEV_BUY',
+        externalFlow: { buyBoostUsd: sizeUsd },
+        sizeUsd,
+      };
+    }
+
+    if (candleTsMs - this.lastDevEventRealMs < 2500) return null;
+    if (this.rng.next() >= this.getDevSignalChancePerSec() * realDtSec) return null;
+
+    const isBuy = this.rng.next() < this.getRegimeBuyBias();
+    const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6);
+    this.lastDevEventRealMs = candleTsMs;
+    if (isBuy) {
+      return {
+        eventType: 'DEV_BUY',
+        externalFlow: { buyBoostUsd: sizeUsd },
+        sizeUsd,
+      };
+    }
+    return {
+      eventType: 'DEV_SELL',
+      externalFlow: { sellBoostUsd: sizeUsd },
+      sizeUsd,
+    };
   }
 
   private updatePhase(candleTsMs: number): TokenChartEvent | null {
