@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Pencil } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Pencil, RefreshCcw } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
 import { useTradingStore } from '../../store/tradingStore';
+import { usdToSol } from '../../store/walletStore';
 
 interface Props {
   token: TokenState;
@@ -14,8 +15,24 @@ function fmtUsd(v: number): string {
   return `$${v.toFixed(0)}`;
 }
 
+function fmtSol(v: number): string {
+  if (!Number.isFinite(v)) return '0 SOL';
+  const a = Math.abs(v);
+  if (a >= 1e3) return `${(v / 1e3).toFixed(2)}K SOL`;
+  if (a >= 1) return `${v.toFixed(3)} SOL`;
+  if (a >= 0.01) return `${v.toFixed(4)} SOL`;
+  return `${v.toFixed(6)} SOL`;
+}
+
+function fmtSignedPct(v: number): string {
+  if (!Number.isFinite(v)) return '+0.00%';
+  const sign = v >= 0 ? '+' : '-';
+  return `${sign}${Math.abs(v).toFixed(2)}%`;
+}
+
 type Side = 'buy' | 'sell';
 type OrderType = 'market' | 'limit';
+type StatUnit = 'usd' | 'sol';
 
 const PRESET_STORAGE_KEY = 'dex.quick_amount_presets_v1';
 const DEFAULT_PRESETS = ['0.1', '0.5', '1', '5'];
@@ -50,6 +67,10 @@ export default function TradeSidebar({ token }: Props) {
   const [amount, setAmount] = useState('0.10');
   const [editingPresets, setEditingPresets] = useState(false);
   const [presetValues, setPresetValues] = useState<string[]>(() => loadPresetValues());
+  const [statUnit, setStatUnit] = useState<StatUnit>('usd');
+  const [displayMovingPnlPct, setDisplayMovingPnlPct] = useState(0);
+  const pctAnimRef = useRef<number | null>(null);
+  const pctValueRef = useRef(0);
   const safePrice = Number.isFinite(token.lastPriceUsd) ? token.lastPriceUsd : 0;
   const [limitPrice, setLimitPrice] = useState(safePrice.toFixed(8));
   const [advanced, setAdvanced] = useState(false);
@@ -81,6 +102,18 @@ export default function TradeSidebar({ token }: Props) {
   const unrealizedUsd = (quickPosition?.qty ?? 0) > 0
     ? holdingUsd - (quickPosition?.costBasisUsd ?? 0)
     : 0;
+  const realizedUsd = quickPosition?.realizedPnlUsd ?? 0;
+  const totalPnlUsd = realizedUsd + unrealizedUsd;
+  const openCostUsd = quickPosition?.costBasisUsd ?? 0;
+  const totalBoughtUsd = quickPosition?.boughtUsd ?? 0;
+  const movingPnlPct =
+    (quickPosition?.qty ?? 0) > 0 && openCostUsd > 0
+      ? (unrealizedUsd / openCostUsd) * 100
+      : totalBoughtUsd > 0
+        ? (totalPnlUsd / totalBoughtUsd) * 100
+        : 0;
+  const formatByUnit = (usd: number): string =>
+    statUnit === 'usd' ? fmtUsd(usd) : fmtSol(usdToSol(usd));
 
   const handleSubmit = () => {
     const parsedAmount = Number(amount);
@@ -101,6 +134,45 @@ export default function TradeSidebar({ token }: Props) {
     }
     setStatusText(`${side === 'buy' ? 'Bought' : 'Sold'} ${parsedAmount.toFixed(3)} SOL`);
   };
+
+  useEffect(() => {
+    const target = Number.isFinite(movingPnlPct) ? movingPnlPct : 0;
+    if (pctAnimRef.current != null) {
+      cancelAnimationFrame(pctAnimRef.current);
+      pctAnimRef.current = null;
+    }
+    const start = pctValueRef.current;
+    const delta = target - start;
+    if (Math.abs(delta) < 0.005) {
+      pctValueRef.current = target;
+      setDisplayMovingPnlPct(target);
+      return;
+    }
+
+    const durationMs = 420;
+    const startTs = performance.now();
+
+    const tick = (ts: number) => {
+      const t = Math.min(1, (ts - startTs) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const next = start + delta * eased;
+      pctValueRef.current = next;
+      setDisplayMovingPnlPct(next);
+      if (t < 1) {
+        pctAnimRef.current = requestAnimationFrame(tick);
+      } else {
+        pctAnimRef.current = null;
+      }
+    };
+
+    pctAnimRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (pctAnimRef.current != null) {
+        cancelAnimationFrame(pctAnimRef.current);
+        pctAnimRef.current = null;
+      }
+    };
+  }, [movingPnlPct]);
 
   return (
     <aside className="w-full xl:w-[326px] shrink-0 border-l border-ax-border bg-ax-surface">
@@ -241,13 +313,25 @@ export default function TradeSidebar({ token }: Props) {
         )}
 
         <div className="grid grid-cols-4 gap-2 text-[11px]">
-          <MiniStat label="Bought" value={fmtUsd(quickPosition?.boughtUsd ?? 0)} />
-          <MiniStat label="Sold" value={fmtUsd(quickPosition?.soldUsd ?? 0)} />
-          <MiniStat label="Holding" value={fmtUsd(holdingUsd)} />
+          <MiniStat label="Bought" value={formatByUnit(quickPosition?.boughtUsd ?? 0)} />
+          <MiniStat label="Sold" value={formatByUnit(quickPosition?.soldUsd ?? 0)} />
+          <MiniStat label="Holding" value={formatByUnit(holdingUsd)} />
           <MiniStat
-            label="PnL"
-            value={`${unrealizedUsd >= 0 ? '+' : '-'}${fmtUsd(Math.abs(unrealizedUsd))}`}
-            good={unrealizedUsd >= 0}
+            label={(
+              <span className="inline-flex items-center gap-1">
+                <span>PnL</span>
+                <button
+                  type="button"
+                  onClick={() => setStatUnit((u) => (u === 'usd' ? 'sol' : 'usd'))}
+                  title={statUnit === 'usd' ? 'Switch to SOL' : 'Switch to USD'}
+                  className="inline-flex h-3.5 w-3.5 items-center justify-center rounded text-ax-green hover:bg-ax-green-dim"
+                >
+                  <RefreshCcw size={10} />
+                </button>
+              </span>
+            )}
+            value={`${totalPnlUsd >= 0 ? '+' : '-'}${formatByUnit(Math.abs(totalPnlUsd))} (${fmtSignedPct(displayMovingPnlPct)})`}
+            good={totalPnlUsd >= 0}
           />
         </div>
 
@@ -273,7 +357,7 @@ export default function TradeSidebar({ token }: Props) {
   );
 }
 
-function MiniStat({ label, value, good }: { label: string; value: string; good?: boolean }) {
+function MiniStat({ label, value, good }: { label: ReactNode; value: string; good?: boolean }) {
   return (
     <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
       <div className="text-ax-text-dim">{label}</div>
