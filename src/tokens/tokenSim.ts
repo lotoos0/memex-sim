@@ -337,6 +337,7 @@ export class TokenSim {
         tMs: candleTsMs,
         type: devFlow.eventType,
         price: priceUsd,
+        mcap: mcapUsd,
         size: devFlow.sizeUsd,
       });
     }
@@ -567,6 +568,7 @@ export class TokenSim {
         tMs: candleTsMs,
         type: 'MIGRATION',
         price: this.lastPriceUsd,
+        mcap: this.lastMcapUsd,
       };
     }
 

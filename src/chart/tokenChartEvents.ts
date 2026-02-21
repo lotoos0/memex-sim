@@ -12,6 +12,7 @@ export interface TokenChartEvent {
   tMs: number;
   type: TokenChartEventType;
   price?: number;
+  mcap?: number;
   size?: number;
 }
 

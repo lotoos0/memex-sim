@@ -49,6 +49,7 @@ export interface QuickTrade {
   side: Side;
   qty: number;
   priceUsd: number;
+  mcapUsd?: number;
   notionalUsd: number;
   feeUsd: number;
   tsMs: number;
@@ -266,6 +267,7 @@ export const useTradingStore = create<Store>((set, get) => ({
       side: 'buy',
       qty,
       priceUsd,
+      mcapUsd: Number.isFinite(token.mcapUsd) && token.mcapUsd > 0 ? token.mcapUsd : undefined,
       notionalUsd,
       feeUsd,
       tsMs: nowMs,
@@ -291,6 +293,7 @@ export const useTradingStore = create<Store>((set, get) => ({
       tMs: nowMs,
       type: 'USER_BUY',
       price: priceUsd,
+      mcap: Number.isFinite(token.mcapUsd) && token.mcapUsd > 0 ? token.mcapUsd : undefined,
       size: qty,
     }]);
 
@@ -348,6 +351,7 @@ export const useTradingStore = create<Store>((set, get) => ({
       side: 'sell',
       qty: qtyToSell,
       priceUsd,
+      mcapUsd: Number.isFinite(token.mcapUsd) && token.mcapUsd > 0 ? token.mcapUsd : undefined,
       notionalUsd: grossUsd,
       feeUsd,
       tsMs: nowMs,
@@ -376,6 +380,7 @@ export const useTradingStore = create<Store>((set, get) => ({
       tMs: nowMs,
       type: 'USER_SELL',
       price: priceUsd,
+      mcap: Number.isFinite(token.mcapUsd) && token.mcapUsd > 0 ? token.mcapUsd : undefined,
       size: qtyToSell,
     }]);
 
@@ -684,5 +689,86 @@ function recordFillForHistory(
   }
   return { posAcc, positionHistory: history };
 }
+
+export const selectQuickPositionByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): QuickPosition | null =>
+    s.quickPositionsByTokenId[tokenId] ?? null;
+
+export const selectAvgEntryPriceByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): number | null => {
+    const trades = s.quickTradesByTokenId[tokenId] ?? [];
+    let buyQty = 0;
+    let buyNotional = 0;
+    for (let i = 0; i < trades.length; i++) {
+      const t = trades[i]!;
+      if (t.side !== 'buy') continue;
+      if (!Number.isFinite(t.qty) || !Number.isFinite(t.priceUsd)) continue;
+      if (t.qty <= 0 || t.priceUsd <= 0) continue;
+      buyQty += t.qty;
+      buyNotional += t.qty * t.priceUsd;
+    }
+    if (buyQty > 0) return buyNotional / buyQty;
+
+    const p = s.quickPositionsByTokenId[tokenId];
+    if (!p || !Number.isFinite(p.avgEntryUsd) || p.avgEntryUsd <= 0) return null;
+    return p.avgEntryUsd;
+  };
+
+export const selectAvgSellPriceByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): number | null => {
+    const trades = s.quickTradesByTokenId[tokenId] ?? [];
+    let sellQty = 0;
+    let sellNotional = 0;
+    for (let i = 0; i < trades.length; i++) {
+      const t = trades[i]!;
+      if (t.side !== 'sell') continue;
+      if (!Number.isFinite(t.qty) || !Number.isFinite(t.priceUsd)) continue;
+      if (t.qty <= 0 || t.priceUsd <= 0) continue;
+      sellQty += t.qty;
+      sellNotional += t.qty * t.priceUsd;
+    }
+    if (sellQty <= 0) return null;
+    return sellNotional / sellQty;
+  };
+
+export const selectAvgEntryMcapByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): number | null => {
+    const trades = s.quickTradesByTokenId[tokenId] ?? [];
+    let buyUsdWeight = 0;
+    let buyMcapWeighted = 0;
+    for (let i = 0; i < trades.length; i++) {
+      const t = trades[i]!;
+      if (t.side !== 'buy') continue;
+      if (!Number.isFinite(t.qty) || t.qty <= 0) continue;
+      if (!Number.isFinite(t.priceUsd) || t.priceUsd <= 0) continue;
+      if (!Number.isFinite(t.mcapUsd) || (t.mcapUsd ?? 0) <= 0) continue;
+      const usdWeight = t.qty * t.priceUsd;
+      if (!Number.isFinite(usdWeight) || usdWeight <= 0) continue;
+      buyUsdWeight += usdWeight;
+      buyMcapWeighted += usdWeight * (t.mcapUsd as number);
+    }
+    if (buyUsdWeight <= 0) return null;
+    return buyMcapWeighted / buyUsdWeight;
+  };
+
+export const selectAvgSellMcapByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): number | null => {
+    const trades = s.quickTradesByTokenId[tokenId] ?? [];
+    let sellUsdWeight = 0;
+    let sellMcapWeighted = 0;
+    for (let i = 0; i < trades.length; i++) {
+      const t = trades[i]!;
+      if (t.side !== 'sell') continue;
+      if (!Number.isFinite(t.qty) || t.qty <= 0) continue;
+      if (!Number.isFinite(t.priceUsd) || t.priceUsd <= 0) continue;
+      if (!Number.isFinite(t.mcapUsd) || (t.mcapUsd ?? 0) <= 0) continue;
+      const usdWeight = t.qty * t.priceUsd;
+      if (!Number.isFinite(usdWeight) || usdWeight <= 0) continue;
+      sellUsdWeight += usdWeight;
+      sellMcapWeighted += usdWeight * (t.mcapUsd as number);
+    }
+    if (sellUsdWeight <= 0) return null;
+    return sellMcapWeighted / sellUsdWeight;
+  };
 
 

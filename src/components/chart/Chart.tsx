@@ -4,7 +4,9 @@ import {
   createSeriesMarkers,
   CandlestickSeries,
   HistogramSeries,
+  LineStyle,
   type IChartApi,
+  type IPriceLine,
   type ISeriesMarkersPluginApi,
   type ISeriesApi,
   type Time,
@@ -13,6 +15,13 @@ import {
 import { registry, type ChartMetric } from '../../tokens/registry';
 import type { Candle } from '../../engine/types';
 import { useTokenStore } from '../../store/tokenStore';
+import {
+  useTradingStore,
+  selectAvgEntryPriceByTokenId,
+  selectAvgEntryMcapByTokenId,
+  selectAvgSellPriceByTokenId,
+  selectAvgSellMcapByTokenId,
+} from '../../store/tradingStore';
 import type { TokenChartEvent } from '../../chart/tokenChartEvents';
 import { toSeriesMarkers, type DisplayOptions } from '../../chart/tokenChartEvents';
 
@@ -23,6 +32,21 @@ const TF_OPTIONS = [
   { label: '1m', sec: 60 },
 ];
 const EMPTY_EVENTS: TokenChartEvent[] = [];
+type PriceLineKey = 'avgBuy' | 'avgSell' | 'migration';
+type PriceLineMap = Record<PriceLineKey, IPriceLine | null>;
+type PriceLineValueMap = Record<PriceLineKey, number | null>;
+const AVG_COST_BASIS_LINE = {
+  title: 'Current Average Cost Basis',
+  color: '#67c23a',
+};
+const AVG_EXIT_PRICE_LINE = {
+  title: 'Current Average Exit Price',
+  color: '#d67b43',
+};
+const MIGRATION_LINE = {
+  title: 'Migration Price',
+  color: '#4c7dffdd',
+};
 
 type Metric = 'mcap' | 'price';
 
@@ -48,22 +72,54 @@ interface Props {
 }
 
 export default function Chart({ tokenId }: Props) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const markerApiRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const priceLinesRef = useRef<PriceLineMap>({ avgBuy: null, avgSell: null, migration: null });
+  const priceLineValuesRef = useRef<PriceLineValueMap>({ avgBuy: null, avgSell: null, migration: null });
+  const lastCandleCountRef = useRef(0);
 
   const selectTokenEvents = useCallback(
     (s: ReturnType<typeof useTokenStore.getState>) => s.eventsByTokenId[tokenId] ?? EMPTY_EVENTS,
     [tokenId]
   );
+  const selectAvgEntryPrice = useMemo(() => selectAvgEntryPriceByTokenId(tokenId), [tokenId]);
+  const selectAvgEntryMcap = useMemo(() => selectAvgEntryMcapByTokenId(tokenId), [tokenId]);
+  const selectAvgSellPrice = useMemo(() => selectAvgSellPriceByTokenId(tokenId), [tokenId]);
+  const selectAvgSellMcap = useMemo(() => selectAvgSellMcapByTokenId(tokenId), [tokenId]);
   const tokenEvents = useTokenStore(selectTokenEvents);
+  const avgEntryPrice = useTradingStore(selectAvgEntryPrice);
+  const avgEntryMcap = useTradingStore(selectAvgEntryMcap);
+  const avgSellPrice = useTradingStore(selectAvgSellPrice);
+  const avgSellMcap = useTradingStore(selectAvgSellMcap);
+  const migrationPrice = useMemo(() => {
+    for (let i = tokenEvents.length - 1; i >= 0; i--) {
+      const ev = tokenEvents[i]!;
+      if (ev.type !== 'MIGRATION') continue;
+      if (!Number.isFinite(ev.price) || (ev.price ?? 0) <= 0) continue;
+      return ev.price!;
+    }
+    return null;
+  }, [tokenEvents]);
+  const migrationMcap = useMemo(() => {
+    for (let i = tokenEvents.length - 1; i >= 0; i--) {
+      const ev = tokenEvents[i]!;
+      if (ev.type !== 'MIGRATION') continue;
+      if (!Number.isFinite(ev.mcap) || (ev.mcap ?? 0) <= 0) continue;
+      return ev.mcap!;
+    }
+    return null;
+  }, [tokenEvents]);
 
-  const [tfSec, setTfSec] = useState(15);
+  const [tfSec, setTfSec] = useState(1);
   const [metric, setMetric] = useState<Metric>('mcap');
   const [lastMetricValue, setLastMetricValue] = useState<number | null>(null);
   const [showDisplayOptions, setShowDisplayOptions] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [displayOptions, setDisplayOptions] = useState<DisplayOptions>({
     migration: true,
     devTrades: true,
@@ -74,6 +130,146 @@ export default function Chart({ tokenId }: Props) {
     () => (metric === 'mcap' ? fmtCompact : fmtPrice),
     [metric]
   );
+
+  const clearAllPriceLines = useCallback(() => {
+    const series = candleSeriesRef.current;
+    const keys: PriceLineKey[] = ['avgBuy', 'avgSell', 'migration'];
+    if (series) {
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i]!;
+        const line = priceLinesRef.current[key];
+        if (!line) continue;
+        series.removePriceLine(line);
+        priceLinesRef.current[key] = null;
+      }
+    } else {
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i]!;
+        priceLinesRef.current[key] = null;
+      }
+    }
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i]!;
+      priceLineValuesRef.current[key] = null;
+    }
+  }, []);
+
+  const upsertPriceLine = useCallback(
+    (
+      key: PriceLineKey,
+      nextPrice: number | null | undefined,
+      options: { title: string; color: string }
+    ) => {
+      const series = candleSeriesRef.current;
+      if (!series) return;
+      const safePrice =
+        Number.isFinite(nextPrice) && (nextPrice ?? 0) > 0 ? (nextPrice as number) : null;
+      const prevPrice = priceLineValuesRef.current[key];
+      if (
+        (safePrice == null && prevPrice == null) ||
+        (safePrice != null && prevPrice != null && Math.abs(safePrice - prevPrice) < 1e-12)
+      ) {
+        return;
+      }
+
+      const prevLine = priceLinesRef.current[key];
+      if (prevLine) {
+        series.removePriceLine(prevLine);
+        priceLinesRef.current[key] = null;
+      }
+      priceLineValuesRef.current[key] = safePrice;
+      if (safePrice == null) return;
+
+      priceLinesRef.current[key] = series.createPriceLine({
+        price: safePrice,
+        title: options.title,
+        color: options.color,
+        axisLabelVisible: true,
+        lineVisible: true,
+        lineStyle: LineStyle.LargeDashed,
+        lineWidth: 2,
+      });
+    },
+    []
+  );
+  const resetChartView = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const total = lastCandleCountRef.current;
+    if (total > 0) {
+      const visibleBars = 200;
+      chart.timeScale().setVisibleLogicalRange({
+        from: Math.max(-20, total - visibleBars),
+        to: total + 8,
+      });
+    } else {
+      chart.timeScale().fitContent();
+    }
+    chart.priceScale('right').applyOptions({ autoScale: true });
+  }, []);
+
+  const openContextMenuAt = useCallback((clientX: number, clientY: number) => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const rect = wrapper.getBoundingClientRect();
+    const menuWidth = 210;
+    const menuHeight = 44;
+    const pad = 8;
+    const rawX = clientX - rect.left;
+    const rawY = clientY - rect.top;
+    const x = Math.min(Math.max(pad, rawX), Math.max(pad, rect.width - menuWidth - pad));
+    const y = Math.min(Math.max(pad, rawY), Math.max(pad, rect.height - menuHeight - pad));
+    setContextMenu({ x, y });
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onContextMenu = (e: globalThis.MouseEvent) => {
+      e.preventDefault();
+      openContextMenuAt(e.clientX, e.clientY);
+    };
+
+    // Capture makes this robust when chart internals stop event propagation.
+    el.addEventListener('contextmenu', onContextMenu, true);
+    return () => {
+      el.removeEventListener('contextmenu', onContextMenu, true);
+    };
+  }, [openContextMenuAt]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (target && contextMenuRef.current?.contains(target)) return;
+      close();
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('blur', close);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.altKey || e.key.toLowerCase() !== 'r') return;
+      e.preventDefault();
+      resetChartView();
+      setContextMenu(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [resetChartView]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -144,6 +340,7 @@ export default function Chart({ tokenId }: Props) {
     ro.observe(containerRef.current);
 
     return () => {
+      clearAllPriceLines();
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
@@ -151,7 +348,7 @@ export default function Chart({ tokenId }: Props) {
       volSeriesRef.current = null;
       markerApiRef.current = null;
     };
-  }, []);
+  }, [clearAllPriceLines]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -196,6 +393,7 @@ export default function Chart({ tokenId }: Props) {
       }));
 
       if (candleData.length > 0) {
+        lastCandleCountRef.current = candleData.length;
         // Always apply full snapshot: robust against skipped intervals/tab throttling.
         cs.setData(candleData);
         vs.setData(volData);
@@ -227,10 +425,32 @@ export default function Chart({ tokenId }: Props) {
     markerApi.setMarkers(markers);
   }, [tokenEvents, displayOptions]);
 
+  useEffect(() => {
+    clearAllPriceLines();
+  }, [tokenId, clearAllPriceLines]);
+
+  useEffect(() => {
+    const avgBuyLine = metric === 'mcap' ? avgEntryMcap : avgEntryPrice;
+    const avgSellLine = metric === 'mcap' ? avgSellMcap : avgSellPrice;
+    const migrationLine = metric === 'mcap' ? migrationMcap : migrationPrice;
+    upsertPriceLine('avgBuy', avgBuyLine, AVG_COST_BASIS_LINE);
+    upsertPriceLine('avgSell', avgSellLine, AVG_EXIT_PRICE_LINE);
+    upsertPriceLine('migration', migrationLine, MIGRATION_LINE);
+  }, [
+    metric,
+    avgEntryPrice,
+    avgEntryMcap,
+    avgSellPrice,
+    avgSellMcap,
+    migrationPrice,
+    migrationMcap,
+    upsertPriceLine,
+  ]);
+
   const lastDisplay = lastMetricValue ?? 0;
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 bg-ax-bg">
+    <div ref={wrapperRef} className="relative flex flex-col flex-1 min-h-0 bg-ax-bg">
       <div className="flex items-center gap-3 px-3 py-1.5 border-b border-ax-border bg-ax-surface shrink-0">
         <div className="flex items-center gap-0.5">
           {TF_OPTIONS.map(tf => (
@@ -328,6 +548,26 @@ export default function Chart({ tokenId }: Props) {
       </div>
 
       <div ref={containerRef} className="flex-1 min-h-0" />
+
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="absolute z-30 min-w-[210px] rounded border border-ax-border bg-ax-surface2 py-1 shadow-xl"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            className="flex w-full items-center justify-between px-3 py-2 text-left text-[12px] text-ax-text hover:bg-ax-surface"
+            onClick={() => {
+              resetChartView();
+              setContextMenu(null);
+            }}
+          >
+            <span>Reset chart view</span>
+            <span className="text-[10px] text-ax-text-dim">Alt + R</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
