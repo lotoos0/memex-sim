@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { TokenState } from '../../tokens/types';
+import { useTradingStore } from '../../store/tradingStore';
 
 interface Props {
   token: TokenState;
@@ -22,6 +23,15 @@ export default function TradeSidebar({ token }: Props) {
   const safePrice = Number.isFinite(token.lastPriceUsd) ? token.lastPriceUsd : 0;
   const [limitPrice, setLimitPrice] = useState(safePrice.toFixed(8));
   const [advanced, setAdvanced] = useState(false);
+  const [statusText, setStatusText] = useState<string | null>(null);
+  const quickBuy = useTradingStore(s => s.quickBuy);
+  const quickSell = useTradingStore(s => s.quickSell);
+  const quickPosition = useTradingStore(
+    useMemo(
+      () => (s: ReturnType<typeof useTradingStore.getState>) => s.quickPositionsByTokenId[token.id] ?? null,
+      [token.id]
+    )
+  );
 
   useEffect(() => {
     setLimitPrice(safePrice.toFixed(8));
@@ -31,6 +41,31 @@ export default function TradeSidebar({ token }: Props) {
     const ticker = token.ticker || 'TOKEN';
     return side === 'buy' ? `Buy ${ticker}` : `Sell ${ticker}`;
   }, [side, token.ticker]);
+
+  const holdingUsd = (quickPosition?.qty ?? 0) * safePrice;
+  const unrealizedUsd = (quickPosition?.qty ?? 0) > 0
+    ? holdingUsd - (quickPosition?.costBasisUsd ?? 0)
+    : 0;
+
+  const handleSubmit = () => {
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setStatusText('Invalid amount');
+      return;
+    }
+    if (orderType === 'limit') {
+      setStatusText('Limit mode is queued. Use Market for now.');
+      return;
+    }
+    const result = side === 'buy'
+      ? quickBuy(token.id, parsedAmount)
+      : quickSell(token.id, parsedAmount);
+    if (!result.ok) {
+      setStatusText(result.reason ?? 'Trade rejected');
+      return;
+    }
+    setStatusText(`${side === 'buy' ? 'Bought' : 'Sold'} ${parsedAmount.toFixed(3)} SOL`);
+  };
 
   return (
     <aside className="w-full xl:w-[326px] shrink-0 border-l border-ax-border bg-ax-surface">
@@ -114,15 +149,28 @@ export default function TradeSidebar({ token }: Props) {
           </label>
         </div>
 
-        <button className="w-full h-11 rounded-full bg-ax-green text-ax-bg font-bold text-sm">
+        <button
+          onClick={handleSubmit}
+          className={[
+            'w-full h-11 rounded-full font-bold text-sm',
+            side === 'buy' ? 'bg-ax-green text-ax-bg' : 'bg-ax-red text-white',
+          ].join(' ')}
+        >
           {ctaLabel}
         </button>
+        {statusText && (
+          <div className="text-[11px] text-ax-text-dim px-1">{statusText}</div>
+        )}
 
         <div className="grid grid-cols-4 gap-2 text-[11px]">
-          <MiniStat label="Bought" value="$0" />
-          <MiniStat label="Sold" value="$0" />
-          <MiniStat label="Holding" value="$0" />
-          <MiniStat label="PnL" value="+$0" good />
+          <MiniStat label="Bought" value={fmtUsd(quickPosition?.boughtUsd ?? 0)} />
+          <MiniStat label="Sold" value={fmtUsd(quickPosition?.soldUsd ?? 0)} />
+          <MiniStat label="Holding" value={fmtUsd(holdingUsd)} />
+          <MiniStat
+            label="PnL"
+            value={`${unrealizedUsd >= 0 ? '+' : '-'}${fmtUsd(Math.abs(unrealizedUsd))}`}
+            good={unrealizedUsd >= 0}
+          />
         </div>
 
         <div className="rounded-md border border-ax-border bg-ax-bg/70 p-2">

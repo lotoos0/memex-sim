@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import type { Candle, Tick } from '../engine/types';
 import { persistOrder, persistTrade, saveOrdersSnapshot, saveTradesSnapshot, savePositionHistorySnapshot, loadSnapshots } from '../sim/journal';
 import { useTokenStore } from './tokenStore';
+import { useWalletStore, solToUsd, usdToSol } from './walletStore';
 
 
 /* --- podstawowe typy --- */
@@ -31,9 +32,32 @@ export interface Position {
   unrealized: number; fees: number;
 }
 
+export interface QuickPosition {
+  tokenId: string;
+  qty: number;
+  avgEntryUsd: number;
+  costBasisUsd: number;
+  boughtUsd: number;
+  soldUsd: number;
+  realizedPnlUsd: number;
+  updatedAtMs: number;
+}
+
+export interface QuickTrade {
+  id: string;
+  tokenId: string;
+  side: Side;
+  qty: number;
+  priceUsd: number;
+  notionalUsd: number;
+  feeUsd: number;
+  tsMs: number;
+}
+
 export interface Trade { id: string; orderId: string; price: number; qty: number; fee: number; ts: number; side: Side }
 export interface Preset { id: string; label: string; qtyPct: number; slPct?: number; tpPct?: number; }
 export interface RiskLimits { maxRiskUsd: number; maxOrdersPerMinute: number; maxLeverage?: number; }
+export interface QuickTradeResult { ok: boolean; reason?: string; filledSol?: number; filledUsd?: number; }
 
 type Ghost = { price: number } | null;
 
@@ -44,6 +68,8 @@ export interface PositionHistory {
   notional: number; pnl: number; fees: number;
   openTs: number; closeTs: number; durationSec: number;
 }
+
+const MAX_QUICK_TRADES_PER_TOKEN = 200;
 
 function makeId(): string {
   return 'O' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
@@ -73,6 +99,8 @@ type Store = {
   orders: Order[];
   positions: Position[];
   trades: Trade[];
+  quickPositionsByTokenId: Record<string, QuickPosition>;
+  quickTradesByTokenId: Record<string, QuickTrade[]>;
   presets: Preset[];
   risk: RiskLimits;
   feeBps: number;
@@ -105,6 +133,8 @@ type Store = {
   closePct: (pct: number) => void;
   setSLTP: (levels: { sl?: number; tp?: number }) => void;
   applyPreset: (id: string) => void;
+  quickBuy: (tokenId: string, amountSol: number) => QuickTradeResult;
+  quickSell: (tokenId: string, amountSol: number) => QuickTradeResult;
 
   onPriceTick: (t: Tick, maybeCandle?: { mode: 'new'|'update'; candle: Candle }) => void;
 };
@@ -129,6 +159,8 @@ export const useTradingStore = create<Store>((set, get) => ({
   orders: [],
   positions: [],
   trades: [],
+  quickPositionsByTokenId: {},
+  quickTradesByTokenId: {},
   presets: [
     { id: 'p1', label: '0.10', qtyPct: 0.10, slPct: 0.01, tpPct: 0.02 },
     { id: 'p2', label: '0.20', qtyPct: 0.20, slPct: 0.015, tpPct: 0.03 },
@@ -185,6 +217,170 @@ export const useTradingStore = create<Store>((set, get) => ({
 
 
   applyPreset: () => ({}),
+
+  quickBuy: (tokenId, amountSol) => {
+    const st = get();
+    if (!Number.isFinite(amountSol) || amountSol <= 0) {
+      return { ok: false, reason: 'Invalid amount' };
+    }
+
+    const token = useTokenStore.getState().tokensById[tokenId];
+    if (!token || token.phase === 'DEAD' || token.phase === 'RUGGED') {
+      return { ok: false, reason: 'Token unavailable' };
+    }
+
+    const priceUsd = token.lastPriceUsd;
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return { ok: false, reason: 'Price unavailable' };
+
+    const wallet = useWalletStore.getState();
+    if (!wallet.deductSol(amountSol)) return { ok: false, reason: 'Insufficient SOL' };
+
+    const feePct = st.feeBps / 10000;
+    const grossUsd = solToUsd(amountSol);
+    const feeUsd = grossUsd * feePct;
+    const notionalUsd = Math.max(0, grossUsd - feeUsd);
+    const qty = notionalUsd / priceUsd;
+    if (!Number.isFinite(qty) || qty <= 0) return { ok: false, reason: 'Fill failed' };
+
+    const nowMs = Date.now();
+    const prevPos = st.quickPositionsByTokenId[tokenId];
+    const prevQty = prevPos?.qty ?? 0;
+    const prevCost = prevPos?.costBasisUsd ?? 0;
+    const nextQty = prevQty + qty;
+    const nextCost = prevCost + grossUsd;
+    const nextAvg = nextQty > 0 ? nextCost / nextQty : 0;
+    const nextPos: QuickPosition = {
+      tokenId,
+      qty: nextQty,
+      avgEntryUsd: nextAvg,
+      costBasisUsd: nextCost,
+      boughtUsd: (prevPos?.boughtUsd ?? 0) + grossUsd,
+      soldUsd: prevPos?.soldUsd ?? 0,
+      realizedPnlUsd: prevPos?.realizedPnlUsd ?? 0,
+      updatedAtMs: nowMs,
+    };
+
+    const quickTrade: QuickTrade = {
+      id: makeId(),
+      tokenId,
+      side: 'buy',
+      qty,
+      priceUsd,
+      notionalUsd,
+      feeUsd,
+      tsMs: nowMs,
+    };
+    const prevTokenTrades = st.quickTradesByTokenId[tokenId] ?? [];
+    const nextTokenTrades = prevTokenTrades
+      .concat([quickTrade])
+      .slice(-MAX_QUICK_TRADES_PER_TOKEN);
+
+    set({
+      quickPositionsByTokenId: {
+        ...st.quickPositionsByTokenId,
+        [tokenId]: nextPos,
+      },
+      quickTradesByTokenId: {
+        ...st.quickTradesByTokenId,
+        [tokenId]: nextTokenTrades,
+      },
+    });
+
+    useTokenStore.getState().pushTokenEvents(tokenId, [{
+      tokenId,
+      tMs: nowMs,
+      type: 'USER_BUY',
+      price: priceUsd,
+      size: qty,
+    }]);
+
+    return { ok: true, filledSol: amountSol, filledUsd: grossUsd };
+  },
+
+  quickSell: (tokenId, amountSol) => {
+    const st = get();
+    if (!Number.isFinite(amountSol) || amountSol <= 0) {
+      return { ok: false, reason: 'Invalid amount' };
+    }
+
+    const token = useTokenStore.getState().tokensById[tokenId];
+    if (!token || token.phase === 'DEAD' || token.phase === 'RUGGED') {
+      return { ok: false, reason: 'Token unavailable' };
+    }
+
+    const priceUsd = token.lastPriceUsd;
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return { ok: false, reason: 'Price unavailable' };
+
+    const prevPos = st.quickPositionsByTokenId[tokenId];
+    if (!prevPos || prevPos.qty <= 0) return { ok: false, reason: 'No position' };
+
+    const targetUsd = solToUsd(amountSol);
+    const qtyToSell = Math.min(prevPos.qty, targetUsd / priceUsd);
+    if (!Number.isFinite(qtyToSell) || qtyToSell <= 0) return { ok: false, reason: 'Nothing to sell' };
+
+    const feePct = st.feeBps / 10000;
+    const grossUsd = qtyToSell * priceUsd;
+    const feeUsd = grossUsd * feePct;
+    const netUsd = Math.max(0, grossUsd - feeUsd);
+
+    const costPortionUsd = prevPos.avgEntryUsd * qtyToSell;
+    const realizedPnlUsd = netUsd - costPortionUsd;
+    const nextQtyRaw = prevPos.qty - qtyToSell;
+    const nextQty = nextQtyRaw <= 1e-9 ? 0 : nextQtyRaw;
+    const nextCost = nextQty > 0 ? Math.max(0, prevPos.costBasisUsd - costPortionUsd) : 0;
+    const nextAvg = nextQty > 0 ? nextCost / nextQty : 0;
+    const nowMs = Date.now();
+
+    const nextPos: QuickPosition = {
+      tokenId,
+      qty: nextQty,
+      avgEntryUsd: nextAvg,
+      costBasisUsd: nextCost,
+      boughtUsd: prevPos.boughtUsd,
+      soldUsd: prevPos.soldUsd + grossUsd,
+      realizedPnlUsd: prevPos.realizedPnlUsd + realizedPnlUsd,
+      updatedAtMs: nowMs,
+    };
+
+    const quickTrade: QuickTrade = {
+      id: makeId(),
+      tokenId,
+      side: 'sell',
+      qty: qtyToSell,
+      priceUsd,
+      notionalUsd: grossUsd,
+      feeUsd,
+      tsMs: nowMs,
+    };
+    const prevTokenTrades = st.quickTradesByTokenId[tokenId] ?? [];
+    const nextTokenTrades = prevTokenTrades
+      .concat([quickTrade])
+      .slice(-MAX_QUICK_TRADES_PER_TOKEN);
+
+    useWalletStore.getState().addSol(usdToSol(netUsd));
+    useWalletStore.getState().addPnl(usdToSol(realizedPnlUsd));
+
+    set({
+      quickPositionsByTokenId: {
+        ...st.quickPositionsByTokenId,
+        [tokenId]: nextPos,
+      },
+      quickTradesByTokenId: {
+        ...st.quickTradesByTokenId,
+        [tokenId]: nextTokenTrades,
+      },
+    });
+
+    useTokenStore.getState().pushTokenEvents(tokenId, [{
+      tokenId,
+      tMs: nowMs,
+      type: 'USER_SELL',
+      price: priceUsd,
+      size: qtyToSell,
+    }]);
+
+    return { ok: true, filledSol: usdToSol(grossUsd), filledUsd: grossUsd };
+  },
 
   placeOrder: (partial) => {
     const st = get();

@@ -1,6 +1,8 @@
+import { useCallback, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { TokenState } from '../../tokens/types';
 import { useTokenStore } from '../../store/tokenStore';
+import { useTradingStore } from '../../store/tradingStore';
 
 function fmtUsd(v: number): string {
   if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
@@ -19,6 +21,14 @@ function fmtPct(v: number): string {
   return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 }
 
+function fmtSignedUsd(v: number): string {
+  const sign = v >= 0 ? '+' : '-';
+  const abs = Math.abs(v);
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
+}
+
 interface Props {
   token: TokenState;
 }
@@ -26,13 +36,35 @@ interface Props {
 export default function TokenCard({ token }: Props) {
   const navigate = useNavigate();
   const setActive = useTokenStore(s => s.setActiveToken);
+  const selectQuickPosition = useCallback(
+    (s: ReturnType<typeof useTradingStore.getState>) => s.quickPositionsByTokenId[token.id] ?? null,
+    [token.id]
+  );
+  const quickPosition = useTradingStore(selectQuickPosition);
+  const quickBuy = useTradingStore(s => s.quickBuy);
+  const quickSell = useTradingStore(s => s.quickSell);
 
   const isRugged = token.phase === 'RUGGED';
+  const hasOpenPosition = (quickPosition?.qty ?? 0) > 0;
+  const holdingUsd = hasOpenPosition ? (quickPosition!.qty * token.lastPriceUsd) : 0;
+  const unrealizedUsd = hasOpenPosition ? holdingUsd - quickPosition!.costBasisUsd : 0;
 
   const handleClick = () => {
     if (isRugged) return;
     setActive(token.id);
     navigate(`/token/${token.id}`);
+  };
+
+  const handleQuickBuy = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (isRugged) return;
+    quickBuy(token.id, 0.1);
+  };
+
+  const handleQuickSell = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (isRugged) return;
+    quickSell(token.id, 0.1);
   };
 
   return (
@@ -122,6 +154,40 @@ export default function TokenCard({ token }: Props) {
             backgroundColor: token.bondingCurvePct > 80 ? '#f5c542' : token.phase === 'RUGGED' ? '#ff4d6a' : '#00d4a1',
           }}
         />
+      </div>
+
+      <div className="flex items-center justify-between gap-2 pt-1">
+        {hasOpenPosition ? (
+          <span className={[
+            'text-[10px] font-medium',
+            unrealizedUsd >= 0 ? 'text-ax-green' : 'text-ax-red',
+          ].join(' ')}>
+            Pos {quickPosition!.qty.toFixed(0)} | {fmtSignedUsd(unrealizedUsd)}
+          </span>
+        ) : (
+          <span className="text-[10px] text-ax-text-dim">No position</span>
+        )}
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleQuickBuy}
+            className="h-6 px-2 rounded border border-ax-green/40 bg-ax-green-dim text-[10px] text-ax-green"
+          >
+            Buy 0.1
+          </button>
+          <button
+            onClick={handleQuickSell}
+            disabled={!hasOpenPosition}
+            className={[
+              'h-6 px-2 rounded border text-[10px]',
+              hasOpenPosition
+                ? 'border-ax-red/40 bg-ax-red-dim text-ax-red'
+                : 'border-ax-border text-ax-text-dim opacity-50 cursor-not-allowed',
+            ].join(' ')}
+          >
+            Sell 0.1
+          </button>
+        </div>
       </div>
     </div>
   );

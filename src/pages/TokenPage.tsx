@@ -7,6 +7,9 @@ import TradeSidebar from '../components/token/TradeSidebar';
 import BottomTabs from '../components/token/BottomTabs';
 import { registry } from '../tokens/registry';
 import type { CurveDebugSnapshot } from '../tokens/tokenSim';
+import { useTradingStore, type QuickTrade } from '../store/tradingStore';
+
+const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 
 function fmtUsd(v: number): string {
   if (!Number.isFinite(v)) return '$0';
@@ -32,12 +35,27 @@ function fmtDebug(v: number): string {
   return v.toExponential(4);
 }
 
+function fmtSignedUsd(v: number): string {
+  const sign = v >= 0 ? '+' : '-';
+  return `${sign}${fmtUsd(Math.abs(v))}`;
+}
+
 export default function TokenPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const setActive = useTokenStore(s => s.setActiveToken);
   const token = useTokenStore(selectActiveToken);
+  const selectQuickPosition = useMemo(
+    () => (s: ReturnType<typeof useTradingStore.getState>) => (id ? (s.quickPositionsByTokenId[id] ?? null) : null),
+    [id]
+  );
+  const selectTokenTrades = useMemo(
+    () => (s: ReturnType<typeof useTradingStore.getState>) => (id ? (s.quickTradesByTokenId[id] ?? EMPTY_QUICK_TRADES) : EMPTY_QUICK_TRADES),
+    [id]
+  );
+  const quickPosition = useTradingStore(selectQuickPosition);
+  const quickTrades = useTradingStore(selectTokenTrades);
   const isDev = import.meta.env.DEV;
   const debugFromQuery = useMemo(() => {
     if (!isDev) return false;
@@ -83,6 +101,11 @@ export default function TokenPage() {
   }
 
   const isRugged = token.phase === 'RUGGED';
+  const positionQty = quickPosition?.qty ?? 0;
+  const hasOpenPosition = positionQty > 0;
+  const holdingUsd = hasOpenPosition ? positionQty * token.lastPriceUsd : 0;
+  const unrealizedUsd = hasOpenPosition ? holdingUsd - (quickPosition?.costBasisUsd ?? 0) : 0;
+  const recentTrades = quickTrades.slice(-3).reverse();
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-ax-bg">
@@ -146,6 +169,53 @@ export default function TokenPage() {
             Curve Debug
           </button>
         )}
+      </div>
+
+      <div className="px-4 py-2 border-b border-ax-border bg-ax-surface2 text-xs">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-ax-text-dim">
+          <span>
+            Position{' '}
+            <span className="text-ax-text font-medium">
+              {hasOpenPosition ? `${positionQty.toFixed(0)} ${token.ticker}` : 'none'}
+            </span>
+          </span>
+          <span>
+            Avg Entry{' '}
+            <span className="text-ax-text font-medium">
+              {hasOpenPosition ? `$${fmtPrice(quickPosition!.avgEntryUsd)}` : '-'}
+            </span>
+          </span>
+          <span>
+            Holding <span className="text-ax-text font-medium">{hasOpenPosition ? fmtUsd(holdingUsd) : '$0'}</span>
+          </span>
+          <span>
+            uPnL{' '}
+            <span className={unrealizedUsd >= 0 ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
+              {hasOpenPosition ? fmtSignedUsd(unrealizedUsd) : '$0'}
+            </span>
+          </span>
+          <span>
+            Realized{' '}
+            <span className={(quickPosition?.realizedPnlUsd ?? 0) >= 0 ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
+              {fmtSignedUsd(quickPosition?.realizedPnlUsd ?? 0)}
+            </span>
+          </span>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-ax-text-dim">
+          {recentTrades.length === 0 ? (
+            <span>No trades yet.</span>
+          ) : (
+            recentTrades.map((trade) => (
+              <span key={trade.id} className="rounded border border-ax-border px-2 py-0.5 bg-ax-bg/50">
+                <span className={trade.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>
+                  {trade.side === 'buy' ? 'B' : 'S'}
+                </span>
+                {' '}
+                {fmtUsd(trade.notionalUsd)} @ ${fmtPrice(trade.priceUsd)}
+              </span>
+            ))
+          )}
+        </div>
       </div>
 
       {isDev && showCurveDebug && curveDebug && (
