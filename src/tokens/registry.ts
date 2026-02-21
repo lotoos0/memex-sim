@@ -28,7 +28,7 @@ class TokenRegistry {
 
   // Chart callback for active token (set by Chart component)
   private chartCb: ChartCallback | null = null;
-  private activeTfSec = 60; // default 1m
+  private activeTfSec = 1; // default 1s
   private activeMetric: ChartMetric = 'mcap';
 
   // Track when each token rugged (real time) for cleanup
