@@ -187,57 +187,65 @@ src/
 
 ---
 
-## Implementacja — Vertical Slices (nie Big Bang)
+## Implementacja - Vertical Slices (nie Big Bang)
 
-### Slice 1 — Działa end-to-end (bez ładnego UI)
-- [ ] Zainstalować `react-router-dom`
-- [ ] Nowa struktura folderów, cleanup starych komponentów
-- [ ] `tokens/types.ts` — zamrożone kontrakty
-- [ ] `tokens/generator.ts` — generator tokenów (15 tokenów startowo)
-- [ ] `tokens/tokenSim.ts` + `tokens/registry.ts`
-- [ ] `store/tokenStore.ts` z selectorami
-- [ ] `router.tsx` — `/` i `/token/:id`
-- [ ] `pages/PulsePage.tsx` — prosta lista (nawet bez stylów)
-- [ ] `pages/TokenPage.tsx` — nazwa/ticker + wykres aktywnego tokena
-- [ ] **Cel:** klik na token → widzę wykres. Koniec.
+### Slice 1 - Dziala end-to-end (bez ladnego UI)
+- [x] Zainstalowac `react-router-dom`
+- [x] Nowa struktura folderow, cleanup starych komponentow
+- [x] `tokens/types.ts` - zamrozone kontrakty
+- [x] `tokens/generator.ts` - generator tokenow (obecnie 12 tokenow startowo)
+- [x] `tokens/tokenSim.ts` + `tokens/registry.ts`
+- [x] `store/tokenStore.ts` z selectorami
+- [x] `router.tsx` - `/` i `/token/:id`
+- [x] `pages/PulsePage.tsx` - lista 3 kolumn NEW/FINAL/MIGRATED
+- [x] `pages/TokenPage.tsx` - token details + wykres aktywnego tokena
+- [x] **Cel:** klik na token -> widze wykres
 
-### Slice 2 — Wallet + trading
-- [ ] `store/walletStore.ts` — 1 SOL
-- [ ] `store/tradingStore.ts` — refactor dla multi-token
-- [ ] `components/trading/FloatingPanel.tsx` — draggable, P1/P2/P3
-- [ ] `store/presetStore.ts` — quick amounts, SL/TP
+### Slice 2 - Wallet + trading
+- [x] `store/walletStore.ts` - 1 SOL
+- [x] `store/tradingStore.ts` - multi-token trading + presety w store
+- [ ] `components/trading/FloatingPanel.tsx` - brak (jest `TradeSidebar`)
+- [ ] `store/presetStore.ts` - brak osobnego store (presety sa w `tradingStore`)
 - [ ] Quick buy z listy (PulsePage)
-- [ ] **Cel:** mogę kupić token i widzę pozycję
+- [ ] **Cel:** pelny flow "kup token z listy i od razu widze pozycje" (czesciowo)
 
-### Slice 3 — Lifecycle + feed
-- [ ] `tokens/lifecycle.ts` — fazy, rug trigger, migration
-- [ ] Spawn nowych tokenów co X sekund
-- [ ] Cleanup dead tokenów (po 60–120s jako RUGGED)
+### Slice 3 - Lifecycle + feed
+- [ ] `tokens/lifecycle.ts` - brak osobnego pliku (lifecycle jest w `tokenSim.ts` i `registry.ts`)
+- [x] Spawn nowych tokenow co X sekund
+- [x] Cleanup dead tokenow
 - [ ] Animacje: nowy token, rug flash, migration
-- [ ] Liczniki live (vol/buys/sells z highlight)
-- [ ] **Cel:** feed żyje, tokeny przechodzą przez lifecycle
+- [x] Liczniki live (vol/buys/sells)
+- [x] **Cel:** feed zyje, tokeny przechodza przez lifecycle
 
-### Slice 4 — Polish UI (Axiom look)
-- [ ] `components/pulse/TokenCard.tsx` — pełna karta
-- [ ] `components/token/TokenHeader.tsx` — header tokena
-- [ ] `components/token/TokenInfo.tsx` — metryki (Top H., Dev H., itd.)
-- [ ] `components/bottom/BottomPanel.tsx` — Trades/Positions/Orders
-- [ ] Global CSS — ciemny motyw jak Axiom
-- [ ] **Cel:** wygląda jak Axiom
+### Slice 4 - Polish UI (Axiom look)
+- [x] `components/pulse/TokenCard.tsx` - pelna karta
+- [ ] `components/token/TokenHeader.tsx` - brak osobnego komponentu
+- [ ] `components/token/TokenInfo.tsx` - brak osobnego komponentu
+- [ ] `components/bottom/BottomPanel.tsx` - brak (jest `BottomTabs` jako placeholder)
+- [x] Global CSS - ciemny motyw
+- [ ] **Cel:** wyglad jak Axiom (wciaz WIP)
 
-### Slice 5 — Replay Mode
+### Slice 5 - Replay Mode
 - [ ] `providers/replayProvider.ts`
-- [ ] Zapis ticków do IndexedDB podczas Sim
-- [ ] Odtwarzanie z prędkością x10/x60
+- [ ] Zapis tickow do IndexedDB podczas Sim
+- [ ] Odtwarzanie z predkoscia x10/x60
 - [ ] UI: tryb replay, scrubber czasu
 
-### Slice 6 — Live Mode (opcjonalnie, na końcu)
+### Slice 6 - Live Mode (opcjonalnie, na koncu)
 - [ ] `providers/liveProvider.ts`
-- [ ] Wybór API (3rd party vs własny indexer)
-- [ ] Obsługa limitów, desyncow, lagów
+- [ ] Wybor API (3rd party vs wlasny indexer)
+- [ ] Obsluga limitow, desyncow, lagow
+
+### Dodatkowo zrobione (poza pierwotna checklista)
+- [x] Chart: ciagle swiece bez gapow + domyslny TF 15s
+- [x] TF na wykresie: 1s / 15s / 30s / 1m
+- [x] Display Options + markery: `M`, `DB`, `DS`, `B`, `S`
+- [x] Pipeline eventow (migration/dev/user) + ring buffer eventow
+- [x] Pre-migration bonding curve oparty o reserve state
+- [x] Dev debug overlay `?debug=curve` (k, kDrift, invalid state, last swap)
+- [x] Smooth handoff po migracji + sanity clampy swapow
 
 ---
-
 ## Tech Stack (nasz, inspirowany Axiom)
 
 ### Axiom używa (Wappalyzer):
