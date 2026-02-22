@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Table2, Zap } from 'lucide-react';
+import { ArrowUpDown, Table2, Zap } from 'lucide-react';
 import { useTokenStore } from '../../store/tokenStore';
+import { usdToSol } from '../../store/walletStore';
 
 const TABS = ['Trades', 'Positions', 'Orders', 'Holders', 'Top Traders', 'Dev Tokens'] as const;
 const BOTTOM_TAB_STORAGE_KEY = 'memex:token:bottom-tab:v1';
+const BOTTOM_UNIT_STORAGE_KEY = 'memex:token:bottom-unit:v1';
 
 interface Props {
   tokenId: string;
@@ -27,12 +29,6 @@ function fmtSol(v: number): string {
   if (a >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
   if (a >= 1) return v.toFixed(3);
   return v.toFixed(4);
-}
-
-function fmtSignedUsd(v: number): string {
-  if (!Number.isFinite(v)) return '$0';
-  const sign = v >= 0 ? '+' : '-';
-  return `${sign}${fmtUsd(Math.abs(v))}`;
 }
 
 function fmtAgo(tsMs: number): string {
@@ -69,7 +65,19 @@ export default function BottomTabs({
   });
   const [pnlMode, setPnlMode] = useState<'unrealized' | 'realized'>('unrealized');
   const [pnlSortDir, setPnlSortDir] = useState<'desc' | 'asc'>('desc');
+  const [displayUnit, setDisplayUnit] = useState<'usd' | 'sol'>(() => {
+    if (typeof window === 'undefined') return 'usd';
+    return window.localStorage.getItem(BOTTOM_UNIT_STORAGE_KEY) === 'sol' ? 'sol' : 'usd';
+  });
   const market = useTokenStore((s) => s.marketByTokenId[tokenId] ?? null);
+
+  const fmtMoney = (usd: number): string =>
+    displayUnit === 'usd' ? fmtUsd(usd) : `${fmtSol(usdToSol(usd))} SOL`;
+  const fmtSignedMoney = (usd: number): string => {
+    if (!Number.isFinite(usd)) return displayUnit === 'usd' ? '$0' : '0 SOL';
+    const sign = usd >= 0 ? '+' : '-';
+    return `${sign}${fmtMoney(Math.abs(usd))}`;
+  };
 
   const topTraders = useMemo(() => {
     const rows = market?.recentTrades ?? [];
@@ -119,6 +127,11 @@ export default function BottomTabs({
     window.localStorage.setItem(BOTTOM_TAB_STORAGE_KEY, active);
   }, [active]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(BOTTOM_UNIT_STORAGE_KEY, displayUnit);
+  }, [displayUnit]);
+
   return (
     <section className="h-[460px] md:h-[520px] border-t border-ax-border bg-ax-surface shrink-0">
       <div className="h-8 border-b border-ax-border px-3 flex items-center gap-4 text-[11px]">
@@ -138,6 +151,14 @@ export default function BottomTabs({
           );
         })}
         <div className="ml-auto flex items-center">
+          <button
+            onClick={() => setDisplayUnit((u) => (u === 'usd' ? 'sol' : 'usd'))}
+            className="mr-2 inline-flex h-6 items-center gap-1 rounded border border-ax-border px-2.5 text-[11px] text-ax-text-dim transition-colors hover:text-ax-text"
+            title="Toggle USD / SOL"
+          >
+            <ArrowUpDown size={11} />
+            {displayUnit === 'usd' ? 'USD' : 'SOL'}
+          </button>
           <button
             onClick={onToggleTradesTable}
             className={[
@@ -180,10 +201,12 @@ export default function BottomTabs({
             ) : (
               trades.slice(0, 120).map((tr) => (
                 <div key={tr.id} className="grid grid-cols-[84px_58px_1fr_72px_56px] gap-2 py-0.5">
-                  <span className={tr.side === 'BUY' ? 'text-ax-green' : 'text-ax-red'}>{fmtUsd(tr.notionalUsd)}</span>
-                  <span className="text-ax-text">${tr.priceUsd.toFixed(4)}</span>
+                  <span className={tr.side === 'BUY' ? 'text-ax-green' : 'text-ax-red'}>{fmtMoney(tr.notionalUsd)}</span>
+                  <span className="text-ax-text">
+                    {displayUnit === 'usd' ? `$${tr.priceUsd.toFixed(4)}` : `${fmtSol(usdToSol(tr.priceUsd))} SOL`}
+                  </span>
                   <span className="text-ax-text">{shortWallet(tr.walletId)}</span>
-                  <span className="text-ax-text">{fmtUsd(tr.mcapUsd)}</span>
+                  <span className="text-ax-text">{fmtMoney(tr.mcapUsd)}</span>
                   <span>{fmtAgo(tr.tMs)}</span>
                 </div>
               ))
@@ -248,17 +271,17 @@ export default function BottomTabs({
                         <span className="text-ax-text-dim"> ({fmtAgo(h.lastActiveMs)})</span>
                       </span>
                       <span className="text-ax-green">
-                        {fmtUsd(h.boughtUsd)}
+                        {fmtMoney(h.boughtUsd)}
                       </span>
                       <span className="text-ax-red">
-                        {fmtUsd(h.soldUsd)}
+                        {fmtMoney(h.soldUsd)}
                       </span>
                       <span className={pnlValue >= 0 ? 'text-ax-green' : 'text-ax-red'}>
-                        {fmtSignedUsd(pnlValue)}
+                        {fmtSignedMoney(pnlValue)}
                       </span>
                       <span className="text-ax-text">
                         <div className="flex items-center gap-2">
-                          <span>{fmtUsd(h.remainingUsd)}</span>
+                          <span>{fmtMoney(h.remainingUsd)}</span>
                           <span className="inline-flex rounded border border-ax-border bg-ax-surface2 px-1.5 py-[1px] text-[10px] text-ax-text-dim">
                             {heldPct.toFixed(2)}%
                           </span>
@@ -294,9 +317,9 @@ export default function BottomTabs({
               topTraders.map((tr) => (
                 <div key={tr.walletId} className="grid grid-cols-[1fr_84px_84px_84px_48px] gap-2 py-0.5">
                   <span className="text-ax-text">{shortWallet(tr.walletId)}</span>
-                  <span className="text-ax-green">{fmtUsd(tr.buyUsd)}</span>
-                  <span className="text-ax-red">{fmtUsd(tr.sellUsd)}</span>
-                  <span className={tr.netUsd >= 0 ? 'text-ax-green' : 'text-ax-red'}>{fmtUsd(tr.netUsd)}</span>
+                  <span className="text-ax-green">{fmtMoney(tr.buyUsd)}</span>
+                  <span className="text-ax-red">{fmtMoney(tr.sellUsd)}</span>
+                  <span className={tr.netUsd >= 0 ? 'text-ax-green' : 'text-ax-red'}>{fmtSignedMoney(tr.netUsd)}</span>
                   <span className="text-ax-text">{tr.trades}</span>
                 </div>
               ))

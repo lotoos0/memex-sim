@@ -1,5 +1,6 @@
-import { useCallback, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { LoaderCircle, Zap } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
 import { useTokenStore } from '../../store/tokenStore';
 import { useTradingStore } from '../../store/tradingStore';
@@ -29,11 +30,24 @@ function fmtSignedUsd(v: number): string {
   return `${sign}$${abs.toFixed(0)}`;
 }
 
-interface Props {
-  token: TokenState;
+function fmtQuickBuyAmount(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return '0.05';
+  if (v >= 1) return v.toFixed(2).replace(/\.00$/, '');
+  if (v >= 0.1) return v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+  return v.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-export default function TokenCard({ token }: Props) {
+interface Props {
+  token: TokenState;
+  quickBuyAmount: number;
+  quickBuyOptions: {
+    slippagePct: number;
+    prioritySol: number;
+    bribeSol: number;
+  };
+}
+
+export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Props) {
   const navigate = useNavigate();
   const setActive = useTokenStore(s => s.setActiveToken);
   const selectQuickPosition = useCallback(
@@ -42,7 +56,8 @@ export default function TokenCard({ token }: Props) {
   );
   const quickPosition = useTradingStore(selectQuickPosition);
   const quickBuy = useTradingStore(s => s.quickBuy);
-  const quickSell = useTradingStore(s => s.quickSell);
+  const [isBuying, setIsBuying] = useState(false);
+  const buyTimerRef = useRef<number | null>(null);
 
   const isRugged = token.phase === 'RUGGED';
   const hasOpenPosition = (quickPosition?.qty ?? 0) > 0;
@@ -58,14 +73,22 @@ export default function TokenCard({ token }: Props) {
   const handleQuickBuy = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (isRugged) return;
-    quickBuy(token.id, 0.1);
+    quickBuy(token.id, quickBuyAmount, quickBuyOptions);
+    setIsBuying(true);
+    if (buyTimerRef.current != null) window.clearTimeout(buyTimerRef.current);
+    buyTimerRef.current = window.setTimeout(() => {
+      setIsBuying(false);
+      buyTimerRef.current = null;
+    }, 1_000);
   };
 
-  const handleQuickSell = (e: MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    if (isRugged) return;
-    quickSell(token.id, 0.1);
-  };
+  useEffect(() => {
+    return () => {
+      if (buyTimerRef.current != null) {
+        window.clearTimeout(buyTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div
@@ -171,21 +194,17 @@ export default function TokenCard({ token }: Props) {
         <div className="flex items-center gap-1">
           <button
             onClick={handleQuickBuy}
-            className="h-6 px-2 rounded border border-ax-green/40 bg-ax-green-dim text-[10px] text-ax-green"
+            disabled={isBuying}
+            className="h-8 min-w-[132px] px-3 rounded-md border border-[#6f8cff88] bg-[#4f6dff] text-[11px] text-white font-semibold inline-flex items-center justify-center gap-1.5 hover:bg-[#5c79ff] transition-colors"
           >
-            Buy 0.1
-          </button>
-          <button
-            onClick={handleQuickSell}
-            disabled={!hasOpenPosition}
-            className={[
-              'h-6 px-2 rounded border text-[10px]',
-              hasOpenPosition
-                ? 'border-ax-red/40 bg-ax-red-dim text-ax-red'
-                : 'border-ax-border text-ax-text-dim opacity-50 cursor-not-allowed',
-            ].join(' ')}
-          >
-            Sell 0.1
+            {isBuying ? (
+              <LoaderCircle size={14} className="animate-spin" />
+            ) : (
+              <>
+                <Zap size={12} />
+                {fmtQuickBuyAmount(quickBuyAmount)} SOL
+              </>
+            )}
           </button>
         </div>
       </div>
