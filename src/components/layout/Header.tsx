@@ -6,7 +6,7 @@ export default function Header() {
   const pnl = useWalletStore(s => s.realizedPnlSol);
 
   return (
-    <header className="flex items-center justify-between px-4 h-11 border-b border-ax-border bg-ax-surface shrink-0">
+    <header className="sticky top-0 z-50 flex items-center justify-between px-4 h-11 border-b border-ax-border bg-ax-surface shrink-0">
       <Link to="/" className="flex items-center gap-2 text-ax-text hover:text-ax-green transition-colors">
         <span className="text-ax-green font-bold text-sm tracking-widest">MEMEX</span>
         <span className="text-ax-text-dim text-xs">sim</span>

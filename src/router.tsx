@@ -15,10 +15,12 @@ function AppShell() {
   return (
     <div className="flex flex-col h-screen bg-ax-bg text-ax-text overflow-hidden">
       <Header />
-      <Routes>
-        <Route path="/" element={<PulsePage />} />
-        <Route path="/token/:id" element={<TokenPage />} />
-      </Routes>
+      <main className="flex-1 min-h-0 overflow-y-auto">
+        <Routes>
+          <Route path="/" element={<PulsePage />} />
+          <Route path="/token/:id" element={<TokenPage />} />
+        </Routes>
+      </main>
     </div>
   );
 }

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pencil, RefreshCcw } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
-import { useTradingStore } from '../../store/tradingStore';
+import { selectLastQuickExecutionByTokenId, useTradingStore } from '../../store/tradingStore';
 import { usdToSol } from '../../store/walletStore';
 
 interface Props {
   token: TokenState;
+  floating?: boolean;
 }
 
 function fmtUsd(v: number): string {
@@ -28,6 +29,23 @@ function fmtSignedPct(v: number): string {
   if (!Number.isFinite(v)) return '+0.00%';
   const sign = v >= 0 ? '+' : '-';
   return `${sign}${Math.abs(v).toFixed(2)}%`;
+}
+
+function fmtPriceUsd(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return '$0';
+  if (v >= 1) return `$${v.toFixed(4)}`;
+  if (v >= 0.01) return `$${v.toFixed(6)}`;
+  return `$${v.toExponential(4)}`;
+}
+
+function fmtQty(v: number): string {
+  if (!Number.isFinite(v)) return '0';
+  const a = Math.abs(v);
+  if (a >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+  if (a >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
+  if (a >= 1) return v.toFixed(2);
+  return v.toFixed(6);
 }
 
 type Side = 'buy' | 'sell';
@@ -61,7 +79,7 @@ function loadPresetValues(): string[] {
   }
 }
 
-export default function TradeSidebar({ token }: Props) {
+export default function TradeSidebar({ token, floating = false }: Props) {
   const [side, setSide] = useState<Side>('buy');
   const [orderType, setOrderType] = useState<OrderType>('market');
   const [amount, setAmount] = useState('0.10');
@@ -75,11 +93,26 @@ export default function TradeSidebar({ token }: Props) {
   const [limitPrice, setLimitPrice] = useState(safePrice.toFixed(8));
   const [advanced, setAdvanced] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
+  const [slippagePct, setSlippagePct] = useState('1.0');
+  const [prioritySol, setPrioritySol] = useState('0');
+  const [bribeSol, setBribeSol] = useState('0');
+  const [lastQuote, setLastQuote] = useState<{
+    side: Side;
+    expectedOut: number;
+    minOut: number;
+    etaMs: number;
+  } | null>(null);
   const quickBuy = useTradingStore(s => s.quickBuy);
   const quickSell = useTradingStore(s => s.quickSell);
   const quickPosition = useTradingStore(
     useMemo(
       () => (s: ReturnType<typeof useTradingStore.getState>) => s.quickPositionsByTokenId[token.id] ?? null,
+      [token.id]
+    )
+  );
+  const lastExecution = useTradingStore(
+    useMemo(
+      () => selectLastQuickExecutionByTokenId(token.id),
       [token.id]
     )
   );
@@ -118,21 +151,53 @@ export default function TradeSidebar({ token }: Props) {
   const handleSubmit = () => {
     const parsedAmount = Number(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setLastQuote(null);
       setStatusText('Invalid amount');
       return;
     }
+    const parsedSlippage = Number(slippagePct);
+    if (!Number.isFinite(parsedSlippage) || parsedSlippage < 0) {
+      setLastQuote(null);
+      setStatusText('Invalid slippage');
+      return;
+    }
+    const parsedPriority = Number(prioritySol);
+    if (!Number.isFinite(parsedPriority) || parsedPriority < 0) {
+      setLastQuote(null);
+      setStatusText('Invalid priority');
+      return;
+    }
+    const parsedBribe = Number(bribeSol);
+    if (!Number.isFinite(parsedBribe) || parsedBribe < 0) {
+      setLastQuote(null);
+      setStatusText('Invalid bribe');
+      return;
+    }
     if (orderType === 'limit') {
+      setLastQuote(null);
       setStatusText('Limit mode is queued. Use Market for now.');
       return;
     }
     const result = side === 'buy'
-      ? quickBuy(token.id, parsedAmount)
-      : quickSell(token.id, parsedAmount);
+      ? quickBuy(token.id, parsedAmount, { slippagePct: parsedSlippage, prioritySol: parsedPriority, bribeSol: parsedBribe })
+      : quickSell(token.id, parsedAmount, { slippagePct: parsedSlippage, prioritySol: parsedPriority, bribeSol: parsedBribe });
     if (!result.ok) {
+      setLastQuote(null);
       setStatusText(result.reason ?? 'Trade rejected');
       return;
     }
-    setStatusText(`${side === 'buy' ? 'Bought' : 'Sold'} ${parsedAmount.toFixed(3)} SOL`);
+    const etaMs = Number.isFinite(result.etaMs) ? (result.etaMs as number) : 0;
+    setStatusText(`Order submitted (${Math.max(0, Math.round(etaMs))} ms)`);
+    if (Number.isFinite(result.expectedOut) && Number.isFinite(result.minOut)) {
+      setLastQuote({
+        side,
+        expectedOut: result.expectedOut as number,
+        minOut: result.minOut as number,
+        etaMs,
+      });
+    } else {
+      setLastQuote(null);
+    }
   };
 
   useEffect(() => {
@@ -175,7 +240,7 @@ export default function TradeSidebar({ token }: Props) {
   }, [movingPnlPct]);
 
   return (
-    <aside className="w-full xl:w-[326px] shrink-0 border-l border-ax-border bg-ax-surface">
+    <aside className={floating ? 'w-full bg-transparent' : 'w-full xl:w-[326px] shrink-0 border-l border-ax-border bg-ax-surface'}>
       <div className="p-3 space-y-3">
         <div className="flex rounded-md border border-ax-border overflow-hidden">
           <button
@@ -225,6 +290,33 @@ export default function TradeSidebar({ token }: Props) {
               onChange={(e) => setAmount(e.target.value)}
               className="w-full h-8 rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
             />
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1">
+              <label className="block text-[10px] text-ax-text-dim">Slippage %</label>
+              <input
+                value={slippagePct}
+                onChange={(e) => setSlippagePct(e.target.value)}
+                className="w-full h-8 rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-[10px] text-ax-text-dim">Priority (SOL)</label>
+              <input
+                value={prioritySol}
+                onChange={(e) => setPrioritySol(e.target.value)}
+                className="w-full h-8 rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="block text-[10px] text-ax-text-dim">Bribe (SOL)</label>
+              <input
+                value={bribeSol}
+                onChange={(e) => setBribeSol(e.target.value)}
+                className="w-full h-8 rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
+              />
+            </div>
           </div>
 
           {orderType === 'limit' && (
@@ -310,6 +402,58 @@ export default function TradeSidebar({ token }: Props) {
         </button>
         {statusText && (
           <div className="text-[11px] text-ax-text-dim px-1">{statusText}</div>
+        )}
+        {lastQuote && (
+          <div className="grid grid-cols-2 gap-2 text-[11px] px-1">
+            <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
+              <div className="text-ax-text-dim">Expected Out</div>
+              <div className="text-ax-text font-medium">
+                {lastQuote.side === 'buy'
+                  ? `${fmtQty(lastQuote.expectedOut)} ${token.ticker}`
+                  : fmtSol(lastQuote.expectedOut)}
+              </div>
+            </div>
+            <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
+              <div className="text-ax-text-dim">Min Out</div>
+              <div className="text-ax-text font-medium">
+                {lastQuote.side === 'buy'
+                  ? `${fmtQty(lastQuote.minOut)} ${token.ticker}`
+                  : fmtSol(lastQuote.minOut)}
+              </div>
+            </div>
+          </div>
+        )}
+        {lastExecution && (
+          <div className="grid grid-cols-2 gap-2 text-[11px] px-1">
+            <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
+              <div className="text-ax-text-dim">Status</div>
+              <div className={lastExecution.status === 'filled' ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
+                {lastExecution.status === 'filled' ? 'Filled' : `Failed${lastExecution.reason ? `: ${lastExecution.reason}` : ''}`}
+              </div>
+            </div>
+            <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
+              <div className="text-ax-text-dim">Actual Out</div>
+              <div className="text-ax-text font-medium">
+                {lastExecution.side === 'buy'
+                  ? `${fmtQty(lastExecution.actualOut)} ${token.ticker}`
+                  : fmtSol(lastExecution.actualOut)}
+              </div>
+            </div>
+            {lastExecution.status === 'filled' && (
+              <>
+                <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
+                  <div className="text-ax-text-dim">Avg Price</div>
+                  <div className="text-ax-text font-medium">{fmtPriceUsd(lastExecution.avgPriceUsd ?? 0)}</div>
+                </div>
+                <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
+                  <div className="text-ax-text-dim">Impact</div>
+                  <div className={(lastExecution.impactPct ?? 0) >= 0 ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
+                    {fmtSignedPct(lastExecution.impactPct ?? 0)}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         <div className="grid grid-cols-4 gap-2 text-[11px]">

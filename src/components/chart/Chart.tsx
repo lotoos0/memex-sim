@@ -450,7 +450,7 @@ export default function Chart({ tokenId }: Props) {
   const lastDisplay = lastMetricValue ?? 0;
 
   return (
-    <div ref={wrapperRef} className="relative flex flex-col flex-1 min-h-0 bg-ax-bg">
+    <div ref={wrapperRef} className="relative flex flex-col h-full min-h-0 bg-ax-bg">
       <div className="flex items-center gap-3 px-3 py-1.5 border-b border-ax-border bg-ax-surface shrink-0">
         <div className="flex items-center gap-0.5">
           {TF_OPTIONS.map(tf => (
