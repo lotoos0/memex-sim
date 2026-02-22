@@ -1,154 +1,133 @@
 # memex-sim - handoff dla drugiego AI
 
-Data aktualizacji: 2026-02-18
+Data aktualizacji: 2026-02-21
 
-## 1) O czym jest projekt
-memex-sim to symulator tradingu memecoinow w stylu DEX (inspiracja: Axiom).
-Produkt ma miec 3 tryby danych:
-- Sim (dziala teraz) - synthetic market, lifecycle tokenow, fake wallet
-- Replay (planowany) - odtwarzanie nagranych tickow
-- Live (opcjonalny) - podpiecie pod realne API/indexer
+## 1) Co to jest
+memex-sim to symulator tradingu memecoinow w stylu DEX.
+Aktualnie dziala jako SPA (React + Vite) z trybem SIM i synthetic marketem.
 
-Glowny flow uzytkownika:
-- Home/Pulse z kolumnami tokenow (New Pairs, Final Stretch, Migrated)
-- Wejscie w token -> wykres + panel tradingowy
-- Trading i PnL powinny byc wspolne dla Sim/Replay/Live
+Flow usera:
+- Pulse (`/`) z kolumnami tokenow.
+- Wejscie w token (`/token/:id`) -> chart + trading sidebar + dolny panel.
+- Opcjonalny floating `InstantTradePanel` (toggle w BottomTabs).
 
-## 2) Co jest ustalone (kontrakty i decyzje)
-Nie ruszac bez swiadomej migracji:
-- `src/tokens/types.ts` (TokenMeta, TokenRuntime, TokenPhase)
-- Lifecycle: `NEW -> FINAL -> MIGRATED`, plus `RUGGED` i cleanup
-- Wallet start: 1 SOL, stale SOL/USD = 150 (uproseczenie UI)
-- Architektura tickow:
-  - engine tick: 200ms
-  - feed publish do store: 1000ms
-  - aktywny wykres: direct callback ~200ms
+## 2) Faktyczny stack
+- Frontend: React 19, TypeScript, Vite
+- Routing: react-router-dom v7
+- State: Zustand
+- Chart: lightweight-charts
+- UI: Tailwind CSS v4 (theme w `src/styles.css`)
+- Ikony: lucide-react
 
-## 3) Aktualny stan implementacji (faktycznie w repo)
-Zrobione:
-- Routing i shell app:
-  - `src/router.tsx` (`/` i `/token/:id`)
-- Core token sim:
-  - `src/tokens/generator.ts`
-  - `src/tokens/tokenSim.ts`
-  - `src/tokens/registry.ts`
-- Store tokenow:
-  - `src/store/tokenStore.ts`
-- UI Pulse + Token page:
-  - `src/pages/PulsePage.tsx`
-  - `src/pages/TokenPage.tsx`
-  - `src/components/pulse/*`
-  - `src/components/chart/Chart.tsx`
-- Tailwind v4 + theme:
-  - `src/styles.css`
+Skrypty:
+- `npm run dev`
+- `npm run build`
+- `npm run lint`
+- `npm run preview`
 
-Czesciowo zrobione / niespojnie:
-- Trading:
-  - `src/store/tradingStore.ts` jest rozbudowany, ale nadal legacy-oriented (`symbol`-centric)
-  - `src/components/token/TradeSidebar.tsx` to glownie UI stub (CTA nie wykonuje realnych zlecen)
-  - `src/components/token/BottomTabs.tsx` to placeholder
-- Wallet:
-  - `src/store/walletStore.ts` istnieje (1 SOL), ale nie jest jeszcze spiety end-to-end z nowym token flow
+## 3) Kontrakty i stale (traktuj jako zamrozone)
+Plik: `src/tokens/types.ts`
 
-Braki vs plan:
-- brak `src/tokens/lifecycle.ts` jako osobnego modulu (logika siedzi w `tokenSim.ts`/`registry.ts`)
-- brak provider abstraction (`src/providers/*` praktycznie nieuzyte)
-- brak Replay/Live
-- brak testow
+- Token lifecycle: `NEW -> FINAL -> MIGRATED`, plus `RUGGED`, `DEAD`
+- Fate: `QUICK_RUG | SHORT | NORMAL | LONG_RUNNER`
+- `MIGRATION_THRESHOLD_USD = 69_000`
+- `MCAP_FLOOR_USD = 2_000`
+- `MCAP_CAP_USD = 10_000_000`
+- `SIM_TIME_MULTIPLIER = 60`
+- `SOL_PRICE_USD = 150`
 
-## 4) Gdzie jestesmy na roadmapie
-Praktycznie: koniec Slice 1 + poczatek Slice 2 i czesc Slice 3.
-- Slice 1 (E2E Sim bez pelnego UI): w duzej mierze jest
-- Slice 2 (wallet + trading): rozpoczete, ale niedokonczone
-- Slice 3 (lifecycle + feed): core dziala, polish i modularizacja jeszcze nie
+Wallet:
+- `src/store/walletStore.ts`
+- start balance: `120 SOL` w DEV, `1 SOL` poza DEV
 
-## 5) Najwazniejsze ryzyka techniczne
-- Rozjazd architektoniczny miedzy nowym token-centric flow a starym trading store.
-- Czesciowe duplikowanie odpowiedzialnosci lifecycle pomiedzy `tokenSim.ts` i `registry.ts`.
-- Brak jasnego kontraktu providerow utrudni wejscie w Replay/Live.
+## 4) Architektura runtime (co faktycznie dziala)
+Glowny orchestrator: `src/tokens/registry.ts`
 
-## 6) Jak wspolpracowac z pierwszym AI (czyli ze mna)
-Prosze komunikowac zmiany jako:
-1. Cel zmiany (1-2 zdania)
-2. Zakres plikow
-3. Ryzyko regresji
-4. Co przetestowano lokalnie
+- engine tick: `200ms`
+- publish feed do store: `1000ms`
+- spawn tokena: `40_000ms`
+- rugged linger przed cleanupem: `90_000ms`
+- startowe tokeny: `12`
 
-Feedback mile widziany szczegolnie dla:
-- architektury multi-token trading
-- granicy miedzy engine a store
-- kolejnosci prac (co odblokowuje najwiecej)
+`registry.start()` jest wywolywany w `src/router.tsx` (AppShell `useEffect`).
 
-## 7) Co robic dalej (priorytet)
-1. Domknac Slice 2: podlaczyc `TradeSidebar` do realnych akcji buy/sell per token i wallet.
-2. Ujednolicic trading store pod tokenId (odejsc od jednego `symbol`).
-3. Wyciagnac lifecycle do `src/tokens/lifecycle.ts` (czysty kontrakt, mniejszy coupling).
-4. Dookreslic i wdrozyc `MarketDataProvider` + `SimProvider` jako warstwe API.
-5. Dodac minimalne testy logiki (token lifecycle + trading fills).
+Chart aktualnie idzie callbackiem z registry (poza Zustand dla candle arrays):
+- TF: `1s`, `15s`, `30s`, `1m`
+- metric: `mcap` / `price`
+- markery eventow: `M`, `DB`, `DS`, `B`, `S`
+- price lines: avg buy, avg sell, migration
+- context menu reset chart + hotkey `Alt+R`
 
-## 8) Pliki, o ktore prosic zamiast "caly projekt"
-Jesli potrzebujesz kontekstu, popros najpierw o te pliki:
+## 5) Trading - realny stan
+Plik: `src/store/tradingStore.ts`
+
+Sa dwa swiaty, oba nadal istnieja:
+
+1. Quick token-centric flow (aktywnie uzywany przez UI):
+- `quickBuy(tokenId, amountSol)`
+- `quickSell(tokenId, amountSol)`
+- `quickPositionsByTokenId`
+- `quickTradesByTokenId`
+- wykonanie przez `registry.executeTrade(...)`
+
+2. Legacy symbol-centric flow (wciaz w store, mniej uzywany):
+- `orders`, `positions`, `trades`, `symbol`, `mode`
+- `placeOrder`, `cancelOrder`, `onPriceTick`, `applyPreset`
+- persist snapshotow przez `src/sim/journal.ts`
+
+Wniosek: trading core jest czesciowo zduplikowany i architektonicznie niespojny.
+
+## 6) UI status
+Dziala:
+- `src/pages/PulsePage.tsx` (3 kolumny: New Pairs, Final Stretch, Migrated)
+- `src/components/pulse/TokenCard.tsx` z quick `Buy 0.1`/`Sell 0.1`
+- `src/pages/TokenPage.tsx` (header, chart, sidebar, quick trade status)
+- `src/components/token/TradeSidebar.tsx` z market buy/sell (limit ma komunikat "queued")
+- `src/components/floating/InstantTradePanel.tsx` (draggable, presety, localStorage)
+
+WIP / placeholder:
+- `src/components/token/BottomTabs.tsx` (taby sa, content "queued in next slice")
+- `src/hooks/usePriceFeed.ts` jest deprecated stub
+- `src/app/App.tsx` jest deprecated stub
+
+## 7) Najwazniejsze ryzyka techniczne
+1. Rozjazd miedzy quick token-centric trading i legacy symbol-centric trading w jednym store.
+2. Lifecycle i trading coupling przez `registry` (dziala, ale utrudnia przyszly provider abstraction).
+3. Brak warstwy providerow (`src/providers/*` nie istnieje) blokuje clean wejscie w Replay/Live.
+4. Brak testow automatycznych i brak `npm run test`.
+
+## 8) Priorytety na teraz (kolejnosc)
+1. Ujednolicic trading store pod `tokenId` i usunac/odizolowac legacy sciezki.
+2. Domknac taby dolne (Trades/Positions/Orders) na realnych danych quick flow.
+3. Rozdzielic kontrakt danych marketowych (`MarketDataProvider`) od implementacji SIM.
+4. Dopiero potem wchodzic w Replay mode.
+
+## 9) Minimalny pakiet plikow do analizy przez drugie AI
 - `Plan.md`
 - `package.json`
-- `config/config.json`
-- `src/tokens/types.ts`
-- `src/tokens/generator.ts`
-- `src/tokens/tokenSim.ts`
-- `src/tokens/registry.ts`
-- `src/store/tokenStore.ts`
-- `src/store/walletStore.ts`
-- `src/store/tradingStore.ts`
+- `src/router.tsx`
 - `src/pages/PulsePage.tsx`
 - `src/pages/TokenPage.tsx`
 - `src/components/chart/Chart.tsx`
 - `src/components/token/TradeSidebar.tsx`
 - `src/components/token/BottomTabs.tsx`
-- `src/router.tsx`
-- `src/styles.css`
+- `src/components/floating/InstantTradePanel.tsx`
+- `src/store/tokenStore.ts`
+- `src/store/tradingStore.ts`
+- `src/store/walletStore.ts`
+- `src/tokens/types.ts`
+- `src/tokens/generator.ts`
+- `src/tokens/tokenSim.ts`
+- `src/tokens/registry.ts`
+- `src/chart/tokenChartEvents.ts`
 
-To zwykle wystarcza do sensownego feedbacku architektonicznego i planowania kolejnych krokow.
+## 10) Prompt roboczy dla drugiego AI
+Uzyj tego jako stylu pracy:
 
-## 9) Instrukcje dla drugiego AI (personalizacja odpowiedzi ChatGPT)
-Poni¿szy blok mozesz przekleic jako "custom instructions" dla ChatGPT pracujacego nad tym projektem.
+"Dzialaj jako technical copilot dla `memex-sim`. Priorytet: male, pionowe kroki i dzialajacy kod po kazdej zmianie. Najpierw decyzja, potem krotkie uzasadnienie. Traktuj `src/tokens/types.ts` jako kontrakt zamrozony. Preferuj `tokenId`-centric architecture i redukuj legacy `symbol` flow. Przy kazdej zmianie podaj: (1) diagnoza, (2) propozycja, (3) pliki, (4) ryzyko, (5) test manualny/build." 
 
-### Rola i kontekst
-- Dzialasz jako technical copilot dla projektu `memex-sim`.
-- Priorytet: szybkie dostarczanie kolejnych slice'ow bez psucia kontraktow danych.
-- Traktuj `src/tokens/types.ts` jako kontrakt zamrozony, chyba ze dostaniesz jawna decyzje o migracji.
-
-### Styl odpowiedzi
-- Odpowiadaj krotko, technicznie, bez marketingu i bez lania wody.
-- Najpierw daj decyzje/rekomendacje, potem uzasadnienie (max kilka punktow).
-- Gdy ryzyko jest wysokie, nazwij je wprost i zaproponuj bezpieczniejsza alternatywe.
-
-### Domyslny format feedbacku
-- `Diagnoza`: co jest nie tak / co blokuje progres.
-- `Propozycja`: minimalny zestaw zmian.
-- `Zmiany w plikach`: konkretne sciezki.
-- `Ryzyko`: co moze sie wysypac po zmianie.
-- `Test`: co odpalic lokalnie i jaki wynik jest oczekiwany.
-
-### Zasady architektoniczne
-- Preferuj podejscie token-centric (klucz `tokenId`) zamiast globalnego `symbol`.
-- Nie dodawaj nowej warstwy abstrakcji, jesli nie odblokowuje Replay/Live.
-- Oddzielaj:
-  - engine/symulacje (logika czasu i ceny)
-  - store (stan UI/trading)
-  - komponenty (prezentacja)
-
-### Zasady implementacyjne
-- Najpierw male, pionowe kroki (vertical slice), nie duzy rewrite.
-- Kazda zmiana ma konczyc sie dzialajacym stanem aplikacji.
-- Przy refaktorze wskazuj "co usuwamy", "co zostaje", "co migrujemy".
-
-### Kiedy zadac pytanie zamiast zgadywac
-Zadaj pytanie, gdy brak decyzji produktowej dotyczy:
-- modelu wallet/trading (np. czy wallet ma byc per token czy global)
-- zachowania przy rug/migration (UX + edge cases)
-- priorytetu: polish UI vs domkniecie trading core
-
-### Definition of Done dla zadania
-- Kod kompiluje sie (`npm run build`)
-- Krytyczny flow dziala recznie w UI
-- Brak zmian kontraktow bez notatki migracyjnej
-- Krótki changelog: co zrobiono i czego swiadomie NIE zrobiono
+## 11) Definition of Done dla pojedynczego taska
+- `npm run build` przechodzi
+- krytyczny flow UI dziala recznie
+- brak zmian kontraktow bez notatki migracyjnej
+- krotki changelog: co zrobiono i czego swiadomie nie zrobiono
