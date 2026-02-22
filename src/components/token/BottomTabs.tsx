@@ -1,13 +1,16 @@
-import { useMemo, useState } from 'react';
-import { Zap } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Table2, Zap } from 'lucide-react';
 import { useTokenStore } from '../../store/tokenStore';
 
 const TABS = ['Trades', 'Positions', 'Orders', 'Holders', 'Top Traders', 'Dev Tokens'] as const;
+const BOTTOM_TAB_STORAGE_KEY = 'memex:token:bottom-tab:v1';
 
 interface Props {
   tokenId: string;
   instantTradeEnabled: boolean;
   onToggleInstantTrade: () => void;
+  tradesTableEnabled: boolean;
+  onToggleTradesTable: () => void;
 }
 
 function fmtUsd(v: number): string {
@@ -16,15 +19,6 @@ function fmtUsd(v: number): string {
   if (a >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
   if (a >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
   return `$${v.toFixed(2)}`;
-}
-
-function fmtToken(v: number): string {
-  if (!Number.isFinite(v)) return '0';
-  const a = Math.abs(v);
-  if (a >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
-  if (a >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-  if (a >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
-  return v.toFixed(2);
 }
 
 function fmtSol(v: number): string {
@@ -56,8 +50,23 @@ function shortWallet(id: string): string {
   return `${id.slice(0, 4)}...${id.slice(-4)}`;
 }
 
-export default function BottomTabs({ tokenId, instantTradeEnabled, onToggleInstantTrade }: Props) {
-  const [active, setActive] = useState<(typeof TABS)[number]>('Positions');
+function isBottomTab(v: string): v is (typeof TABS)[number] {
+  return (TABS as readonly string[]).includes(v);
+}
+
+export default function BottomTabs({
+  tokenId,
+  instantTradeEnabled,
+  onToggleInstantTrade,
+  tradesTableEnabled,
+  onToggleTradesTable,
+}: Props) {
+  const [active, setActive] = useState<(typeof TABS)[number]>(() => {
+    if (typeof window === 'undefined') return 'Positions';
+    const raw = window.localStorage.getItem(BOTTOM_TAB_STORAGE_KEY);
+    if (!raw) return 'Positions';
+    return isBottomTab(raw) ? raw : 'Positions';
+  });
   const [pnlMode, setPnlMode] = useState<'unrealized' | 'realized'>('unrealized');
   const [pnlSortDir, setPnlSortDir] = useState<'desc' | 'asc'>('desc');
   const market = useTokenStore((s) => s.marketByTokenId[tokenId] ?? null);
@@ -105,6 +114,11 @@ export default function BottomTabs({ tokenId, instantTradeEnabled, onToggleInsta
   );
   const holdersTabLabel = `Holders(${market?.holdersCount ?? 0})`;
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(BOTTOM_TAB_STORAGE_KEY, active);
+  }, [active]);
+
   return (
     <section className="h-[460px] md:h-[520px] border-t border-ax-border bg-ax-surface shrink-0">
       <div className="h-8 border-b border-ax-border px-3 flex items-center gap-4 text-[11px]">
@@ -124,6 +138,18 @@ export default function BottomTabs({ tokenId, instantTradeEnabled, onToggleInsta
           );
         })}
         <div className="ml-auto flex items-center">
+          <button
+            onClick={onToggleTradesTable}
+            className={[
+              'mr-2 inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-[11px] transition-colors',
+              tradesTableEnabled
+                ? 'border-[#2f5bff] bg-[#2f5bff1a] text-[#7ea2ff]'
+                : 'border-ax-border text-ax-text-dim hover:text-ax-text',
+            ].join(' ')}
+          >
+            <Table2 size={11} />
+            Trades Table
+          </button>
           <button
             onClick={onToggleInstantTrade}
             className={[
@@ -189,7 +215,7 @@ export default function BottomTabs({ tokenId, instantTradeEnabled, onToggleInsta
                     className="text-ax-text-dim hover:text-ax-text transition-colors"
                     title="Toggle sort direction"
                   >
-                    {pnlSortDir === 'desc' ? '↓' : '↑'}
+                    {pnlSortDir === 'desc' ? 'v' : '^'}
                   </button>
                 </span>
                 <span>Remaining</span>

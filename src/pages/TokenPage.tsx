@@ -5,6 +5,7 @@ import { useTokenStore, selectActiveToken } from '../store/tokenStore';
 import Chart from '../components/chart/Chart';
 import TradeSidebar from '../components/token/TradeSidebar';
 import BottomTabs from '../components/token/BottomTabs';
+import TradesTablePanel from '../components/token/TradesTablePanel';
 import InstantTradePanel from '../components/floating/InstantTradePanel';
 import { registry } from '../tokens/registry';
 import type { CurveDebugSnapshot } from '../tokens/tokenSim';
@@ -12,6 +13,7 @@ import { useTradingStore, type QuickTrade } from '../store/tradingStore';
 
 const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 const INSTANT_TRADE_ENABLED_STORAGE_KEY = 'memex:instant-trade:enabled';
+const TRADES_TABLE_ENABLED_STORAGE_KEY = 'memex:trades-table:enabled';
 
 function fmtUsd(v: number): string {
   if (!Number.isFinite(v)) return '$0';
@@ -68,6 +70,10 @@ export default function TokenPage() {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem(INSTANT_TRADE_ENABLED_STORAGE_KEY) === '1';
   });
+  const [tradesTableEnabled, setTradesTableEnabled] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(TRADES_TABLE_ENABLED_STORAGE_KEY) === '1';
+  });
   const [curveDebug, setCurveDebug] = useState<CurveDebugSnapshot | null>(null);
 
   useEffect(() => {
@@ -105,6 +111,14 @@ export default function TokenPage() {
     );
   }, [instantTradeEnabled]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      TRADES_TABLE_ENABLED_STORAGE_KEY,
+      tradesTableEnabled ? '1' : '0'
+    );
+  }, [tradesTableEnabled]);
+
   if (!token) {
     return (
       <div className="flex flex-1 items-center justify-center text-ax-text-dim text-sm">
@@ -122,7 +136,7 @@ export default function TokenPage() {
   const recentTrades = quickTrades.slice(-3).reverse();
 
   return (
-    <div className="flex flex-col bg-ax-bg min-h-full pb-[26vh]">
+    <div className="flex flex-col bg-ax-bg min-h-full pb-[26vh] overflow-x-hidden">
       <div className="flex items-center gap-4 px-4 py-2 border-b border-ax-border bg-ax-surface shrink-0">
         <button onClick={() => navigate('/')} className="text-ax-text-dim hover:text-ax-text transition-colors">
           <ArrowLeft size={14} />
@@ -260,15 +274,22 @@ export default function TokenPage() {
         </div>
       )}
 
-      <div className="flex xl:flex-row flex-col">
-        <div className="flex flex-col flex-1 min-h-[640px]">
-          <div className="h-[54vh] min-h-[360px]">
-            <Chart tokenId={token.id} />
+      <div className="flex xl:flex-row flex-col min-w-0 overflow-x-hidden">
+        <div className="flex flex-col flex-1 min-h-[640px] min-w-0">
+          <div className="h-[54vh] min-h-[360px] flex min-w-0 overflow-hidden">
+            <div className="flex-1 min-w-0">
+              <Chart tokenId={token.id} />
+            </div>
+            {tradesTableEnabled && (
+              <TradesTablePanel tokenId={token.id} />
+            )}
           </div>
           <BottomTabs
             tokenId={token.id}
             instantTradeEnabled={instantTradeEnabled}
             onToggleInstantTrade={() => setInstantTradeEnabled((v) => !v)}
+            tradesTableEnabled={tradesTableEnabled}
+            onToggleTradesTable={() => setTradesTableEnabled((v) => !v)}
           />
         </div>
         <TradeSidebar token={token} />

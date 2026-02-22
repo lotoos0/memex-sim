@@ -240,7 +240,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
   }, [movingPnlPct]);
 
   return (
-    <aside className={floating ? 'w-full bg-transparent' : 'w-full xl:w-[326px] shrink-0 border-l border-ax-border bg-ax-surface'}>
+    <aside className={floating ? 'w-full bg-transparent' : 'w-full xl:w-[300px] 2xl:w-[326px] shrink-0 border-l border-ax-border bg-ax-surface'}>
       <div className="p-3 space-y-3">
         <div className="flex rounded-md border border-ax-border overflow-hidden">
           <button

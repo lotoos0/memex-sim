@@ -120,7 +120,6 @@ export interface PositionHistory {
   openTs: number; closeTs: number; durationSec: number;
 }
 
-const MAX_QUICK_TRADES_PER_TOKEN = 200;
 const QUICK_BASE_TX_FEE_SOL = 0.000005;
 
 function makeId(): string {
@@ -851,7 +850,7 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
       feeUsd: fill.feeUsd,
       tsMs: fill.tsMs,
     };
-    nextQuickTradesByTokenId[execution.tokenId] = prevTokenTrades.concat([quickTrade]).slice(-MAX_QUICK_TRADES_PER_TOKEN);
+    nextQuickTradesByTokenId[execution.tokenId] = prevTokenTrades.concat([quickTrade]);
 
     useTradingStore.setState({
       pendingQuickOrdersById: nextPending,
@@ -897,7 +896,7 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
     feeUsd: fill.feeUsd,
     tsMs: fill.tsMs,
   };
-  nextQuickTradesByTokenId[execution.tokenId] = prevTokenTrades.concat([quickTrade]).slice(-MAX_QUICK_TRADES_PER_TOKEN);
+  nextQuickTradesByTokenId[execution.tokenId] = prevTokenTrades.concat([quickTrade]);
 
   useWalletStore.getState().addSol(fill.filledSol);
   useWalletStore.getState().addPnl(usdToSol(realizedPnlUsd));
