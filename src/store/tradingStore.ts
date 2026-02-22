@@ -4,6 +4,8 @@ import type { Candle, Tick } from '../engine/types';
 import { persistOrder, persistTrade, saveOrdersSnapshot, saveTradesSnapshot, savePositionHistorySnapshot, loadSnapshots } from '../sim/journal';
 import { useTokenStore } from './tokenStore';
 import { useWalletStore, solToUsd, usdToSol } from './walletStore';
+import { registry } from '../tokens/registry';
+import type { UserTradeExecutionNotice } from '../tokens/tokenSim';
 
 
 /* --- podstawowe typy --- */
@@ -58,7 +60,55 @@ export interface QuickTrade {
 export interface Trade { id: string; orderId: string; price: number; qty: number; fee: number; ts: number; side: Side }
 export interface Preset { id: string; label: string; qtyPct: number; slPct?: number; tpPct?: number; }
 export interface RiskLimits { maxRiskUsd: number; maxOrdersPerMinute: number; maxLeverage?: number; }
-export interface QuickTradeResult { ok: boolean; reason?: string; filledSol?: number; filledUsd?: number; }
+export interface QuickTradeOptions {
+  slippagePct?: number;
+  prioritySol?: number;
+  bribeSol?: number;
+}
+export interface QuickTradeResult {
+  ok: boolean;
+  reason?: string;
+  submitted?: boolean;
+  orderId?: string;
+  expectedOut?: number;
+  minOut?: number;
+  slippageBps?: number;
+  prioritySol?: number;
+  bribeSol?: number;
+  txCostSol?: number;
+  etaMs?: number;
+}
+
+interface PendingQuickOrder {
+  orderId: string;
+  tokenId: string;
+  side: Side;
+  reservedSol: number;
+  reservedToken: number;
+  expectedOut: number;
+  minOut: number;
+  txCostSol: number;
+  prioritySol: number;
+  bribeSol: number;
+  submitMs: number;
+  execMs: number;
+}
+
+export interface QuickExecutionSnapshot {
+  tokenId: string;
+  orderId: string;
+  side: Side;
+  status: 'filled' | 'failed';
+  expectedOut: number;
+  minOut: number;
+  actualOut: number;
+  avgPriceUsd?: number;
+  impactPct?: number;
+  priceBeforeUsd?: number;
+  priceAfterUsd?: number;
+  reason?: string;
+  tsMs: number;
+}
 
 type Ghost = { price: number } | null;
 
@@ -71,6 +121,7 @@ export interface PositionHistory {
 }
 
 const MAX_QUICK_TRADES_PER_TOKEN = 200;
+const QUICK_BASE_TX_FEE_SOL = 0.000005;
 
 function makeId(): string {
   return 'O' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
@@ -102,6 +153,8 @@ type Store = {
   trades: Trade[];
   quickPositionsByTokenId: Record<string, QuickPosition>;
   quickTradesByTokenId: Record<string, QuickTrade[]>;
+  pendingQuickOrdersById: Record<string, PendingQuickOrder>;
+  lastQuickExecutionByTokenId: Record<string, QuickExecutionSnapshot>;
   presets: Preset[];
   risk: RiskLimits;
   feeBps: number;
@@ -134,8 +187,8 @@ type Store = {
   closePct: (pct: number) => void;
   setSLTP: (levels: { sl?: number; tp?: number }) => void;
   applyPreset: (id: string) => void;
-  quickBuy: (tokenId: string, amountSol: number) => QuickTradeResult;
-  quickSell: (tokenId: string, amountSol: number) => QuickTradeResult;
+  quickBuy: (tokenId: string, amountSol: number, options?: QuickTradeOptions) => QuickTradeResult;
+  quickSell: (tokenId: string, amountSol: number, options?: QuickTradeOptions) => QuickTradeResult;
 
   onPriceTick: (t: Tick, maybeCandle?: { mode: 'new'|'update'; candle: Candle }) => void;
 };
@@ -162,6 +215,8 @@ export const useTradingStore = create<Store>((set, get) => ({
   trades: [],
   quickPositionsByTokenId: {},
   quickTradesByTokenId: {},
+  pendingQuickOrdersById: {},
+  lastQuickExecutionByTokenId: {},
   presets: [
     { id: 'p1', label: '0.10', qtyPct: 0.10, slPct: 0.01, tpPct: 0.02 },
     { id: 'p2', label: '0.20', qtyPct: 0.20, slPct: 0.015, tpPct: 0.03 },
@@ -219,7 +274,7 @@ export const useTradingStore = create<Store>((set, get) => ({
 
   applyPreset: () => ({}),
 
-  quickBuy: (tokenId, amountSol) => {
+  quickBuy: (tokenId, amountSol, options) => {
     const st = get();
     if (!Number.isFinite(amountSol) || amountSol <= 0) {
       return { ok: false, reason: 'Invalid amount' };
@@ -230,77 +285,76 @@ export const useTradingStore = create<Store>((set, get) => ({
       return { ok: false, reason: 'Token unavailable' };
     }
 
-    const priceUsd = token.lastPriceUsd;
-    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return { ok: false, reason: 'Price unavailable' };
+    const slippagePct = Number.isFinite(options?.slippagePct)
+      ? (options?.slippagePct as number)
+      : st.slippagePct;
+    const slippageBps = slippagePctToBps(slippagePct);
+    const prioritySol = Math.max(0, Number(options?.prioritySol ?? 0));
+    const bribeSol = Math.max(0, Number(options?.bribeSol ?? 0));
+    const effectivePrioritySol = prioritySol + bribeSol;
+    const txCostSol = QUICK_BASE_TX_FEE_SOL + prioritySol + bribeSol;
 
     const wallet = useWalletStore.getState();
-    if (!wallet.deductSol(amountSol)) return { ok: false, reason: 'Insufficient SOL' };
+    const totalSolNeeded = amountSol + txCostSol;
+    if (!wallet.deductSol(totalSolNeeded)) {
+      return { ok: false, reason: 'Insufficient SOL' };
+    }
 
-    const feePct = st.feeBps / 10000;
-    const grossUsd = solToUsd(amountSol);
-    const feeUsd = grossUsd * feePct;
-    const notionalUsd = Math.max(0, grossUsd - feeUsd);
-    const qty = notionalUsd / priceUsd;
-    if (!Number.isFinite(qty) || qty <= 0) return { ok: false, reason: 'Fill failed' };
+    const quote = registry.quoteTrade(tokenId, 'BUY', amountSol, slippageBps);
+    if (!quote.ok) {
+      wallet.addSol(totalSolNeeded);
+      return { ok: false, reason: quote.reason };
+    }
 
-    const nowMs = Date.now();
-    const prevPos = st.quickPositionsByTokenId[tokenId];
-    const prevQty = prevPos?.qty ?? 0;
-    const prevCost = prevPos?.costBasisUsd ?? 0;
-    const nextQty = prevQty + qty;
-    const nextCost = prevCost + grossUsd;
-    const nextAvg = nextQty > 0 ? nextCost / nextQty : 0;
-    const nextPos: QuickPosition = {
-      tokenId,
-      qty: nextQty,
-      avgEntryUsd: nextAvg,
-      costBasisUsd: nextCost,
-      boughtUsd: (prevPos?.boughtUsd ?? 0) + grossUsd,
-      soldUsd: prevPos?.soldUsd ?? 0,
-      realizedPnlUsd: prevPos?.realizedPnlUsd ?? 0,
-      updatedAtMs: nowMs,
-    };
+    const submit = registry.submitTrade(tokenId, {
+      side: 'BUY',
+      amountIn: amountSol,
+      slippageBps,
+      prioritySol: effectivePrioritySol,
+      txCostSol,
+    });
+    if (!submit.ok) {
+      wallet.addSol(totalSolNeeded);
+      return { ok: false, reason: submit.reason };
+    }
 
-    const quickTrade: QuickTrade = {
-      id: makeId(),
+    const pending: PendingQuickOrder = {
+      orderId: submit.orderId,
       tokenId,
       side: 'buy',
-      qty,
-      priceUsd,
-      mcapUsd: Number.isFinite(token.mcapUsd) && token.mcapUsd > 0 ? token.mcapUsd : undefined,
-      notionalUsd,
-      feeUsd,
-      tsMs: nowMs,
+      reservedSol: amountSol,
+      reservedToken: 0,
+      expectedOut: submit.expectedOut,
+      minOut: submit.minOut,
+      txCostSol,
+      prioritySol,
+      bribeSol,
+      submitMs: submit.submitMs,
+      execMs: submit.execMs,
     };
-    const prevTokenTrades = st.quickTradesByTokenId[tokenId] ?? [];
-    const nextTokenTrades = prevTokenTrades
-      .concat([quickTrade])
-      .slice(-MAX_QUICK_TRADES_PER_TOKEN);
 
-    set({
-      quickPositionsByTokenId: {
-        ...st.quickPositionsByTokenId,
-        [tokenId]: nextPos,
+    set((state) => ({
+      pendingQuickOrdersById: {
+        ...state.pendingQuickOrdersById,
+        [submit.orderId]: pending,
       },
-      quickTradesByTokenId: {
-        ...st.quickTradesByTokenId,
-        [tokenId]: nextTokenTrades,
-      },
-    });
+    }));
 
-    useTokenStore.getState().pushTokenEvents(tokenId, [{
-      tokenId,
-      tMs: nowMs,
-      type: 'USER_BUY',
-      price: priceUsd,
-      mcap: Number.isFinite(token.mcapUsd) && token.mcapUsd > 0 ? token.mcapUsd : undefined,
-      size: qty,
-    }]);
-
-    return { ok: true, filledSol: amountSol, filledUsd: grossUsd };
+    return {
+      ok: true,
+      submitted: true,
+      orderId: submit.orderId,
+      expectedOut: submit.expectedOut,
+      minOut: submit.minOut,
+      slippageBps: submit.slippageBps,
+      prioritySol,
+      bribeSol,
+      txCostSol: submit.txCostSol,
+      etaMs: Math.max(0, submit.execMs - Date.now()),
+    };
   },
 
-  quickSell: (tokenId, amountSol) => {
+  quickSell: (tokenId, amountSol, options) => {
     const st = get();
     if (!Number.isFinite(amountSol) || amountSol <= 0) {
       return { ok: false, reason: 'Invalid amount' };
@@ -317,74 +371,78 @@ export const useTradingStore = create<Store>((set, get) => ({
     const prevPos = st.quickPositionsByTokenId[tokenId];
     if (!prevPos || prevPos.qty <= 0) return { ok: false, reason: 'No position' };
 
+    const alreadyReservedQty = sumReservedSellQty(st.pendingQuickOrdersById, tokenId);
+    const availableQty = Math.max(0, prevPos.qty - alreadyReservedQty);
+    if (availableQty <= 0) return { ok: false, reason: 'Position locked by pending sells' };
+
     const targetUsd = solToUsd(amountSol);
-    const qtyToSell = Math.min(prevPos.qty, targetUsd / priceUsd);
+    const qtyToSell = Math.min(availableQty, targetUsd / priceUsd);
     if (!Number.isFinite(qtyToSell) || qtyToSell <= 0) return { ok: false, reason: 'Nothing to sell' };
 
-    const feePct = st.feeBps / 10000;
-    const grossUsd = qtyToSell * priceUsd;
-    const feeUsd = grossUsd * feePct;
-    const netUsd = Math.max(0, grossUsd - feeUsd);
+    const slippagePct = Number.isFinite(options?.slippagePct)
+      ? (options?.slippagePct as number)
+      : st.slippagePct;
+    const slippageBps = slippagePctToBps(slippagePct);
+    const prioritySol = Math.max(0, Number(options?.prioritySol ?? 0));
+    const bribeSol = Math.max(0, Number(options?.bribeSol ?? 0));
+    const effectivePrioritySol = prioritySol + bribeSol;
+    const txCostSol = QUICK_BASE_TX_FEE_SOL + prioritySol + bribeSol;
 
-    const costPortionUsd = prevPos.avgEntryUsd * qtyToSell;
-    const realizedPnlUsd = netUsd - costPortionUsd;
-    const nextQtyRaw = prevPos.qty - qtyToSell;
-    const nextQty = nextQtyRaw <= 1e-9 ? 0 : nextQtyRaw;
-    const nextCost = nextQty > 0 ? Math.max(0, prevPos.costBasisUsd - costPortionUsd) : 0;
-    const nextAvg = nextQty > 0 ? nextCost / nextQty : 0;
-    const nowMs = Date.now();
+    const wallet = useWalletStore.getState();
+    if (!wallet.deductSol(txCostSol)) return { ok: false, reason: 'Insufficient SOL for tx fee' };
 
-    const nextPos: QuickPosition = {
-      tokenId,
-      qty: nextQty,
-      avgEntryUsd: nextAvg,
-      costBasisUsd: nextCost,
-      boughtUsd: prevPos.boughtUsd,
-      soldUsd: prevPos.soldUsd + grossUsd,
-      realizedPnlUsd: prevPos.realizedPnlUsd + realizedPnlUsd,
-      updatedAtMs: nowMs,
-    };
+    const quote = registry.quoteTrade(tokenId, 'SELL', qtyToSell, slippageBps);
+    if (!quote.ok) {
+      wallet.addSol(txCostSol);
+      return { ok: false, reason: quote.reason };
+    }
 
-    const quickTrade: QuickTrade = {
-      id: makeId(),
+    const submit = registry.submitTrade(tokenId, {
+      side: 'SELL',
+      amountIn: qtyToSell,
+      slippageBps,
+      prioritySol: effectivePrioritySol,
+      txCostSol,
+    });
+    if (!submit.ok) {
+      wallet.addSol(txCostSol);
+      return { ok: false, reason: submit.reason };
+    }
+
+    const pending: PendingQuickOrder = {
+      orderId: submit.orderId,
       tokenId,
       side: 'sell',
-      qty: qtyToSell,
-      priceUsd,
-      mcapUsd: Number.isFinite(token.mcapUsd) && token.mcapUsd > 0 ? token.mcapUsd : undefined,
-      notionalUsd: grossUsd,
-      feeUsd,
-      tsMs: nowMs,
+      reservedSol: 0,
+      reservedToken: qtyToSell,
+      expectedOut: submit.expectedOut,
+      minOut: submit.minOut,
+      txCostSol,
+      prioritySol,
+      bribeSol,
+      submitMs: submit.submitMs,
+      execMs: submit.execMs,
     };
-    const prevTokenTrades = st.quickTradesByTokenId[tokenId] ?? [];
-    const nextTokenTrades = prevTokenTrades
-      .concat([quickTrade])
-      .slice(-MAX_QUICK_TRADES_PER_TOKEN);
 
-    useWalletStore.getState().addSol(usdToSol(netUsd));
-    useWalletStore.getState().addPnl(usdToSol(realizedPnlUsd));
-
-    set({
-      quickPositionsByTokenId: {
-        ...st.quickPositionsByTokenId,
-        [tokenId]: nextPos,
+    set((state) => ({
+      pendingQuickOrdersById: {
+        ...state.pendingQuickOrdersById,
+        [submit.orderId]: pending,
       },
-      quickTradesByTokenId: {
-        ...st.quickTradesByTokenId,
-        [tokenId]: nextTokenTrades,
-      },
-    });
+    }));
 
-    useTokenStore.getState().pushTokenEvents(tokenId, [{
-      tokenId,
-      tMs: nowMs,
-      type: 'USER_SELL',
-      price: priceUsd,
-      mcap: Number.isFinite(token.mcapUsd) && token.mcapUsd > 0 ? token.mcapUsd : undefined,
-      size: qtyToSell,
-    }]);
-
-    return { ok: true, filledSol: usdToSol(grossUsd), filledUsd: grossUsd };
+    return {
+      ok: true,
+      submitted: true,
+      orderId: submit.orderId,
+      expectedOut: submit.expectedOut,
+      minOut: submit.minOut,
+      slippageBps: submit.slippageBps,
+      prioritySol,
+      bribeSol,
+      txCostSol: submit.txCostSol,
+      etaMs: Math.max(0, submit.execMs - Date.now()),
+    };
   },
 
   placeOrder: (partial) => {
@@ -690,9 +748,187 @@ function recordFillForHistory(
   return { posAcc, positionHistory: history };
 }
 
+function slippagePctToBps(slippagePct: number): number {
+  if (!Number.isFinite(slippagePct)) return 100;
+  return Math.max(0, Math.min(10_000, Math.round(slippagePct * 100)));
+}
+
+function sumReservedSellQty(pending: Record<string, PendingQuickOrder>, tokenId: string): number {
+  let qty = 0;
+  for (const p of Object.values(pending)) {
+    if (p.tokenId !== tokenId) continue;
+    if (p.side !== 'sell') continue;
+    qty += p.reservedToken;
+  }
+  return qty;
+}
+
+function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
+  const st = useTradingStore.getState();
+  const pending = st.pendingQuickOrdersById[execution.orderId];
+  if (!pending) return;
+
+  const nextPending = { ...st.pendingQuickOrdersById };
+  delete nextPending[execution.orderId];
+
+  const side: Side = execution.side === 'BUY' ? 'buy' : 'sell';
+  const nextLastExec: QuickExecutionSnapshot = execution.status === 'FILLED'
+    ? {
+      tokenId: execution.tokenId,
+      orderId: execution.orderId,
+      side,
+      status: 'filled',
+      expectedOut: execution.expectedOut,
+      minOut: execution.minOut,
+      actualOut: execution.actualOut,
+      avgPriceUsd: execution.fill.avgPriceUsd,
+      impactPct: execution.fill.impactPct,
+      priceBeforeUsd: execution.fill.priceBeforeUsd,
+      priceAfterUsd: execution.fill.priceAfterUsd,
+      tsMs: execution.fill.tsMs,
+    }
+    : {
+      tokenId: execution.tokenId,
+      orderId: execution.orderId,
+      side,
+      status: 'failed',
+      expectedOut: execution.expectedOut,
+      minOut: execution.minOut,
+      actualOut: execution.actualOut,
+      reason: execution.reason,
+      tsMs: execution.execMs,
+    };
+
+  const nextLastByToken = {
+    ...st.lastQuickExecutionByTokenId,
+    [execution.tokenId]: nextLastExec,
+  };
+
+  if (execution.status === 'FAILED') {
+    if (pending.reservedSol > 0) {
+      useWalletStore.getState().addSol(pending.reservedSol);
+    }
+    useTradingStore.setState({
+      pendingQuickOrdersById: nextPending,
+      lastQuickExecutionByTokenId: nextLastByToken,
+    });
+    return;
+  }
+
+  const fill = execution.fill;
+  const nextQuickTradesByTokenId = { ...st.quickTradesByTokenId };
+  const prevTokenTrades = nextQuickTradesByTokenId[execution.tokenId] ?? [];
+
+  if (side === 'buy') {
+    const refundSol = Math.max(0, pending.reservedSol - fill.filledSol);
+    if (refundSol > 0) useWalletStore.getState().addSol(refundSol);
+
+    const prevPos = st.quickPositionsByTokenId[execution.tokenId];
+    const prevQty = prevPos?.qty ?? 0;
+    const prevCost = prevPos?.costBasisUsd ?? 0;
+    const nextQty = prevQty + fill.filledToken;
+    const nextCost = prevCost + fill.filledUsd;
+    const nextAvg = nextQty > 0 ? nextCost / nextQty : 0;
+    const nextPos: QuickPosition = {
+      tokenId: execution.tokenId,
+      qty: nextQty,
+      avgEntryUsd: nextAvg,
+      costBasisUsd: nextCost,
+      boughtUsd: (prevPos?.boughtUsd ?? 0) + fill.filledUsd,
+      soldUsd: prevPos?.soldUsd ?? 0,
+      realizedPnlUsd: prevPos?.realizedPnlUsd ?? 0,
+      updatedAtMs: fill.tsMs,
+    };
+
+    const quickTrade: QuickTrade = {
+      id: makeId(),
+      tokenId: execution.tokenId,
+      side: 'buy',
+      qty: fill.filledToken,
+      priceUsd: fill.avgPriceUsd,
+      mcapUsd: fill.mcapAfterUsd,
+      notionalUsd: fill.filledUsd,
+      feeUsd: fill.feeUsd,
+      tsMs: fill.tsMs,
+    };
+    nextQuickTradesByTokenId[execution.tokenId] = prevTokenTrades.concat([quickTrade]).slice(-MAX_QUICK_TRADES_PER_TOKEN);
+
+    useTradingStore.setState({
+      pendingQuickOrdersById: nextPending,
+      lastQuickExecutionByTokenId: nextLastByToken,
+      quickPositionsByTokenId: {
+        ...st.quickPositionsByTokenId,
+        [execution.tokenId]: nextPos,
+      },
+      quickTradesByTokenId: nextQuickTradesByTokenId,
+    });
+    return;
+  }
+
+  const prevPos = st.quickPositionsByTokenId[execution.tokenId];
+  const prevQty = prevPos?.qty ?? 0;
+  const filledQty = Math.max(0, Math.min(prevQty, fill.filledToken));
+  const proceedsUsd = fill.filledUsd;
+  const costPortionUsd = filledQty > 0 && prevPos ? prevPos.avgEntryUsd * filledQty : 0;
+  const realizedPnlUsd = proceedsUsd - costPortionUsd;
+  const nextQtyRaw = prevQty - filledQty;
+  const nextQty = nextQtyRaw <= 1e-9 ? 0 : nextQtyRaw;
+  const nextCost = nextQty > 0 && prevPos ? Math.max(0, prevPos.costBasisUsd - costPortionUsd) : 0;
+  const nextAvg = nextQty > 0 ? nextCost / nextQty : 0;
+  const nextPos: QuickPosition = {
+    tokenId: execution.tokenId,
+    qty: nextQty,
+    avgEntryUsd: nextAvg,
+    costBasisUsd: nextCost,
+    boughtUsd: prevPos?.boughtUsd ?? 0,
+    soldUsd: (prevPos?.soldUsd ?? 0) + proceedsUsd,
+    realizedPnlUsd: (prevPos?.realizedPnlUsd ?? 0) + realizedPnlUsd,
+    updatedAtMs: fill.tsMs,
+  };
+
+  const quickTrade: QuickTrade = {
+    id: makeId(),
+    tokenId: execution.tokenId,
+    side: 'sell',
+    qty: fill.filledToken,
+    priceUsd: fill.avgPriceUsd,
+    mcapUsd: fill.mcapAfterUsd,
+    notionalUsd: proceedsUsd,
+    feeUsd: fill.feeUsd,
+    tsMs: fill.tsMs,
+  };
+  nextQuickTradesByTokenId[execution.tokenId] = prevTokenTrades.concat([quickTrade]).slice(-MAX_QUICK_TRADES_PER_TOKEN);
+
+  useWalletStore.getState().addSol(fill.filledSol);
+  useWalletStore.getState().addPnl(usdToSol(realizedPnlUsd));
+
+  useTradingStore.setState({
+    pendingQuickOrdersById: nextPending,
+    lastQuickExecutionByTokenId: nextLastByToken,
+    quickPositionsByTokenId: {
+      ...st.quickPositionsByTokenId,
+      [execution.tokenId]: nextPos,
+    },
+    quickTradesByTokenId: nextQuickTradesByTokenId,
+  });
+}
+
+const tradeBridgeKey = '__dex_quick_trade_bridge_installed__';
+const bridgeGlobal = globalThis as unknown as Record<string, boolean | undefined>;
+if (!bridgeGlobal[tradeBridgeKey]) {
+  bridgeGlobal[tradeBridgeKey] = true;
+  registry.subscribeTradeExecutions((execution) => {
+    applyQuickTradeExecution(execution);
+  });
+}
+
 export const selectQuickPositionByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickPosition | null =>
     s.quickPositionsByTokenId[tokenId] ?? null;
+
+export const selectLastQuickExecutionByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): QuickExecutionSnapshot | null =>
+    s.lastQuickExecutionByTokenId[tokenId] ?? null;
 
 export const selectAvgEntryPriceByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): number | null => {

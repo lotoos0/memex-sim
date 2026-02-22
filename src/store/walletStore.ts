@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { SOL_PRICE_USD } from '../tokens/types';
 
+const INITIAL_SOL_BALANCE = import.meta.env.DEV ? 120 : 1.0;
+
 interface WalletState {
   solBalance: number;
   realizedPnlSol: number;
@@ -11,7 +13,7 @@ interface WalletState {
 }
 
 export const useWalletStore = create<WalletState>((set, get) => ({
-  solBalance: 1.0,
+  solBalance: INITIAL_SOL_BALANCE,
   realizedPnlSol: 0,
 
   deductSol: (amount) => {

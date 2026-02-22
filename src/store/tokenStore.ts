@@ -3,14 +3,54 @@ import type { TokenMeta, TokenRuntime, TokenPhase, TokenState } from '../tokens/
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
 import { MAX_EVENTS_PER_TOKEN } from '../chart/tokenChartEvents';
 
+export interface TokenSimTradeRow {
+  id: string;
+  tMs: number;
+  side: 'BUY' | 'SELL';
+  walletId: string;
+  tokenAmount: number;
+  notionalUsd: number;
+  priceUsd: number;
+  mcapUsd: number;
+}
+
+export interface TokenHolderRow {
+  walletId: string;
+  isLiquidityPool?: boolean;
+  solBalance: number;
+  firstSeenMs: number;
+  balanceTokens: number;
+  balanceUsd: number;
+  boughtUsd: number;
+  boughtTokens: number;
+  avgBuyUsd: number;
+  soldUsd: number;
+  soldTokens: number;
+  avgSellUsd: number;
+  unrealizedPnlUsd: number;
+  realizedPnlUsd: number;
+  remainingUsd: number;
+  lastActiveMs: number;
+}
+
+export interface TokenMarketSnapshot {
+  holdersCount: number;
+  topHolders: TokenHolderRow[];
+  recentTrades: TokenSimTradeRow[];
+  updatedAtMs: number;
+}
+
 interface TokenStoreState {
   tokensById: Record<string, TokenState>;
   eventsByTokenId: Record<string, TokenChartEvent[]>;
+  marketByTokenId: Record<string, TokenMarketSnapshot>;
   activeTokenId: string | null;
 
   addToken: (meta: TokenMeta, runtime: TokenRuntime) => void;
   updateToken: (id: string, runtime: TokenRuntime) => void;
   batchUpdateTokens: (updates: Record<string, TokenRuntime>) => void;
+  setTokenMarketSnapshot: (tokenId: string, snapshot: TokenMarketSnapshot) => void;
+  batchUpdateTokenMarketSnapshots: (updates: Record<string, TokenMarketSnapshot>) => void;
   removeToken: (id: string) => void;
   setActiveToken: (id: string | null) => void;
   pushTokenEvents: (tokenId: string, events: TokenChartEvent[]) => void;
@@ -19,6 +59,7 @@ interface TokenStoreState {
 export const useTokenStore = create<TokenStoreState>((set) => ({
   tokensById: {},
   eventsByTokenId: {},
+  marketByTokenId: {},
   activeTokenId: null,
 
   addToken: (meta, runtime) =>
@@ -40,13 +81,33 @@ export const useTokenStore = create<TokenStoreState>((set) => ({
       return { tokensById: next };
     }),
 
+  setTokenMarketSnapshot: (tokenId, snapshot) =>
+    set((s) => ({
+      marketByTokenId: {
+        ...s.marketByTokenId,
+        [tokenId]: snapshot,
+      },
+    })),
+
+  batchUpdateTokenMarketSnapshots: (updates) =>
+    set((s) => {
+      const next = { ...s.marketByTokenId };
+      for (const [id, snapshot] of Object.entries(updates)) {
+        if (!s.tokensById[id]) continue;
+        next[id] = snapshot;
+      }
+      return { marketByTokenId: next };
+    }),
+
   removeToken: (id) =>
     set((s) => {
       const nextTokens = { ...s.tokensById };
       delete nextTokens[id];
       const nextEvents = { ...s.eventsByTokenId };
       delete nextEvents[id];
-      return { tokensById: nextTokens, eventsByTokenId: nextEvents };
+      const nextMarket = { ...s.marketByTokenId };
+      delete nextMarket[id];
+      return { tokensById: nextTokens, eventsByTokenId: nextEvents, marketByTokenId: nextMarket };
     }),
 
   setActiveToken: (id) => set({ activeTokenId: id }),
@@ -76,3 +137,6 @@ export const selectByPhase = (phase: TokenPhase) => (s: TokenStoreState) =>
 
 export const selectActiveToken = (s: TokenStoreState) =>
   s.activeTokenId ? s.tokensById[s.activeTokenId] : null;
+
+export const selectTokenMarketSnapshot = (tokenId: string) => (s: TokenStoreState) =>
+  s.marketByTokenId[tokenId] ?? null;

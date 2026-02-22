@@ -2,7 +2,7 @@ import { RNG } from '../engine/rng';
 import { CandleAggregator } from '../engine/aggregator';
 import type { TokenMeta, TokenRuntime, TokenPhase } from './types';
 import {
-  SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER,
+  SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER, SOL_PRICE_USD,
 } from './types';
 import { stepMarket, type FlowRegime } from './marketModel';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
@@ -43,6 +43,70 @@ type CurveSwapDebug = {
   simMs: number;
 };
 
+type PendingUserOrder = {
+  id: string;
+  side: UserTradeSide;
+  amountIn: number;
+  slippageBps: number;
+  expectedOut: number;
+  minOut: number;
+  submitMs: number;
+  execMs: number;
+  prioritySol: number;
+  txCostSol: number;
+};
+
+type HolderWalletProfile = {
+  firstSeenMs: number;
+  lastActiveMs: number;
+  solBalance: number;
+  boughtUsd: number;
+  boughtTokens: number;
+  soldUsd: number;
+  soldTokens: number;
+  avgBuyUsd: number;
+  avgSellUsd: number;
+  realizedPnlUsd: number;
+  openCostBasisUsd: number;
+};
+
+export type SimTapeTrade = {
+  id: string;
+  tMs: number;
+  side: UserTradeSide;
+  walletId: string;
+  tokenAmount: number;
+  notionalUsd: number;
+  priceUsd: number;
+  mcapUsd: number;
+};
+
+export type HolderRow = {
+  walletId: string;
+  isLiquidityPool?: boolean;
+  solBalance: number;
+  firstSeenMs: number;
+  balanceTokens: number;
+  balanceUsd: number;
+  boughtUsd: number;
+  boughtTokens: number;
+  avgBuyUsd: number;
+  soldUsd: number;
+  soldTokens: number;
+  avgSellUsd: number;
+  unrealizedPnlUsd: number;
+  realizedPnlUsd: number;
+  remainingUsd: number;
+  lastActiveMs: number;
+};
+
+export type MarketMicroSnapshot = {
+  holdersCount: number;
+  topHolders: HolderRow[];
+  recentTrades: SimTapeTrade[];
+  updatedAtMs: number;
+};
+
 export type CurveDebugSnapshot = {
   phase: TokenPhase;
   hasEnteredFinal: boolean;
@@ -62,11 +126,145 @@ export type CurveDebugSnapshot = {
   lastSwap: CurveSwapDebug | null;
 };
 
+export type UserTradeSide = 'BUY' | 'SELL';
+
+export type UserTradeQuote =
+  | {
+    ok: false;
+    side: UserTradeSide;
+    amountIn: number;
+    reason: string;
+  }
+  | {
+    ok: true;
+    side: UserTradeSide;
+    amountIn: number;
+    expectedOut: number;
+    minOut: number;
+    slippageBps: number;
+    priceUsd: number;
+    mcapUsd: number;
+    feeBps: number;
+    quoteTsMs: number;
+  };
+
+export type UserTradeFillSuccess = {
+  ok: true;
+  side: UserTradeSide;
+  requestedAmount: number;
+  filledSol: number;
+  filledToken: number;
+  filledUsd: number;
+  feeUsd: number;
+  avgPriceUsd: number;
+  priceBeforeUsd: number;
+  priceAfterUsd: number;
+  impactPct: number;
+  mcapBeforeUsd: number;
+  mcapAfterUsd: number;
+  tsMs: number;
+};
+
+export type UserTradeFill =
+  | {
+    ok: false;
+    side: UserTradeSide;
+    requestedAmount: number;
+    reason: string;
+  }
+  | UserTradeFillSuccess;
+
+export type UserTradeSubmitRequest = {
+  side: UserTradeSide;
+  amountIn: number;
+  slippageBps: number;
+  prioritySol?: number;
+  txCostSol?: number;
+  latencyMs?: number;
+};
+
+export type UserTradeSubmitResult =
+  | {
+    ok: false;
+    side: UserTradeSide;
+    amountIn: number;
+    reason: string;
+  }
+  | {
+    ok: true;
+    tokenId: string;
+    orderId: string;
+    side: UserTradeSide;
+    amountIn: number;
+    expectedOut: number;
+    minOut: number;
+    slippageBps: number;
+    submitMs: number;
+    execMs: number;
+    latencyMs: number;
+    prioritySol: number;
+    txCostSol: number;
+  };
+
+type UserTradeExecutionBase = {
+  tokenId: string;
+  orderId: string;
+  side: UserTradeSide;
+  amountIn: number;
+  expectedOut: number;
+  minOut: number;
+  actualOut: number;
+  slippageBps: number;
+  submitMs: number;
+  execMs: number;
+  prioritySol: number;
+  txCostSol: number;
+};
+
+export type UserTradeExecutionNotice =
+  | (UserTradeExecutionBase & {
+    status: 'FILLED';
+    fill: UserTradeFillSuccess;
+  })
+  | (UserTradeExecutionBase & {
+    status: 'FAILED';
+    reason: string;
+  });
+
+export type UserTradeOrderStatus =
+  | {
+    tokenId: string;
+    orderId: string;
+    side: UserTradeSide;
+    status: 'PENDING';
+    amountIn: number;
+    expectedOut: number;
+    minOut: number;
+    slippageBps: number;
+    submitMs: number;
+    execMs: number;
+    prioritySol: number;
+    txCostSol: number;
+  }
+  | UserTradeExecutionNotice;
+
 const FINAL_PROGRESS = 0.85;
 const MIGRATE_PROGRESS = 1.0;
 const CURVE_FEE_BPS = 100;
 const CURVE_TOKEN_EPS = 1e-6;
 const POST_MIGRATION_WARMUP_MS = 1_500;
+const MIGRATED_LIQUIDITY_FLOOR_USD = 7_500;
+const MIN_USER_LATENCY_MS = 80;
+const MAX_USER_LATENCY_MS = 320;
+const MIN_EFFECTIVE_LATENCY_MS = 20;
+const PRIORITY_LATENCY_IMPACT_MS_PER_SOL = 250_000;
+const BASE_TRADE_SIZE_SCALE = 0.9;
+const BASE_IMPACT_SCALE = 0.9;
+const BASE_VOLATILITY_SCALE = 0.88;
+const DEV_FLOW_SCALE = 0.85;
+const TAPE_MAX_TRADES = 2_000;
+const HOLDERS_TOP_N = 120;
+const HOLDER_DUST_USD = 0.25;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -130,6 +328,13 @@ export class TokenSim {
   private lastCurveSwap: CurveSwapDebug | null = null;
   private archetype: TokenArchetype = 'HEALTHY';
   private archetypeProfile!: ArchetypeProfile;
+  private pendingUserOrders: PendingUserOrder[] = [];
+  private userTradeExecutions: UserTradeExecutionNotice[] = [];
+  private ledger = new Map<string, number>();
+  private walletLastActiveMs = new Map<string, number>();
+  private walletProfiles = new Map<string, HolderWalletProfile>();
+  private tape: SimTapeTrade[] = [];
+  private walletSeq = 0;
 
   // Rolling 5-min stats window (in simMs)
   private statWindow: StatBucket[] = [];
@@ -145,10 +350,10 @@ export class TokenSim {
     // Token-specific baseline params.
     this.baseLambda = 8 + this.rng.next() * 16;
     this.baseLiquidityUsd = startMcapUsd * (1.2 + this.rng.next() * 1.0);
-    this.baseTradeSizeUsd = 120 + this.rng.next() * 680;
+    this.baseTradeSizeUsd = (120 + this.rng.next() * 680) * BASE_TRADE_SIZE_SCALE;
     this.tradeSigma = 0.75 + this.rng.next() * 0.45;
-    this.impactK = 0.08 + this.rng.next() * 0.14;
-    this.baseVol = 0.015 + this.rng.next() * 0.035;
+    this.impactK = (0.08 + this.rng.next() * 0.14) * BASE_IMPACT_SCALE;
+    this.baseVol = (0.015 + this.rng.next() * 0.035) * BASE_VOLATILITY_SCALE;
     this.attention = 0.9 + this.rng.next() * 0.8;
     this.archetype = this.rollArchetype();
     this.archetypeProfile = this.buildArchetypeProfile(this.archetype);
@@ -166,7 +371,8 @@ export class TokenSim {
     const startPriceUsd = this.getCurvePriceUsd();
     this.lastPriceUsd = startPriceUsd;
     this.lastMcapUsd = this.getCurveMcapUsd();
-    this.priceAtSpawn = startPriceUsd;
+    this.seedGenesisHolders();
+    this.priceAtSpawn = this.lastPriceUsd;
     this.phase = 'NEW';
     this.rollRegime();
 
@@ -182,7 +388,32 @@ export class TokenSim {
   }
 
   tick(fallbackRealDtSec: number): TokenChartEvent[] {
-    if (this.phase === 'RUGGED' || this.phase === 'DEAD') return [];
+    if (this.phase === 'RUGGED' || this.phase === 'DEAD') {
+      if (this.pendingUserOrders.length > 0) {
+        const nowMs = Date.now();
+        for (let i = 0; i < this.pendingUserOrders.length; i++) {
+          const order = this.pendingUserOrders[i]!;
+          this.userTradeExecutions.push({
+            tokenId: this.meta.id,
+            orderId: order.id,
+            status: 'FAILED',
+            side: order.side,
+            amountIn: order.amountIn,
+            expectedOut: order.expectedOut,
+            minOut: order.minOut,
+            actualOut: 0,
+            slippageBps: order.slippageBps,
+            submitMs: order.submitMs,
+            execMs: nowMs,
+            prioritySol: order.prioritySol,
+            txCostSol: order.txCostSol,
+            reason: 'Token unavailable',
+          });
+        }
+        this.pendingUserOrders = [];
+      }
+      return [];
+    }
 
     const nowMs = Date.now();
     const measuredDtSec = (nowMs - this.lastTickRealMs) / 1000;
@@ -195,6 +426,7 @@ export class TokenSim {
 
     const simDtSec = realDtSec * SIM_TIME_MULTIPLIER;
     this.simTimeMs += simDtSec * 1000;
+    const queuedEvents = this.processPendingUserTrades(nowMs);
 
     this.advanceRegime(realDtSec);
     const phaseModel = this.getPhaseModel();
@@ -276,86 +508,401 @@ export class TokenSim {
       externalFlow: devFlow?.externalFlow,
     });
 
-    let volumeUsd = market.volumeUsd;
-    let priceUsd: number;
-    let mcapUsd: number;
-    if (!this.hasMigrated && this.phase !== 'MIGRATED') {
-      this.sanitizeCurveState();
-      const buyResult = this.executeCurveBuy(market.buyUsd);
-      const sellTokenIntent = prevPriceUsd > 0 ? market.sellUsd / prevPriceUsd : 0;
-      const safeSellIntent = Number.isFinite(sellTokenIntent) ? sellTokenIntent : 0;
-      const sellResult = this.curveRealToken <= CURVE_TOKEN_EPS
-        ? { tokenIn: 0, baseOutUsd: 0 }
-        : this.executeCurveSell(safeSellIntent);
-      volumeUsd = buyResult.baseInUsd + sellResult.baseOutUsd;
+    this.executeMarketFlowAsTape({
+      candleTsMs,
+      realDtSec,
+      targetBuyUsd: market.buyUsd,
+      targetSellUsd: market.sellUsd,
+      expectedNextPriceUsd: market.nextPriceUsd,
+      previousPriceUsd: prevPriceUsd,
+    });
 
-      if (buyResult.baseInUsd > 0 || sellResult.baseOutUsd > 0) {
-        if (buyResult.baseInUsd >= sellResult.baseOutUsd) {
-          this.lastCurveSwap = {
-            direction: 'BUY',
-            amountIn: buyResult.baseInUsd,
-            amountOut: buyResult.tokensOut,
-            simMs: this.simTimeMs,
-          };
-        } else {
-          this.lastCurveSwap = {
-            direction: 'SELL',
-            amountIn: sellResult.tokenIn,
-            amountOut: sellResult.baseOutUsd,
-            simMs: this.simTimeMs,
-          };
-        }
-      }
-
-      this.sanitizeCurveState();
-      this.bondingProgress = this.getCurveProgress();
-      priceUsd = this.getCurvePriceUsd();
-      mcapUsd = this.getCurveMcapUsd();
-      this.lastPriceUsd = priceUsd;
-      this.lastMcapUsd = mcapUsd;
-    } else {
-      const clampedMcap = Math.max(MCAP_FLOOR_USD, Math.min(MCAP_CAP_USD, market.nextPriceUsd * SUPPLY));
-      priceUsd = clampedMcap / SUPPLY;
-      mcapUsd = clampedMcap;
-      this.lastPriceUsd = priceUsd;
-      this.lastMcapUsd = mcapUsd;
-    }
-
-    this.aggr1s.pushTick(candleTsMs, priceUsd, volumeUsd);
-    this.aggr15s.pushTick(candleTsMs, priceUsd, volumeUsd);
-    this.aggr30s.pushTick(candleTsMs, priceUsd, volumeUsd);
-    this.aggr1m.pushTick(candleTsMs, priceUsd, volumeUsd);
-    this.mcapAggr1s.pushTick(candleTsMs, mcapUsd, volumeUsd);
-    this.mcapAggr15s.pushTick(candleTsMs, mcapUsd, volumeUsd);
-    this.mcapAggr30s.pushTick(candleTsMs, mcapUsd, volumeUsd);
-    this.mcapAggr1m.pushTick(candleTsMs, mcapUsd, volumeUsd);
-
-    const events: TokenChartEvent[] = [];
+    const events: TokenChartEvent[] = queuedEvents.slice();
     if (devFlow?.eventType) {
       events.push({
         tokenId: this.meta.id,
         tMs: candleTsMs,
         type: devFlow.eventType,
-        price: priceUsd,
-        mcap: mcapUsd,
+        price: this.lastPriceUsd,
+        mcap: this.lastMcapUsd,
         size: devFlow.sizeUsd,
       });
     }
 
-    this.statWindow.push({
-      simMs: this.simTimeMs,
-      volUsd: volumeUsd,
-      buys: market.buys,
-      sells: market.sells,
-    });
-    const cutoff = this.simTimeMs - this.WINDOW_SIM_MS;
-    let i = 0;
-    while (i < this.statWindow.length && this.statWindow[i]!.simMs < cutoff) i++;
-    if (i > 0) this.statWindow.splice(0, i);
-
     const migrationEvent = this.updatePhase(candleTsMs);
     if (migrationEvent) events.push(migrationEvent);
     return events;
+  }
+
+  private executeMarketFlowAsTape(input: {
+    candleTsMs: number;
+    realDtSec: number;
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    expectedNextPriceUsd: number;
+    previousPriceUsd: number;
+  }): void {
+    const targetBuyUsd = Math.max(0, Number.isFinite(input.targetBuyUsd) ? input.targetBuyUsd : 0);
+    const targetSellUsd = Math.max(0, Number.isFinite(input.targetSellUsd) ? input.targetSellUsd : 0);
+    const totalUsd = targetBuyUsd + targetSellUsd;
+    if (totalUsd <= 1e-6) {
+      this.recordPassiveTick(input.candleTsMs);
+      return;
+    }
+
+    const targetTrades = clamp(
+      Math.round(6 + Math.sqrt(totalUsd / Math.max(25, this.baseTradeSizeUsd)) * 6 + this.rng.next() * 8),
+      4,
+      40
+    );
+    let buyTrades = targetBuyUsd > 0
+      ? Math.max(1, Math.round(targetTrades * (targetBuyUsd / Math.max(1e-9, totalUsd))))
+      : 0;
+    let sellTrades = targetSellUsd > 0
+      ? Math.max(1, targetTrades - buyTrades)
+      : 0;
+    if (buyTrades > 0 && sellTrades > 0 && buyTrades + sellTrades > targetTrades) {
+      if (buyTrades > sellTrades) buyTrades -= 1;
+      else sellTrades -= 1;
+    }
+
+    const buyParts = this.splitNotional(targetBuyUsd, buyTrades);
+    const sellParts = this.splitNotional(targetSellUsd, sellTrades);
+    const sidePlan: UserTradeSide[] = [];
+    for (let i = 0; i < buyParts.length; i++) sidePlan.push('BUY');
+    for (let i = 0; i < sellParts.length; i++) sidePlan.push('SELL');
+
+    for (let i = sidePlan.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rng.next() * (i + 1));
+      const tmp = sidePlan[i]!;
+      sidePlan[i] = sidePlan[j]!;
+      sidePlan[j] = tmp;
+    }
+
+    const windowMs = Math.max(80, Math.round(input.realDtSec * 1000));
+    const startMs = input.candleTsMs - windowMs + 1;
+    let buyIdx = 0;
+    let sellIdx = 0;
+    let executedTrades = 0;
+
+    for (let i = 0; i < sidePlan.length; i++) {
+      const side = sidePlan[i]!;
+      const tsMs = startMs + Math.floor(((i + 1) * windowMs) / (sidePlan.length + 1));
+      if (side === 'BUY') {
+        const targetUsd = buyParts[buyIdx++] ?? 0;
+        if (this.executeSimBuyTrade(targetUsd, tsMs)) executedTrades += 1;
+        continue;
+      }
+
+      const targetUsd = sellParts[sellIdx++] ?? 0;
+      const sellOk = this.executeSimSellTrade(targetUsd, tsMs);
+      if (sellOk) {
+        executedTrades += 1;
+        continue;
+      }
+      // If inventory is exhausted, keep tape alive by converting the slot to a small buy.
+      if (targetUsd > 0 && this.executeSimBuyTrade(targetUsd * (0.65 + this.rng.next() * 0.35), tsMs)) {
+        executedTrades += 1;
+      }
+    }
+
+    const expected = Number.isFinite(input.expectedNextPriceUsd)
+      ? clamp(input.expectedNextPriceUsd, input.previousPriceUsd * 0.25, input.previousPriceUsd * 4)
+      : input.previousPriceUsd;
+    const driftPct = this.lastPriceUsd > 0 ? ((expected - this.lastPriceUsd) / this.lastPriceUsd) : 0;
+    if (Math.abs(driftPct) > 0.012 && totalUsd > 25) {
+      const steeringTs = input.candleTsMs;
+      const steeringNotional = Math.max(8, totalUsd * 0.15);
+      if (driftPct > 0) {
+        if (this.executeSimBuyTrade(steeringNotional, steeringTs)) executedTrades += 1;
+      } else if (this.executeSimSellTrade(steeringNotional, steeringTs)) {
+        executedTrades += 1;
+      }
+    }
+
+    if (executedTrades === 0) {
+      this.recordPassiveTick(input.candleTsMs);
+    }
+  }
+
+  private splitNotional(totalUsd: number, parts: number): number[] {
+    if (!Number.isFinite(totalUsd) || totalUsd <= 0 || parts <= 0) return [];
+    if (parts === 1) return [totalUsd];
+    const weights: number[] = [];
+    let sum = 0;
+    for (let i = 0; i < parts; i++) {
+      const w = 0.35 + this.rng.next() * 1.35;
+      weights.push(w);
+      sum += w;
+    }
+    if (sum <= 0) return [totalUsd];
+
+    const out: number[] = [];
+    let used = 0;
+    for (let i = 0; i < parts - 1; i++) {
+      const v = totalUsd * (weights[i]! / sum);
+      out.push(v);
+      used += v;
+    }
+    out.push(Math.max(0, totalUsd - used));
+    return out;
+  }
+
+  private executeSimBuyTrade(targetUsd: number, tsMs: number): boolean {
+    const grossInUsd = Math.max(0, Number.isFinite(targetUsd) ? targetUsd : 0);
+    if (grossInUsd <= 0) return false;
+
+    const walletId = this.pickWalletForBuy();
+
+    if (!this.hasMigrated && this.phase !== 'MIGRATED') {
+      this.sanitizeCurveState();
+      const buy = this.executeCurveBuy(grossInUsd);
+      if (buy.baseInUsd <= 0 || buy.tokensOut <= 0) return false;
+
+      this.sanitizeCurveState();
+      this.bondingProgress = this.getCurveProgress();
+      this.lastPriceUsd = this.getCurvePriceUsd();
+      this.lastMcapUsd = this.getCurveMcapUsd();
+      this.lastCurveSwap = {
+        direction: 'BUY',
+        amountIn: buy.baseInUsd,
+        amountOut: buy.tokensOut,
+        simMs: this.simTimeMs,
+      };
+      this.applyWalletDelta(walletId, buy.tokensOut, tsMs);
+      this.recordTradeTick(tsMs, buy.baseInUsd, 'BUY', walletId, buy.tokensOut);
+      return true;
+    }
+
+    const buy = this.executeMigratedBuy(grossInUsd);
+    if (buy.baseInNetUsd <= 0 || buy.tokensOut <= 0) return false;
+
+    const mcapUsd = clamp(buy.priceAfterUsd * SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD);
+    this.lastMcapUsd = mcapUsd;
+    this.lastPriceUsd = mcapUsd / SUPPLY;
+    this.lastCurveSwap = {
+      direction: 'BUY',
+      amountIn: buy.baseInNetUsd,
+      amountOut: buy.tokensOut,
+      simMs: this.simTimeMs,
+    };
+    this.applyWalletDelta(walletId, buy.tokensOut, tsMs);
+    this.recordTradeTick(tsMs, buy.baseInNetUsd, 'BUY', walletId, buy.tokensOut);
+    return true;
+  }
+
+  private executeSimSellTrade(targetUsd: number, tsMs: number): boolean {
+    const desiredUsd = Math.max(0, Number.isFinite(targetUsd) ? targetUsd : 0);
+    if (desiredUsd <= 0) return false;
+
+    const walletId = this.pickWalletForSell();
+    if (!walletId) return false;
+
+    const walletBal = this.ledger.get(walletId) ?? 0;
+    if (walletBal <= CURVE_TOKEN_EPS) return false;
+
+    const refPrice = Math.max(1e-12, this.lastPriceUsd);
+    const tokenApprox = desiredUsd / refPrice;
+    const jitter = 0.82 + this.rng.next() * 0.36;
+    const tokenIn = Math.min(walletBal, Math.max(CURVE_TOKEN_EPS, tokenApprox * jitter));
+    if (tokenIn <= CURVE_TOKEN_EPS) return false;
+
+    if (!this.hasMigrated && this.phase !== 'MIGRATED') {
+      this.sanitizeCurveState();
+      const sell = this.executeCurveSell(tokenIn);
+      if (sell.baseOutUsd <= 0 || sell.tokenIn <= 0) return false;
+
+      this.sanitizeCurveState();
+      this.bondingProgress = this.getCurveProgress();
+      this.lastPriceUsd = this.getCurvePriceUsd();
+      this.lastMcapUsd = this.getCurveMcapUsd();
+      this.lastCurveSwap = {
+        direction: 'SELL',
+        amountIn: sell.tokenIn,
+        amountOut: sell.baseOutUsd,
+        simMs: this.simTimeMs,
+      };
+      this.applyWalletDelta(walletId, -sell.tokenIn, tsMs);
+      this.recordTradeTick(tsMs, sell.baseOutUsd, 'SELL', walletId, sell.tokenIn);
+      return true;
+    }
+
+    const sell = this.executeMigratedSell(tokenIn);
+    if (sell.baseOutNetUsd <= 0 || sell.tokenIn <= 0) return false;
+
+    const mcapUsd = clamp(sell.priceAfterUsd * SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD);
+    this.lastMcapUsd = mcapUsd;
+    this.lastPriceUsd = mcapUsd / SUPPLY;
+    this.lastCurveSwap = {
+      direction: 'SELL',
+      amountIn: sell.tokenIn,
+      amountOut: sell.baseOutNetUsd,
+      simMs: this.simTimeMs,
+    };
+    this.applyWalletDelta(walletId, -sell.tokenIn, tsMs);
+    this.recordTradeTick(tsMs, sell.baseOutNetUsd, 'SELL', walletId, sell.tokenIn);
+    return true;
+  }
+
+  private createWalletId(prefix: string): string {
+    this.walletSeq += 1;
+    const suffix = Math.floor(this.rng.next() * 0xFFFFFF).toString(36);
+    return `${prefix}_${this.walletSeq.toString(36)}${suffix}`;
+  }
+
+  private randomInitialSolBalance(walletId: string): number {
+    if (walletId === 'you') return 120;
+    if (walletId.startsWith('g_')) return 0.05 + this.rng.next() * 45;
+    if (walletId.startsWith('w_')) return 0.01 + this.rng.next() * 28;
+    return 0.01 + this.rng.next() * 20;
+  }
+
+  private getOrCreateWalletProfile(walletId: string, tsMs: number): HolderWalletProfile {
+    const existing = this.walletProfiles.get(walletId);
+    if (existing) return existing;
+
+    const profile: HolderWalletProfile = {
+      firstSeenMs: tsMs,
+      lastActiveMs: tsMs,
+      solBalance: this.randomInitialSolBalance(walletId),
+      boughtUsd: 0,
+      boughtTokens: 0,
+      soldUsd: 0,
+      soldTokens: 0,
+      avgBuyUsd: 0,
+      avgSellUsd: 0,
+      realizedPnlUsd: 0,
+      openCostBasisUsd: 0,
+    };
+    this.walletProfiles.set(walletId, profile);
+    return profile;
+  }
+
+  private recordWalletTradeStats(
+    walletId: string,
+    side: UserTradeSide,
+    tokenAmount: number,
+    notionalUsd: number,
+    priceUsd: number,
+    tsMs: number
+  ): void {
+    if (!walletId || !Number.isFinite(tokenAmount) || tokenAmount <= 0) return;
+    if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) return;
+
+    const profile = this.getOrCreateWalletProfile(walletId, tsMs);
+    profile.lastActiveMs = tsMs;
+    this.walletLastActiveMs.set(walletId, tsMs);
+
+    const notionalSol = notionalUsd / Math.max(1e-9, SOL_PRICE_USD);
+    if (side === 'BUY') {
+      profile.boughtUsd += notionalUsd;
+      profile.boughtTokens += tokenAmount;
+      profile.avgBuyUsd = profile.boughtTokens > 0 ? profile.boughtUsd / profile.boughtTokens : 0;
+      profile.openCostBasisUsd += notionalUsd;
+      profile.solBalance = Math.max(0, profile.solBalance - notionalSol);
+      return;
+    }
+
+    const prevBalanceTokens = this.ledger.get(walletId) ?? 0;
+    const preSellTokens = prevBalanceTokens + tokenAmount;
+    const avgCost = preSellTokens > 0 ? profile.openCostBasisUsd / preSellTokens : priceUsd;
+    const costOutUsd = Math.max(0, avgCost * tokenAmount);
+
+    profile.soldUsd += notionalUsd;
+    profile.soldTokens += tokenAmount;
+    profile.avgSellUsd = profile.soldTokens > 0 ? profile.soldUsd / profile.soldTokens : 0;
+    profile.realizedPnlUsd += (notionalUsd - costOutUsd);
+    profile.openCostBasisUsd = Math.max(0, profile.openCostBasisUsd - costOutUsd);
+    profile.solBalance += notionalSol;
+  }
+
+  private pickWalletForBuy(): string {
+    const holders = this.getHolderWalletIds(true);
+    if (holders.length > 0 && this.rng.next() < 0.74) {
+      return holders[Math.floor(this.rng.next() * holders.length)]!;
+    }
+    return this.createWalletId('w');
+  }
+
+  private pickWalletForSell(): string | null {
+    const holders = this.getHolderWalletIds(true);
+    if (holders.length === 0) return null;
+
+    let totalWeight = 0;
+    const weighted: Array<{ walletId: string; weight: number }> = [];
+    for (let i = 0; i < holders.length; i++) {
+      const walletId = holders[i]!;
+      const bal = this.ledger.get(walletId) ?? 0;
+      if (bal <= CURVE_TOKEN_EPS) continue;
+      const w = Math.sqrt(Math.max(1e-9, bal));
+      weighted.push({ walletId, weight: w });
+      totalWeight += w;
+    }
+    if (weighted.length === 0 || totalWeight <= 0) return null;
+
+    let u = this.rng.next() * totalWeight;
+    for (let i = 0; i < weighted.length; i++) {
+      u -= weighted[i]!.weight;
+      if (u <= 0) return weighted[i]!.walletId;
+    }
+    return weighted[weighted.length - 1]!.walletId;
+  }
+
+  private applyWalletDelta(walletId: string, deltaTokens: number, tsMs: number): void {
+    if (!walletId || !Number.isFinite(deltaTokens) || deltaTokens === 0) return;
+    const profile = this.getOrCreateWalletProfile(walletId, tsMs);
+    const prev = this.ledger.get(walletId) ?? 0;
+    const next = Math.max(0, prev + deltaTokens);
+    if (next <= CURVE_TOKEN_EPS) this.ledger.delete(walletId);
+    else this.ledger.set(walletId, next);
+    profile.lastActiveMs = tsMs;
+    this.walletLastActiveMs.set(walletId, tsMs);
+  }
+
+  private getHolderWalletIds(excludeUser = false): string[] {
+    const out: string[] = [];
+    for (const [walletId, bal] of this.ledger.entries()) {
+      if (excludeUser && walletId === 'you') continue;
+      if (bal <= CURVE_TOKEN_EPS) continue;
+      if (bal * this.lastPriceUsd < HOLDER_DUST_USD) continue;
+      out.push(walletId);
+    }
+    return out;
+  }
+
+  private seedGenesisHolders(): void {
+    const holders = 10 + Math.floor(this.rng.next() * 21); // 10..30
+    const seedTsMs = this.spawnRealMs - 1_500;
+    for (let i = 0; i < holders; i++) {
+      const walletId = this.createWalletId('g');
+      const targetUsd = 5 + this.rng.next() * 45; // 5..50 USD
+      this.sanitizeCurveState();
+      const buy = this.executeCurveBuy(targetUsd);
+      if (buy.baseInUsd <= 0 || buy.tokensOut <= 0) continue;
+      this.sanitizeCurveState();
+      this.bondingProgress = this.getCurveProgress();
+      this.lastPriceUsd = this.getCurvePriceUsd();
+      this.lastMcapUsd = this.getCurveMcapUsd();
+      this.applyWalletDelta(walletId, buy.tokensOut, seedTsMs);
+      this.recordWalletTradeStats(walletId, 'BUY', buy.tokensOut, buy.baseInUsd, this.lastPriceUsd, seedTsMs);
+      this.lastCurveSwap = {
+        direction: 'BUY',
+        amountIn: buy.baseInUsd,
+        amountOut: buy.tokensOut,
+        simMs: this.simTimeMs,
+      };
+    }
+  }
+
+  private recordPassiveTick(candleTsMs: number): void {
+    this.aggr1s.pushTick(candleTsMs, this.lastPriceUsd, 0);
+    this.aggr15s.pushTick(candleTsMs, this.lastPriceUsd, 0);
+    this.aggr30s.pushTick(candleTsMs, this.lastPriceUsd, 0);
+    this.aggr1m.pushTick(candleTsMs, this.lastPriceUsd, 0);
+    this.mcapAggr1s.pushTick(candleTsMs, this.lastMcapUsd, 0);
+    this.mcapAggr15s.pushTick(candleTsMs, this.lastMcapUsd, 0);
+    this.mcapAggr30s.pushTick(candleTsMs, this.lastMcapUsd, 0);
+    this.mcapAggr1m.pushTick(candleTsMs, this.lastMcapUsd, 0);
   }
 
   private getPhaseModel(): PhaseModel {
@@ -489,7 +1036,7 @@ export class TokenSim {
     if (!this.emittedInitialDevBuy) {
       this.emittedInitialDevBuy = true;
       this.lastDevEventRealMs = candleTsMs;
-      const sizeUsd = this.baseTradeSizeUsd * (3 + this.rng.next() * 3.5);
+      const sizeUsd = this.baseTradeSizeUsd * (3 + this.rng.next() * 3.5) * DEV_FLOW_SCALE;
       this.devEventsUsed += 1;
       return {
         eventType: 'DEV_BUY',
@@ -501,7 +1048,7 @@ export class TokenSim {
     if (this.archetype === 'DOA' && !this.emittedDoaSell && this.simTimeMs >= 120_000) {
       this.emittedDoaSell = true;
       this.lastDevEventRealMs = candleTsMs;
-      const sizeUsd = this.baseTradeSizeUsd * (6 + this.rng.next() * 8);
+      const sizeUsd = this.baseTradeSizeUsd * (6 + this.rng.next() * 8) * DEV_FLOW_SCALE;
       this.devEventsUsed += 1;
       return {
         eventType: 'DEV_SELL',
@@ -516,7 +1063,7 @@ export class TokenSim {
     if (this.rng.next() >= this.getDevSignalChancePerSec() * realDtSec) return null;
 
     const isBuy = this.rng.next() < buyBias;
-    const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6);
+    const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6) * DEV_FLOW_SCALE;
     this.lastDevEventRealMs = candleTsMs;
     this.devEventsUsed += 1;
     if (isBuy) {
@@ -611,6 +1158,77 @@ export class TokenSim {
     };
   }
 
+  getMarketSnapshot(topLimit = 60, tradeLimit = 120): MarketMicroSnapshot {
+    const holders: HolderRow[] = [];
+    for (const [walletId, balanceTokens] of this.ledger.entries()) {
+      if (!Number.isFinite(balanceTokens) || balanceTokens <= CURVE_TOKEN_EPS) continue;
+      const balanceUsd = balanceTokens * this.lastPriceUsd;
+      if (!Number.isFinite(balanceUsd) || balanceUsd < HOLDER_DUST_USD) continue;
+      const profile = this.getOrCreateWalletProfile(walletId, this.spawnRealMs);
+      const unrealizedUsd = balanceUsd - profile.openCostBasisUsd;
+      holders.push({
+        walletId,
+        solBalance: profile.solBalance,
+        firstSeenMs: profile.firstSeenMs,
+        balanceTokens,
+        balanceUsd,
+        boughtUsd: profile.boughtUsd,
+        boughtTokens: profile.boughtTokens,
+        avgBuyUsd: profile.avgBuyUsd,
+        soldUsd: profile.soldUsd,
+        soldTokens: profile.soldTokens,
+        avgSellUsd: profile.avgSellUsd,
+        unrealizedPnlUsd: unrealizedUsd,
+        realizedPnlUsd: profile.realizedPnlUsd,
+        remainingUsd: balanceUsd,
+        lastActiveMs: profile.lastActiveMs,
+      });
+    }
+
+    const lpTokens = (!this.hasMigrated && this.phase !== 'MIGRATED')
+      ? Math.max(0, this.curveRealToken)
+      : Math.max(0, this.getMigratedReserves().reserveToken);
+    const lpBaseUsd = (!this.hasMigrated && this.phase !== 'MIGRATED')
+      ? Math.max(0, this.curveRealBase)
+      : Math.max(0, this.getMigratedReserves().reserveBaseUsd);
+    const lpUsd = lpTokens * this.lastPriceUsd;
+    if (Number.isFinite(lpUsd) && lpUsd >= HOLDER_DUST_USD && lpTokens > CURVE_TOKEN_EPS) {
+      holders.push({
+        walletId: 'LIQUIDITY POOL',
+        isLiquidityPool: true,
+        solBalance: lpBaseUsd / Math.max(1e-9, SOL_PRICE_USD),
+        firstSeenMs: this.spawnRealMs,
+        balanceTokens: lpTokens,
+        balanceUsd: lpUsd,
+        boughtUsd: 0,
+        boughtTokens: 0,
+        avgBuyUsd: 0,
+        soldUsd: 0,
+        soldTokens: 0,
+        avgSellUsd: 0,
+        unrealizedPnlUsd: 0,
+        realizedPnlUsd: 0,
+        remainingUsd: lpUsd,
+        lastActiveMs: this.walletLastActiveMs.get('LIQUIDITY_POOL') ?? this.spawnRealMs,
+      });
+    }
+
+    holders.sort((a, b) => b.balanceUsd - a.balanceUsd);
+    const topHolders = holders.slice(0, Math.max(1, Math.min(HOLDERS_TOP_N, topLimit)));
+
+    const recentTrades = this.tape
+      .slice(-Math.max(1, tradeLimit))
+      .slice()
+      .sort((a, b) => b.tMs - a.tMs);
+
+    return {
+      holdersCount: holders.length,
+      topHolders,
+      recentTrades,
+      updatedAtMs: Date.now(),
+    };
+  }
+
   getCandles(tfSec: number, metric: 'price' | 'mcap' = 'price') {
     if (metric === 'mcap') {
       if (tfSec <= 1) return this.mcapAggr1s.getSeries();
@@ -648,6 +1266,386 @@ export class TokenSim {
       mcapCurveUsd: this.getCurveMcapUsd(),
       feeBps: CURVE_FEE_BPS,
       lastSwap: this.lastCurveSwap,
+    };
+  }
+
+  quoteUserTrade(side: UserTradeSide, amountIn: number, slippageBps: number): UserTradeQuote {
+    if (this.phase === 'RUGGED' || this.phase === 'DEAD') {
+      return { ok: false, side, amountIn, reason: 'Token unavailable' };
+    }
+    if (!Number.isFinite(amountIn) || amountIn <= 0) {
+      return { ok: false, side, amountIn, reason: 'Invalid amount' };
+    }
+    const clampedSlippageBps = clamp(
+      Number.isFinite(slippageBps) ? slippageBps : 100,
+      0,
+      10_000
+    );
+
+    const expectedOut = this.estimateOut(side, amountIn);
+    if (!Number.isFinite(expectedOut) || expectedOut <= 0) {
+      return { ok: false, side, amountIn, reason: 'No liquidity' };
+    }
+    const minOut = expectedOut * (1 - clampedSlippageBps / 10_000);
+    return {
+      ok: true,
+      side,
+      amountIn,
+      expectedOut,
+      minOut: Math.max(0, minOut),
+      slippageBps: clampedSlippageBps,
+      priceUsd: this.lastPriceUsd,
+      mcapUsd: this.lastMcapUsd,
+      feeBps: CURVE_FEE_BPS,
+      quoteTsMs: Date.now(),
+    };
+  }
+
+  submitUserTrade(req: UserTradeSubmitRequest): UserTradeSubmitResult {
+    const side = req.side;
+    const amountIn = req.amountIn;
+    if (this.phase === 'RUGGED' || this.phase === 'DEAD') {
+      return { ok: false, side, amountIn, reason: 'Token unavailable' };
+    }
+    if (!Number.isFinite(amountIn) || amountIn <= 0) {
+      return { ok: false, side, amountIn, reason: 'Invalid amount' };
+    }
+
+    const quote = this.quoteUserTrade(side, amountIn, req.slippageBps);
+    if (!quote.ok) {
+      return { ok: false, side, amountIn, reason: quote.reason };
+    }
+
+    const submitMs = Date.now();
+    const prioritySol = Math.max(0, Number.isFinite(req.prioritySol) ? (req.prioritySol as number) : 0);
+    const txCostSol = Math.max(0, Number.isFinite(req.txCostSol) ? (req.txCostSol as number) : 0);
+    const latencyMs = this.resolveLatencyMs(prioritySol, req.latencyMs);
+    const execMs = submitMs + latencyMs;
+    const id = `U${submitMs.toString(36)}${Math.floor(this.rng.next() * 1e6).toString(36)}`;
+
+    this.pendingUserOrders.push({
+      id,
+      side,
+      amountIn,
+      slippageBps: quote.slippageBps,
+      expectedOut: quote.expectedOut,
+      minOut: quote.minOut,
+      submitMs,
+      execMs,
+      prioritySol,
+      txCostSol,
+    });
+
+    return {
+      ok: true,
+      tokenId: this.meta.id,
+      orderId: id,
+      side,
+      amountIn,
+      expectedOut: quote.expectedOut,
+      minOut: quote.minOut,
+      slippageBps: quote.slippageBps,
+      submitMs,
+      execMs,
+      latencyMs,
+      prioritySol,
+      txCostSol,
+    };
+  }
+
+  getPendingUserOrderStatus(orderId: string): UserTradeOrderStatus | null {
+    for (let i = 0; i < this.pendingUserOrders.length; i++) {
+      const pending = this.pendingUserOrders[i]!;
+      if (pending.id !== orderId) continue;
+      return {
+        tokenId: this.meta.id,
+        orderId: pending.id,
+        side: pending.side,
+        status: 'PENDING',
+        amountIn: pending.amountIn,
+        expectedOut: pending.expectedOut,
+        minOut: pending.minOut,
+        slippageBps: pending.slippageBps,
+        submitMs: pending.submitMs,
+        execMs: pending.execMs,
+        prioritySol: pending.prioritySol,
+        txCostSol: pending.txCostSol,
+      };
+    }
+    return null;
+  }
+
+  drainUserTradeExecutions(): UserTradeExecutionNotice[] {
+    if (this.userTradeExecutions.length === 0) return [];
+    const out = this.userTradeExecutions.slice();
+    this.userTradeExecutions = [];
+    return out;
+  }
+
+  private resolveLatencyMs(prioritySol: number, latencyOverride?: number): number {
+    if (Number.isFinite(latencyOverride) && latencyOverride! > 0) {
+      return clamp(Math.round(latencyOverride as number), MIN_EFFECTIVE_LATENCY_MS, 5_000);
+    }
+    const base = MIN_USER_LATENCY_MS + this.rng.next() * (MAX_USER_LATENCY_MS - MIN_USER_LATENCY_MS);
+    const priorityCutMs = prioritySol * PRIORITY_LATENCY_IMPACT_MS_PER_SOL;
+    const latencyMs = base - priorityCutMs;
+    return clamp(Math.round(latencyMs), MIN_EFFECTIVE_LATENCY_MS, MAX_USER_LATENCY_MS);
+  }
+
+  private processPendingUserTrades(nowMs: number): TokenChartEvent[] {
+    if (this.pendingUserOrders.length === 0) return [];
+
+    const due: PendingUserOrder[] = [];
+    const remaining: PendingUserOrder[] = [];
+    for (let i = 0; i < this.pendingUserOrders.length; i++) {
+      const order = this.pendingUserOrders[i]!;
+      if (order.execMs <= nowMs) due.push(order);
+      else remaining.push(order);
+    }
+    this.pendingUserOrders = remaining;
+    if (due.length === 0) return [];
+
+    due.sort((a, b) => {
+      if (b.prioritySol !== a.prioritySol) return b.prioritySol - a.prioritySol;
+      if (a.execMs !== b.execMs) return a.execMs - b.execMs;
+      return a.submitMs - b.submitMs;
+    });
+
+    const outEvents: TokenChartEvent[] = [];
+    for (let i = 0; i < due.length; i++) {
+      const order = due[i]!;
+      const execTsMs = Math.max(order.execMs, nowMs);
+      const actualQuote = this.quoteUserTrade(order.side, order.amountIn, order.slippageBps);
+      if (!actualQuote.ok) {
+        this.userTradeExecutions.push({
+          tokenId: this.meta.id,
+          orderId: order.id,
+          status: 'FAILED',
+          side: order.side,
+          amountIn: order.amountIn,
+          expectedOut: order.expectedOut,
+          minOut: order.minOut,
+          actualOut: 0,
+          slippageBps: order.slippageBps,
+          submitMs: order.submitMs,
+          execMs: execTsMs,
+          prioritySol: order.prioritySol,
+          txCostSol: order.txCostSol,
+          reason: actualQuote.reason,
+        });
+        continue;
+      }
+      if (actualQuote.expectedOut < order.minOut) {
+        this.userTradeExecutions.push({
+          tokenId: this.meta.id,
+          orderId: order.id,
+          status: 'FAILED',
+          side: order.side,
+          amountIn: order.amountIn,
+          expectedOut: order.expectedOut,
+          minOut: order.minOut,
+          actualOut: actualQuote.expectedOut,
+          slippageBps: order.slippageBps,
+          submitMs: order.submitMs,
+          execMs: execTsMs,
+          prioritySol: order.prioritySol,
+          txCostSol: order.txCostSol,
+          reason: 'Slippage exceeded (minOut)',
+        });
+        continue;
+      }
+
+      const execution = this.executeUserTradeImmediate(order.side, order.amountIn, execTsMs);
+      if (!execution.fill.ok) {
+        this.userTradeExecutions.push({
+          tokenId: this.meta.id,
+          orderId: order.id,
+          status: 'FAILED',
+          side: order.side,
+          amountIn: order.amountIn,
+          expectedOut: order.expectedOut,
+          minOut: order.minOut,
+          actualOut: actualQuote.expectedOut,
+          slippageBps: order.slippageBps,
+          submitMs: order.submitMs,
+          execMs: execTsMs,
+          prioritySol: order.prioritySol,
+          txCostSol: order.txCostSol,
+          reason: execution.fill.reason,
+        });
+        continue;
+      }
+
+      const fill = execution.fill;
+      const actualOut = fill.side === 'BUY' ? fill.filledToken : fill.filledSol;
+      this.userTradeExecutions.push({
+        tokenId: this.meta.id,
+        orderId: order.id,
+        status: 'FILLED',
+        side: order.side,
+        amountIn: order.amountIn,
+        expectedOut: order.expectedOut,
+        minOut: order.minOut,
+        actualOut,
+        slippageBps: order.slippageBps,
+        submitMs: order.submitMs,
+        execMs: execTsMs,
+        prioritySol: order.prioritySol,
+        txCostSol: order.txCostSol,
+        fill,
+      });
+      if (execution.events.length > 0) outEvents.push(...execution.events);
+    }
+
+    return outEvents;
+  }
+
+  private estimateOut(side: UserTradeSide, amountIn: number): number {
+    if (side === 'BUY') {
+      if (!this.hasMigrated && this.phase !== 'MIGRATED') {
+        const grossInUsd = amountIn * SOL_PRICE_USD;
+        return this.estimateCurveBuyOut(grossInUsd).tokensOut;
+      }
+      const grossInUsd = amountIn * SOL_PRICE_USD;
+      return this.executeMigratedBuy(grossInUsd).tokensOut;
+    }
+
+    if (!this.hasMigrated && this.phase !== 'MIGRATED') {
+      return this.estimateCurveSellOut(amountIn).baseOutUsd / SOL_PRICE_USD;
+    }
+    return this.executeMigratedSell(amountIn).baseOutNetUsd / SOL_PRICE_USD;
+  }
+
+  private executeUserTradeImmediate(side: UserTradeSide, amount: number, tsMs: number): {
+    fill: UserTradeFill;
+    events: TokenChartEvent[];
+  } {
+    if (this.phase === 'RUGGED' || this.phase === 'DEAD') {
+      return {
+        fill: { ok: false, side, requestedAmount: amount, reason: 'Token unavailable' },
+        events: [],
+      };
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return {
+        fill: { ok: false, side, requestedAmount: amount, reason: 'Invalid amount' },
+        events: [],
+      };
+    }
+
+    const priceBeforeUsd = this.lastPriceUsd;
+    const mcapBeforeUsd = this.lastMcapUsd;
+    const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
+
+    let filledSol = 0;
+    let filledToken = 0;
+    let filledUsd = 0;
+    let feeUsd = 0;
+
+    if (!this.hasMigrated && this.phase !== 'MIGRATED') {
+      this.sanitizeCurveState();
+      if (side === 'BUY') {
+        const grossInUsd = amount * SOL_PRICE_USD;
+        const buy = this.executeCurveBuy(grossInUsd);
+        if (buy.baseInUsd <= 0 || buy.tokensOut <= 0) {
+          return {
+            fill: { ok: false, side, requestedAmount: amount, reason: 'No liquidity' },
+            events: [],
+          };
+        }
+        const grossUsedUsd = buy.baseInUsd / feeFactor;
+        filledSol = grossUsedUsd / SOL_PRICE_USD;
+        filledToken = buy.tokensOut;
+        filledUsd = grossUsedUsd;
+        feeUsd = Math.max(0, grossUsedUsd - buy.baseInUsd);
+      } else {
+        const sell = this.executeCurveSell(amount);
+        if (sell.baseOutUsd <= 0 || sell.tokenIn <= 0) {
+          return {
+            fill: { ok: false, side, requestedAmount: amount, reason: 'No liquidity' },
+            events: [],
+          };
+        }
+        const grossOutUsd = sell.baseOutUsd / feeFactor;
+        filledSol = sell.baseOutUsd / SOL_PRICE_USD;
+        filledToken = sell.tokenIn;
+        filledUsd = sell.baseOutUsd;
+        feeUsd = Math.max(0, grossOutUsd - sell.baseOutUsd);
+      }
+      this.sanitizeCurveState();
+      this.bondingProgress = this.getCurveProgress();
+      this.lastPriceUsd = this.getCurvePriceUsd();
+      this.lastMcapUsd = this.getCurveMcapUsd();
+    } else {
+      if (side === 'BUY') {
+        const grossInUsd = amount * SOL_PRICE_USD;
+        const buy = this.executeMigratedBuy(grossInUsd);
+        if (buy.baseInGrossUsd <= 0 || buy.tokensOut <= 0) {
+          return {
+            fill: { ok: false, side, requestedAmount: amount, reason: 'No liquidity' },
+            events: [],
+          };
+        }
+        filledSol = buy.baseInGrossUsd / SOL_PRICE_USD;
+        filledToken = buy.tokensOut;
+        filledUsd = buy.baseInGrossUsd;
+        feeUsd = Math.max(0, buy.baseInGrossUsd - buy.baseInNetUsd);
+        const mcapUsd = clamp(buy.priceAfterUsd * SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD);
+        this.lastMcapUsd = mcapUsd;
+        this.lastPriceUsd = mcapUsd / SUPPLY;
+      } else {
+        const sell = this.executeMigratedSell(amount);
+        if (sell.baseOutNetUsd <= 0 || sell.tokenIn <= 0) {
+          return {
+            fill: { ok: false, side, requestedAmount: amount, reason: 'No liquidity' },
+            events: [],
+          };
+        }
+        filledSol = sell.baseOutNetUsd / SOL_PRICE_USD;
+        filledToken = sell.tokenIn;
+        filledUsd = sell.baseOutNetUsd;
+        feeUsd = Math.max(0, sell.baseOutGrossUsd - sell.baseOutNetUsd);
+        const mcapUsd = clamp(sell.priceAfterUsd * SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD);
+        this.lastMcapUsd = mcapUsd;
+        this.lastPriceUsd = mcapUsd / SUPPLY;
+      }
+    }
+
+    const priceAfterUsd = this.lastPriceUsd;
+    const mcapAfterUsd = this.lastMcapUsd;
+    const avgPriceUsd = filledToken > 0 ? (filledUsd / filledToken) : 0;
+    const impactPct = priceBeforeUsd > 0
+      ? ((priceAfterUsd - priceBeforeUsd) / priceBeforeUsd) * 100
+      : 0;
+    const notionalUsd = Math.max(0, filledUsd);
+    const walletId = 'you';
+    if (side === 'BUY') this.applyWalletDelta(walletId, filledToken, tsMs);
+    else this.applyWalletDelta(walletId, -filledToken, tsMs);
+
+    this.recordTradeTick(tsMs, notionalUsd, side, walletId, filledToken);
+
+    const events: TokenChartEvent[] = [];
+    const maybeMigrationEvent = this.updatePhase(tsMs);
+    if (maybeMigrationEvent) events.push(maybeMigrationEvent);
+
+    return {
+      fill: {
+        ok: true,
+        side,
+        requestedAmount: amount,
+        filledSol,
+        filledToken,
+        filledUsd,
+        feeUsd,
+        avgPriceUsd,
+        priceBeforeUsd,
+        priceAfterUsd,
+        impactPct,
+        mcapBeforeUsd,
+        mcapAfterUsd,
+        tsMs,
+      },
+      events,
     };
   }
 
@@ -745,6 +1743,69 @@ export class TokenSim {
     return clamp(1 - (this.curveRealToken / Math.max(CURVE_TOKEN_EPS, this.curveInitialRealToken)), 0, 1);
   }
 
+  private estimateCurveBuyOut(grossBaseInUsd: number): { tokensOut: number; baseInUsedUsd: number } {
+    if (!Number.isFinite(grossBaseInUsd) || grossBaseInUsd <= 0 || this.curveRealToken <= CURVE_TOKEN_EPS) {
+      return { tokensOut: 0, baseInUsedUsd: 0 };
+    }
+    const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
+    const netBaseIn = grossBaseInUsd * feeFactor;
+    if (netBaseIn <= 0) return { tokensOut: 0, baseInUsedUsd: 0 };
+
+    const x = Math.max(CURVE_TOKEN_EPS, this.curveVirtualBase);
+    const y = Math.max(CURVE_TOKEN_EPS, this.curveVirtualToken);
+    const k = x * y;
+    if (!Number.isFinite(k) || k <= 0) return { tokensOut: 0, baseInUsedUsd: 0 };
+
+    const newX = x + netBaseIn;
+    if (!Number.isFinite(newX) || newX <= CURVE_TOKEN_EPS) return { tokensOut: 0, baseInUsedUsd: 0 };
+    const newY = k / newX;
+    if (!Number.isFinite(newY)) return { tokensOut: 0, baseInUsedUsd: 0 };
+
+    let tokensOut = y - newY;
+    let netBaseUsed = netBaseIn;
+    const maxTokensOut = Math.max(0, Math.min(this.curveRealToken, y - CURVE_TOKEN_EPS));
+    tokensOut = clamp(tokensOut, 0, maxTokensOut);
+
+    if (tokensOut > this.curveRealToken) {
+      tokensOut = this.curveRealToken;
+      const cappedY = y - tokensOut;
+      const cappedX = k / Math.max(CURVE_TOKEN_EPS, cappedY);
+      netBaseUsed = Math.max(0, cappedX - x);
+    }
+    if (tokensOut <= 0 || netBaseUsed <= 0) return { tokensOut: 0, baseInUsedUsd: 0 };
+
+    const grossBaseUsed = netBaseUsed / feeFactor;
+    return { tokensOut, baseInUsedUsd: grossBaseUsed };
+  }
+
+  private estimateCurveSellOut(tokenIn: number): { tokenIn: number; baseOutUsd: number } {
+    if (!Number.isFinite(tokenIn) || tokenIn <= 0 || this.curveRealBase <= 0) {
+      return { tokenIn: 0, baseOutUsd: 0 };
+    }
+
+    const cappedTokenIn = Math.min(tokenIn, this.curveInitialRealToken - this.curveRealToken);
+    if (cappedTokenIn <= 0) return { tokenIn: 0, baseOutUsd: 0 };
+
+    const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
+    const x = Math.max(CURVE_TOKEN_EPS, this.curveVirtualBase);
+    const y = Math.max(CURVE_TOKEN_EPS, this.curveVirtualToken);
+    const k = x * y;
+    if (!Number.isFinite(k) || k <= 0) return { tokenIn: 0, baseOutUsd: 0 };
+
+    const newY = y + cappedTokenIn;
+    if (!Number.isFinite(newY) || newY <= CURVE_TOKEN_EPS) return { tokenIn: 0, baseOutUsd: 0 };
+    const newX = k / newY;
+    if (!Number.isFinite(newX)) return { tokenIn: 0, baseOutUsd: 0 };
+
+    const grossBaseOut = Math.max(0, x - newX);
+    let baseOut = grossBaseOut * feeFactor;
+    if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
+    if (baseOut > this.curveRealBase) baseOut = this.curveRealBase;
+    if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
+
+    return { tokenIn: cappedTokenIn, baseOutUsd: baseOut };
+  }
+
   private executeCurveBuy(grossBaseInUsd: number): { baseInUsd: number; tokensOut: number } {
     if (!Number.isFinite(grossBaseInUsd) || grossBaseInUsd <= 0 || this.curveRealToken <= CURVE_TOKEN_EPS) {
       return { baseInUsd: 0, tokensOut: 0 };
@@ -834,6 +1895,147 @@ export class TokenSim {
     this.curveRealBase = Math.max(0, this.curveRealBase - baseOut);
     this.curveRealToken = Math.min(this.curveInitialRealToken, this.curveRealToken + cappedTokenIn);
     return { tokenIn: cappedTokenIn, baseOutUsd: baseOut };
+  }
+
+  private executeMigratedBuy(grossBaseInUsd: number): {
+    baseInGrossUsd: number;
+    baseInNetUsd: number;
+    tokensOut: number;
+    priceAfterUsd: number;
+  } {
+    if (!Number.isFinite(grossBaseInUsd) || grossBaseInUsd <= 0) {
+      return { baseInGrossUsd: 0, baseInNetUsd: 0, tokensOut: 0, priceAfterUsd: this.lastPriceUsd };
+    }
+
+    const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
+    const netBaseIn = grossBaseInUsd * feeFactor;
+    if (netBaseIn <= 0) {
+      return { baseInGrossUsd: 0, baseInNetUsd: 0, tokensOut: 0, priceAfterUsd: this.lastPriceUsd };
+    }
+
+    const { reserveBaseUsd: x, reserveToken: y } = this.getMigratedReserves();
+    const k = x * y;
+    if (!Number.isFinite(k) || k <= 0) {
+      return { baseInGrossUsd: 0, baseInNetUsd: 0, tokensOut: 0, priceAfterUsd: this.lastPriceUsd };
+    }
+
+    const newX = x + netBaseIn;
+    const newY = k / newX;
+    const tokensOut = Math.max(0, y - newY);
+    const priceAfterUsd = newX / Math.max(CURVE_TOKEN_EPS, newY);
+    if (!Number.isFinite(tokensOut) || !Number.isFinite(priceAfterUsd) || tokensOut <= 0) {
+      return { baseInGrossUsd: 0, baseInNetUsd: 0, tokensOut: 0, priceAfterUsd: this.lastPriceUsd };
+    }
+
+    return {
+      baseInGrossUsd: grossBaseInUsd,
+      baseInNetUsd: netBaseIn,
+      tokensOut,
+      priceAfterUsd: Math.max(1e-12, priceAfterUsd),
+    };
+  }
+
+  private executeMigratedSell(tokenIn: number): {
+    tokenIn: number;
+    baseOutGrossUsd: number;
+    baseOutNetUsd: number;
+    priceAfterUsd: number;
+  } {
+    if (!Number.isFinite(tokenIn) || tokenIn <= 0) {
+      return { tokenIn: 0, baseOutGrossUsd: 0, baseOutNetUsd: 0, priceAfterUsd: this.lastPriceUsd };
+    }
+
+    const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
+    const { reserveBaseUsd: x, reserveToken: y } = this.getMigratedReserves();
+    const k = x * y;
+    if (!Number.isFinite(k) || k <= 0) {
+      return { tokenIn: 0, baseOutGrossUsd: 0, baseOutNetUsd: 0, priceAfterUsd: this.lastPriceUsd };
+    }
+
+    const newY = y + tokenIn;
+    const newX = k / newY;
+    const baseOutGrossUsd = Math.max(0, x - newX);
+    const baseOutNetUsd = baseOutGrossUsd * feeFactor;
+    const priceAfterUsd = newX / Math.max(CURVE_TOKEN_EPS, newY);
+    if (!Number.isFinite(baseOutNetUsd) || !Number.isFinite(priceAfterUsd) || baseOutNetUsd <= 0) {
+      return { tokenIn: 0, baseOutGrossUsd: 0, baseOutNetUsd: 0, priceAfterUsd: this.lastPriceUsd };
+    }
+
+    return {
+      tokenIn,
+      baseOutGrossUsd,
+      baseOutNetUsd,
+      priceAfterUsd: Math.max(1e-12, priceAfterUsd),
+    };
+  }
+
+  private getMigratedReserves(): { reserveBaseUsd: number; reserveToken: number } {
+    const phaseModel = this.getPhaseModel();
+    const referenceLiquidityUsd = Math.max(
+      MIGRATED_LIQUIDITY_FLOOR_USD,
+      this.baseLiquidityUsd * phaseModel.liquidityMul
+    );
+    const reserveBaseUsd = Math.max(1, referenceLiquidityUsd * 0.5);
+    const reserveToken = Math.max(
+      CURVE_TOKEN_EPS,
+      reserveBaseUsd / Math.max(1e-12, this.lastPriceUsd)
+    );
+    return { reserveBaseUsd, reserveToken };
+  }
+
+  private recordTradeTick(
+    candleTsMs: number,
+    volumeUsd: number,
+    side: UserTradeSide,
+    walletId: string,
+    tokenAmount: number
+  ): void {
+    this.aggr1s.pushTick(candleTsMs, this.lastPriceUsd, volumeUsd);
+    this.aggr15s.pushTick(candleTsMs, this.lastPriceUsd, volumeUsd);
+    this.aggr30s.pushTick(candleTsMs, this.lastPriceUsd, volumeUsd);
+    this.aggr1m.pushTick(candleTsMs, this.lastPriceUsd, volumeUsd);
+    this.mcapAggr1s.pushTick(candleTsMs, this.lastMcapUsd, volumeUsd);
+    this.mcapAggr15s.pushTick(candleTsMs, this.lastMcapUsd, volumeUsd);
+    this.mcapAggr30s.pushTick(candleTsMs, this.lastMcapUsd, volumeUsd);
+    this.mcapAggr1m.pushTick(candleTsMs, this.lastMcapUsd, volumeUsd);
+
+    this.statWindow.push({
+      simMs: this.simTimeMs,
+      volUsd: volumeUsd,
+      buys: side === 'BUY' ? 1 : 0,
+      sells: side === 'SELL' ? 1 : 0,
+    });
+    this.pruneStatWindow();
+
+    this.recordWalletTradeStats(
+      walletId,
+      side,
+      Math.max(0, tokenAmount),
+      Math.max(0, volumeUsd),
+      this.lastPriceUsd,
+      candleTsMs
+    );
+
+    this.tape.push({
+      id: `T${candleTsMs.toString(36)}${Math.floor(this.rng.next() * 1e7).toString(36)}`,
+      tMs: candleTsMs,
+      side,
+      walletId,
+      tokenAmount: Math.max(0, tokenAmount),
+      notionalUsd: Math.max(0, volumeUsd),
+      priceUsd: this.lastPriceUsd,
+      mcapUsd: this.lastMcapUsd,
+    });
+    if (this.tape.length > TAPE_MAX_TRADES) {
+      this.tape.splice(0, this.tape.length - TAPE_MAX_TRADES);
+    }
+  }
+
+  private pruneStatWindow(): void {
+    const cutoff = this.simTimeMs - this.WINDOW_SIM_MS;
+    let i = 0;
+    while (i < this.statWindow.length && this.statWindow[i]!.simMs < cutoff) i++;
+    if (i > 0) this.statWindow.splice(0, i);
   }
 
   private sanitizeCurveState(): void {

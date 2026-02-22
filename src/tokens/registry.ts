@@ -1,5 +1,14 @@
 import { RNG } from '../engine/rng';
-import { TokenSim } from './tokenSim';
+import {
+  TokenSim,
+  type MarketMicroSnapshot,
+  type UserTradeExecutionNotice,
+  type UserTradeOrderStatus,
+  type UserTradeQuote,
+  type UserTradeSide,
+  type UserTradeSubmitRequest,
+  type UserTradeSubmitResult,
+} from './tokenSim';
 import { generateToken, getStartingMcapUsd, getFateTimeoutSimMs } from './generator';
 import type { Candle } from '../engine/types';
 import { useTokenStore } from '../store/tokenStore';
@@ -13,14 +22,18 @@ const MAX_NEW            = 5;
 const MAX_FINAL          = 5;
 const MAX_MIGRATED       = 5;
 const INITIAL_TOKENS     = 12;
+const MAX_ORDER_SNAPSHOTS = 4_000;
 
 export type ChartMetric = 'mcap' | 'price';
 export type ChartCallback = (candles: Candle[], lastValue: number) => void;
+export type TradeExecutionCallback = (execution: UserTradeExecutionNotice) => void;
 
 // ── Registry ──────────────────────────────────────────────
 class TokenRegistry {
   private tokens = new Map<string, TokenSim>();
   private rng = new RNG(Date.now() & 0xFFFFFFFF);
+  private tradeOrders = new Map<string, UserTradeOrderStatus>();
+  private tradeExecutionSubscribers = new Set<TradeExecutionCallback>();
 
   private tickHandle: ReturnType<typeof setInterval> | null = null;
   private feedHandle: ReturnType<typeof setInterval> | null = null;
@@ -49,6 +62,28 @@ class TokenRegistry {
         const events = sim.tick(realDtSec);
         if (events.length > 0) {
           useTokenStore.getState().pushTokenEvents(id, events);
+        }
+        const executions = sim.drainUserTradeExecutions();
+        if (executions.length > 0) {
+          useTokenStore.getState().updateToken(id, sim.getRuntime());
+          for (let j = 0; j < executions.length; j++) {
+            const execution = executions[j]!;
+            this.tradeOrders.set(execution.orderId, execution);
+            this.pruneTradeOrders();
+            if (execution.status === 'FILLED') {
+              useTokenStore.getState().pushTokenEvents(id, [{
+                tokenId: id,
+                tMs: execution.fill.tsMs,
+                type: execution.side === 'BUY' ? 'USER_BUY' : 'USER_SELL',
+                price: execution.fill.priceAfterUsd,
+                mcap: execution.fill.mcapAfterUsd,
+                size: execution.fill.filledToken,
+              }]);
+            }
+            if (this.tradeExecutionSubscribers.size > 0) {
+              for (const cb of this.tradeExecutionSubscribers) cb(execution);
+            }
+          }
         }
 
         // Track rug time for cleanup
@@ -90,6 +125,7 @@ class TokenRegistry {
     this.tickHandle = this.feedHandle = this.spawnHandle = null;
     this.tokens.clear();
     this.ruggedAt.clear();
+    this.tradeOrders.clear();
   }
 
   setChartCallback(cb: ChartCallback | null): void {
@@ -106,6 +142,52 @@ class TokenRegistry {
 
   getTokenSim(id: string): TokenSim | undefined {
     return this.tokens.get(id);
+  }
+
+  quoteTrade(tokenId: string, side: UserTradeSide, amountIn: number, slippageBps: number): UserTradeQuote {
+    const sim = this.tokens.get(tokenId);
+    if (!sim) {
+      return { ok: false, side, amountIn, reason: 'Token unavailable' };
+    }
+    return sim.quoteUserTrade(side, amountIn, slippageBps);
+  }
+
+  submitTrade(tokenId: string, req: UserTradeSubmitRequest): UserTradeSubmitResult {
+    const sim = this.tokens.get(tokenId);
+    if (!sim) {
+      return { ok: false, side: req.side, amountIn: req.amountIn, reason: 'Token unavailable' };
+    }
+
+    const result = sim.submitUserTrade(req);
+    if (result.ok) {
+      this.tradeOrders.set(result.orderId, {
+        tokenId: result.tokenId,
+        orderId: result.orderId,
+        side: result.side,
+        status: 'PENDING',
+        amountIn: result.amountIn,
+        expectedOut: result.expectedOut,
+        minOut: result.minOut,
+        slippageBps: result.slippageBps,
+        submitMs: result.submitMs,
+        execMs: result.execMs,
+        prioritySol: result.prioritySol,
+        txCostSol: result.txCostSol,
+      });
+      this.pruneTradeOrders();
+    }
+    return result;
+  }
+
+  getTradeOrderStatus(orderId: string): UserTradeOrderStatus | null {
+    return this.tradeOrders.get(orderId) ?? null;
+  }
+
+  subscribeTradeExecutions(cb: TradeExecutionCallback): () => void {
+    this.tradeExecutionSubscribers.add(cb);
+    return () => {
+      this.tradeExecutionSubscribers.delete(cb);
+    };
   }
 
   // ── Private ───────────────────────────────────────────
@@ -149,10 +231,14 @@ class TokenRegistry {
 
   private publishFeed(): void {
     const updates: Record<string, ReturnType<TokenSim['getRuntime']>> = {};
+    const marketUpdates: Record<string, MarketMicroSnapshot> = {};
     for (const [id, sim] of this.tokens) {
       updates[id] = sim.getRuntime();
+      marketUpdates[id] = sim.getMarketSnapshot();
     }
-    useTokenStore.getState().batchUpdateTokens(updates);
+    const store = useTokenStore.getState();
+    store.batchUpdateTokens(updates);
+    store.batchUpdateTokenMarketSnapshots(marketUpdates);
   }
 
   private cleanupDead(): void {
@@ -165,6 +251,14 @@ class TokenRegistry {
         // Spawn replacement
         setTimeout(() => this.maybeSpawn(), 1000);
       }
+    }
+  }
+
+  private pruneTradeOrders(): void {
+    while (this.tradeOrders.size > MAX_ORDER_SNAPSHOTS) {
+      const firstKey = this.tradeOrders.keys().next().value;
+      if (typeof firstKey !== 'string') break;
+      this.tradeOrders.delete(firstKey);
     }
   }
 }
