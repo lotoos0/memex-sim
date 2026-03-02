@@ -76,10 +76,13 @@ export function getFateTimeoutSimMs(fate: TokenFate, rng: RNG): number {
 
 export function getStartingMcapUsd(fate: TokenFate, rng: RNG): number {
   switch (fate) {
-    case 'QUICK_RUG':   return 2_000 + rng.next() * 8_000;
-    case 'SHORT':       return 2_000 + rng.next() * 15_000;
-    case 'NORMAL':      return 3_000 + rng.next() * 20_000;
-    case 'LONG_RUNNER': return 5_000 + rng.next() * 30_000;
+    // Scam-like launches start immediately at 1m+ mcap.
+    case 'QUICK_RUG':   return 1_000_000 + rng.next() * 2_500_000;
+    // "Normal/healthy" launches stay low and grow from there.
+    case 'SHORT':       return 2_000 + rng.next() * 18_000;
+    case 'NORMAL':      return 3_000 + rng.next() * 32_000;
+    // Rare stronger launch (still below default 100k cap at spawn).
+    case 'LONG_RUNNER': return 8_000 + rng.next() * 52_000;
   }
 }
 

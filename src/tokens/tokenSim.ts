@@ -265,6 +265,12 @@ const DEV_FLOW_SCALE = 0.85;
 const TAPE_MAX_TRADES = 2_000;
 const HOLDERS_TOP_N = 120;
 const HOLDER_DUST_USD = 0.25;
+const NORMAL_SOFT_MCAP_USD = 100_000;
+const SHORT_SOFT_MCAP_USD = 80_000;
+const LONG_RUNNER_SOFT_MCAP_USD = 220_000;
+const QUICK_RUG_SOFT_MCAP_USD = 1_500_000;
+const FLOW_WARMUP_SIM_MS = 90_000;
+const DEV_WARMUP_SIM_MS = 60_000;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -472,6 +478,22 @@ export class TokenSim {
       lambdaMul *= 0.9;
     }
 
+    const flowPowerMul = this.getFlowPowerMul();
+    lambdaMul *= flowPowerMul;
+
+    const mcapHeat = this.getMcapHeat();
+    if (mcapHeat > 0 && this.meta.fate !== 'QUICK_RUG') {
+      const heatRatio = mcapHeat / (1 + mcapHeat);
+      effectiveBuyBias = clamp(effectiveBuyBias - 0.22 * heatRatio, 0.18, 0.82);
+      driftPerSec -= 0.02 * heatRatio;
+      lambdaMul *= Math.max(0.35, 1 - 0.55 * heatRatio);
+      volMul *= Math.max(0.45, 1 - 0.35 * heatRatio);
+    }
+
+    const heatRatio = mcapHeat / (1 + mcapHeat);
+    const tradeSizeMul = Math.max(0.12, flowPowerMul * (1 - 0.45 * heatRatio));
+    const impactMul = Math.max(0.45, 0.75 + 0.25 * flowPowerMul - 0.2 * heatRatio);
+
     const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
     const candleTsMs = nowMs;
     const isLaunchTick = !this.emittedInitialDevBuy;
@@ -498,12 +520,12 @@ export class TokenSim {
       liquidityUsd,
       attention: this.attention,
       baseLambda: this.baseLambda * lambdaMul * (isLaunchTick ? 0.15 : 1),
-      baseTradeSizeUsd: this.baseTradeSizeUsd,
+      baseTradeSizeUsd: this.baseTradeSizeUsd * tradeSizeMul,
       tradeSigma: this.tradeSigma,
       driftPerSec,
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
       buyBias: effectiveBuyBias,
-      impactK: this.impactK,
+      impactK: this.impactK * impactMul,
       whaleChance: (isLaunchTick || inPostMigrationWarmup) ? 0 : this.getWhaleChance(inMigrationChaos),
       externalFlow: devFlow?.externalFlow,
     });
@@ -677,7 +699,7 @@ export class TokenSim {
     const buy = this.executeMigratedBuy(grossInUsd);
     if (buy.baseInNetUsd <= 0 || buy.tokensOut <= 0) return false;
 
-    const mcapUsd = clamp(buy.priceAfterUsd * SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD);
+    const mcapUsd = this.clampMcapUsd(buy.priceAfterUsd * SUPPLY);
     this.lastMcapUsd = mcapUsd;
     this.lastPriceUsd = mcapUsd / SUPPLY;
     this.lastCurveSwap = {
@@ -730,7 +752,7 @@ export class TokenSim {
     const sell = this.executeMigratedSell(tokenIn);
     if (sell.baseOutNetUsd <= 0 || sell.tokenIn <= 0) return false;
 
-    const mcapUsd = clamp(sell.priceAfterUsd * SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD);
+    const mcapUsd = this.clampMcapUsd(sell.priceAfterUsd * SUPPLY);
     this.lastMcapUsd = mcapUsd;
     this.lastPriceUsd = mcapUsd / SUPPLY;
     this.lastCurveSwap = {
@@ -1032,11 +1054,13 @@ export class TokenSim {
     externalFlow: { buyBoostUsd?: number; sellBoostUsd?: number };
     sizeUsd: number;
   } | null {
+    const devPowerMul = this.getDevFlowPowerMul();
+
     // First visible dev action: seed buy that actually impacts price/volume.
     if (!this.emittedInitialDevBuy) {
       this.emittedInitialDevBuy = true;
       this.lastDevEventRealMs = candleTsMs;
-      const sizeUsd = this.baseTradeSizeUsd * (3 + this.rng.next() * 3.5) * DEV_FLOW_SCALE;
+      const sizeUsd = this.baseTradeSizeUsd * (3 + this.rng.next() * 3.5) * DEV_FLOW_SCALE * devPowerMul;
       this.devEventsUsed += 1;
       return {
         eventType: 'DEV_BUY',
@@ -1048,7 +1072,7 @@ export class TokenSim {
     if (this.archetype === 'DOA' && !this.emittedDoaSell && this.simTimeMs >= 120_000) {
       this.emittedDoaSell = true;
       this.lastDevEventRealMs = candleTsMs;
-      const sizeUsd = this.baseTradeSizeUsd * (6 + this.rng.next() * 8) * DEV_FLOW_SCALE;
+      const sizeUsd = this.baseTradeSizeUsd * (6 + this.rng.next() * 8) * DEV_FLOW_SCALE * devPowerMul;
       this.devEventsUsed += 1;
       return {
         eventType: 'DEV_SELL',
@@ -1063,7 +1087,7 @@ export class TokenSim {
     if (this.rng.next() >= this.getDevSignalChancePerSec() * realDtSec) return null;
 
     const isBuy = this.rng.next() < buyBias;
-    const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6) * DEV_FLOW_SCALE;
+    const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6) * DEV_FLOW_SCALE * devPowerMul;
     this.lastDevEventRealMs = candleTsMs;
     this.devEventsUsed += 1;
     if (isBuy) {
@@ -1590,7 +1614,7 @@ export class TokenSim {
         filledToken = buy.tokensOut;
         filledUsd = buy.baseInGrossUsd;
         feeUsd = Math.max(0, buy.baseInGrossUsd - buy.baseInNetUsd);
-        const mcapUsd = clamp(buy.priceAfterUsd * SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD);
+        const mcapUsd = this.clampMcapUsd(buy.priceAfterUsd * SUPPLY);
         this.lastMcapUsd = mcapUsd;
         this.lastPriceUsd = mcapUsd / SUPPLY;
       } else {
@@ -1605,7 +1629,7 @@ export class TokenSim {
         filledToken = sell.tokenIn;
         filledUsd = sell.baseOutNetUsd;
         feeUsd = Math.max(0, sell.baseOutGrossUsd - sell.baseOutNetUsd);
-        const mcapUsd = clamp(sell.priceAfterUsd * SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD);
+        const mcapUsd = this.clampMcapUsd(sell.priceAfterUsd * SUPPLY);
         this.lastMcapUsd = mcapUsd;
         this.lastPriceUsd = mcapUsd / SUPPLY;
       }
@@ -1736,7 +1760,43 @@ export class TokenSim {
   }
 
   private getCurveMcapUsd(): number {
-    return this.getCurvePriceUsd() * SUPPLY;
+    return this.clampMcapUsd(this.getCurvePriceUsd() * SUPPLY);
+  }
+
+  private getSoftMcapTargetUsd(): number {
+    if (this.meta.fate === 'QUICK_RUG') return QUICK_RUG_SOFT_MCAP_USD;
+    if (this.meta.fate === 'LONG_RUNNER') return LONG_RUNNER_SOFT_MCAP_USD;
+    if (this.meta.fate === 'SHORT') return SHORT_SOFT_MCAP_USD;
+    return NORMAL_SOFT_MCAP_USD;
+  }
+
+  private getMcapHeat(): number {
+    const target = this.getSoftMcapTargetUsd();
+    if (this.lastMcapUsd <= target) return 0;
+    const over = (this.lastMcapUsd - target) / Math.max(1, target);
+    return clamp(over / 0.75, 0, 3);
+  }
+
+  private getFlowPowerMul(): number {
+    if (this.meta.fate === 'QUICK_RUG') return 1.35;
+
+    const ramp = 0.35 + 0.65 * clamp(this.simTimeMs / FLOW_WARMUP_SIM_MS, 0, 1);
+    if (this.meta.fate === 'LONG_RUNNER') return 0.82 * ramp;
+    if (this.meta.fate === 'NORMAL') return 0.68 * ramp;
+    return 0.55 * ramp;
+  }
+
+  private getDevFlowPowerMul(): number {
+    if (this.meta.fate === 'QUICK_RUG') return 1.2;
+
+    const ramp = 0.4 + 0.6 * clamp(this.simTimeMs / DEV_WARMUP_SIM_MS, 0, 1);
+    if (this.meta.fate === 'LONG_RUNNER') return 0.8 * ramp;
+    if (this.meta.fate === 'NORMAL') return 0.65 * ramp;
+    return 0.5 * ramp;
+  }
+
+  private clampMcapUsd(mcapUsd: number): number {
+    return clamp(mcapUsd, MCAP_FLOOR_USD, MCAP_CAP_USD);
   }
 
   private getCurveProgress(): number {
