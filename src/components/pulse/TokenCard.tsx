@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LoaderCircle, Zap } from 'lucide-react';
+import { Feather, LoaderCircle, Zap } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
 import { useTokenStore } from '../../store/tokenStore';
 import { useTradingStore } from '../../store/tradingStore';
+import { usePostStore, type TokenPost } from '../../store/postStore';
+import TokenAvatar from '../common/TokenAvatar';
+import TweetHoverCard from '../news/TweetHoverCard';
+
+const EMPTY_POSTS: TokenPost[] = [];
 
 function fmtUsd(v: number): string {
   if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
@@ -56,6 +61,19 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
   );
   const quickPosition = useTradingStore(selectQuickPosition);
   const quickBuy = useTradingStore(s => s.quickBuy);
+  const selectLatestNews = useCallback(
+    (s: ReturnType<typeof usePostStore.getState>) => {
+      const rows = s.postsByTokenId[token.id] ?? EMPTY_POSTS;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const post = rows[i]!;
+        if (post.kind === 'USER') continue;
+        return post;
+      }
+      return rows.length > 0 ? rows[rows.length - 1]! : null;
+    },
+    [token.id]
+  );
+  const latestNews = usePostStore(selectLatestNews);
   const [isBuying, setIsBuying] = useState(false);
   const buyTimerRef = useRef<number | null>(null);
 
@@ -103,13 +121,13 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
     >
       {/* Row 1: logo + name + age + change */}
       <div className="flex items-center gap-2">
-        {/* Logo */}
-        <div
-          className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
-          style={{ backgroundColor: token.logoColor + '33', color: token.logoColor, border: `1px solid ${token.logoColor}44` }}
-        >
-          {token.ticker.slice(0, 2)}
-        </div>
+        <TokenAvatar
+          tokenId={token.id}
+          label={`${token.ticker} avatar`}
+          size={30}
+          className="h-[30px] w-[30px]"
+          previewMode="hover"
+        />
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1">
@@ -177,6 +195,24 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
             backgroundColor: token.bondingCurvePct > 80 ? '#f5c542' : token.phase === 'RUGGED' ? '#ff4d6a' : '#00d4a1',
           }}
         />
+      </div>
+
+      <div className="text-[10px]">
+        {latestNews ? (
+          <TweetHoverCard
+            tokenId={token.id}
+            ticker={token.ticker}
+            news={latestNews}
+            simNowMs={token.simTimeMs}
+            trigger={(
+              <div className="inline-flex h-4.5 w-4.5 items-center justify-center rounded border border-[#2d5f53] bg-[#0f2320] text-[#00d4a1]">
+                <Feather size={10} className="shrink-0" />
+              </div>
+            )}
+          />
+        ) : (
+          <span className="text-ax-text-dim">No news yet.</span>
+        )}
       </div>
 
       <div className="flex items-center justify-between gap-2 pt-1">

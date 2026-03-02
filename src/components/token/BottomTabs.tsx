@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowUpDown, Table2, Zap } from 'lucide-react';
 import { useTokenStore } from '../../store/tokenStore';
 import { usdToSol } from '../../store/walletStore';
+import TokenFeed from './TokenFeed';
 
-const TABS = ['Trades', 'Positions', 'Orders', 'Holders', 'Top Traders', 'Dev Tokens'] as const;
+const TABS = ['Trades', 'Feed', 'Positions', 'Orders', 'Holders', 'Top Traders', 'Dev Tokens'] as const;
 const BOTTOM_TAB_STORAGE_KEY = 'memex:token:bottom-tab:v1';
 const BOTTOM_UNIT_STORAGE_KEY = 'memex:token:bottom-unit:v1';
 
@@ -212,6 +213,10 @@ export default function BottomTabs({
               ))
             )}
           </div>
+        )}
+
+        {active === 'Feed' && (
+          <TokenFeed tokenId={tokenId} />
         )}
 
         {active === 'Holders' && (

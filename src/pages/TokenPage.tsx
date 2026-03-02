@@ -7,6 +7,7 @@ import TradeSidebar from '../components/token/TradeSidebar';
 import BottomTabs from '../components/token/BottomTabs';
 import TradesTablePanel from '../components/token/TradesTablePanel';
 import InstantTradePanel from '../components/floating/InstantTradePanel';
+import TokenAvatar from '../components/common/TokenAvatar';
 import { registry } from '../tokens/registry';
 import type { CurveDebugSnapshot } from '../tokens/tokenSim';
 import { useTradingStore, type QuickTrade } from '../store/tradingStore';
@@ -142,12 +143,13 @@ export default function TokenPage() {
           <ArrowLeft size={14} />
         </button>
 
-        <div
-          className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
-          style={{ backgroundColor: token.logoColor + '33', color: token.logoColor, border: `1px solid ${token.logoColor}55` }}
-        >
-          {token.ticker.slice(0, 2)}
-        </div>
+        <TokenAvatar
+          tokenId={token.id}
+          label={`${token.ticker} avatar`}
+          size={28}
+          className="h-7 w-7"
+          previewMode="hover"
+        />
 
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
