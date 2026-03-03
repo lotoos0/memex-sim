@@ -107,10 +107,6 @@ export default function TokenPage() {
   }, [id, setActive]);
 
   useEffect(() => {
-    if (token && token.phase === 'DEAD') navigate('/');
-  }, [token, navigate]);
-
-  useEffect(() => {
     if (!isDev || !showCurveDebug || !id) {
       setCurveDebug(null);
       return;
@@ -149,7 +145,7 @@ export default function TokenPage() {
     );
   }
 
-  const isRugged = token.phase === 'RUGGED';
+  const isDead = token.phase === 'DEAD' || token.phase === 'RUGGED';
   const cycleSessionOverride = () => {
     const currentIdx = SESSION_OVERRIDE_CYCLE.findIndex(v => v === marketSessionBucketOverride);
     const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % SESSION_OVERRIDE_CYCLE.length : 0;
@@ -211,9 +207,9 @@ export default function TokenPage() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="font-bold text-sm text-ax-text">{token.ticker}</span>
-            {isRugged && (
+            {isDead && (
               <span className="text-[10px] font-bold text-ax-red bg-ax-red-dim px-1.5 py-0.5 rounded">
-                RUGGED
+                DEAD
               </span>
             )}
             <span

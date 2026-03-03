@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import HoverTooltip from '../ui/HoverTooltip';
 import { useFavoritesStore } from '../../store/favoritesStore';
 import { useTradingStore } from '../../store/tradingStore';
+import { useTokenStore } from '../../store/tokenStore';
 
 export type PulseView = 'pulse' | 'watchlist' | 'positions';
 
@@ -25,14 +26,21 @@ export default function PulseSubNav() {
   const [searchParams, setSearchParams] = useSearchParams();
   const view = sanitizePulseView(searchParams.get('view'));
   const favoriteCount = useFavoritesStore((s) => s.favoriteIds.length);
-  const positionCount = useTradingStore((s) => {
-    const rows = Object.values(s.quickPositionsByTokenId);
+  const quickPositionsByTokenId = useTradingStore((s) => s.quickPositionsByTokenId);
+  const tokensById = useTokenStore((s) => s.tokensById);
+  const positionCount = useMemo(() => {
+    const rows = Object.entries(quickPositionsByTokenId);
     let open = 0;
     for (let i = 0; i < rows.length; i++) {
-      if ((rows[i]?.qty ?? 0) > 0) open += 1;
+      const [tokenId, position] = rows[i]!;
+      if ((position?.qty ?? 0) <= 0) continue;
+      const token = tokensById[tokenId];
+      if (!token) continue;
+      if (token.phase === 'DEAD' || token.phase === 'RUGGED') continue;
+      open += 1;
     }
     return open;
-  });
+  }, [quickPositionsByTokenId, tokensById]);
 
   const setView = (nextView: PulseView) => {
     const next = new URLSearchParams(searchParams);
