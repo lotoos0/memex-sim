@@ -280,7 +280,7 @@ export const useTradingStore = create<Store>((set, get) => ({
     }
 
     const token = useTokenStore.getState().tokensById[tokenId];
-    if (!token || token.phase === 'DEAD' || token.phase === 'RUGGED') {
+    if (!token) {
       return { ok: false, reason: 'Token unavailable' };
     }
 
@@ -360,7 +360,7 @@ export const useTradingStore = create<Store>((set, get) => ({
     }
 
     const token = useTokenStore.getState().tokensById[tokenId];
-    if (!token || token.phase === 'DEAD' || token.phase === 'RUGGED') {
+    if (!token) {
       return { ok: false, reason: 'Token unavailable' };
     }
 

@@ -321,6 +321,7 @@ export class TokenSim {
   private devEventsUsed = 0;
   private postMigrationChaosLeftMs = 0;
   private postMigrationWarmupMs = 0;
+  private deadUserReboundMs = 0;
   private deathSpiralLeftMs = 0;
   private hasEnteredFinal = false;
   private hasMigrated = false;
@@ -399,32 +400,7 @@ export class TokenSim {
   tick(fallbackRealDtSec: number, sessionBucket: SessionBucket = getSessionBucket(Date.now())): TokenChartEvent[] {
     this.sessionBucket = sessionBucket;
     const sessionProfile = this.getSessionProfile();
-    if (this.phase === 'RUGGED' || this.phase === 'DEAD') {
-      if (this.pendingUserOrders.length > 0) {
-        const nowMs = Date.now();
-        for (let i = 0; i < this.pendingUserOrders.length; i++) {
-          const order = this.pendingUserOrders[i]!;
-          this.userTradeExecutions.push({
-            tokenId: this.meta.id,
-            orderId: order.id,
-            status: 'FAILED',
-            side: order.side,
-            amountIn: order.amountIn,
-            expectedOut: order.expectedOut,
-            minOut: order.minOut,
-            actualOut: 0,
-            slippageBps: order.slippageBps,
-            submitMs: order.submitMs,
-            execMs: nowMs,
-            prioritySol: order.prioritySol,
-            txCostSol: order.txCostSol,
-            reason: 'Token unavailable',
-          });
-        }
-        this.pendingUserOrders = [];
-      }
-      return [];
-    }
+    if (this.phase === 'RUGGED') this.phase = 'DEAD';
 
     const nowMs = Date.now();
     const measuredDtSec = (nowMs - this.lastTickRealMs) / 1000;
@@ -438,6 +414,12 @@ export class TokenSim {
     const simDtSec = realDtSec * SIM_TIME_MULTIPLIER;
     this.simTimeMs += simDtSec * 1000;
     const queuedEvents = this.processPendingUserTrades(nowMs);
+    const inDeadMode = this.phase === 'DEAD';
+    const inCollapseMode = !inDeadMode && this.ruggedAtSimMs != null;
+    const hasUserBuyEvent = queuedEvents.some((ev) => ev.type === 'USER_BUY');
+    if ((inDeadMode || inCollapseMode) && hasUserBuyEvent) {
+      this.deadUserReboundMs = Math.max(this.deadUserReboundMs, 8_000 + this.rng.next() * 14_000);
+    }
 
     this.advanceRegime(realDtSec, sessionProfile);
     const phaseModel = this.getPhaseModel();
@@ -485,6 +467,48 @@ export class TokenSim {
       lambdaMul *= 0.9;
     }
 
+    if (inCollapseMode) {
+      const collapseAgeMs = Math.max(0, this.simTimeMs - (this.ruggedAtSimMs ?? this.simTimeMs));
+      const collapseFade = clamp(collapseAgeMs / 120_000, 0, 1);
+      lambdaMul *= 0.45 - collapseFade * 0.2;
+      volMul *= 0.55;
+      liquidityMul *= 0.62;
+      driftPerSec -= 0.09;
+      effectiveBuyBias = clamp(effectiveBuyBias - 0.34, 0.05, 0.28);
+
+      if (this.deadUserReboundMs > 0) {
+        this.deadUserReboundMs = Math.max(0, this.deadUserReboundMs - realDtSec * 1000);
+        lambdaMul *= 1.65;
+        volMul *= 1.25;
+        driftPerSec += 0.01;
+        effectiveBuyBias = clamp(effectiveBuyBias + 0.18, 0.08, 0.5);
+      }
+    }
+
+    if (inDeadMode) {
+      const deadAgeMs = Math.max(0, this.simTimeMs - (this.ruggedAtSimMs ?? this.simTimeMs));
+      const deadFade = clamp(deadAgeMs / 240_000, 0, 1);
+      const baseTempoMul = 0.14 - deadFade * 0.09;
+      lambdaMul *= Math.max(0.03, baseTempoMul);
+      volMul *= 0.24;
+      liquidityMul *= 0.45;
+      driftPerSec -= 0.03;
+      effectiveBuyBias = clamp(effectiveBuyBias - 0.24, 0.08, 0.34);
+
+      const floorPressure = Math.max(0, (this.lastMcapUsd - MCAP_FLOOR_USD) / Math.max(1, MCAP_FLOOR_USD));
+      if (floorPressure > 0) {
+        driftPerSec -= Math.min(0.05, floorPressure * 0.03);
+      }
+
+      if (this.deadUserReboundMs > 0) {
+        this.deadUserReboundMs = Math.max(0, this.deadUserReboundMs - realDtSec * 1000);
+        lambdaMul *= 1.9;
+        volMul *= 1.35;
+        driftPerSec += 0.012;
+        effectiveBuyBias = clamp(effectiveBuyBias + 0.2, 0.1, 0.62);
+      }
+    }
+
     const flowPowerMul = this.getFlowPowerMul();
     lambdaMul *= flowPowerMul;
 
@@ -513,7 +537,7 @@ export class TokenSim {
       realDtSec,
       effectiveBuyBias,
       isLaunchTick,
-      !inPostMigrationWarmup
+      !inPostMigrationWarmup && !inDeadMode && !inCollapseMode
     );
     const prevPriceUsd = this.lastPriceUsd;
 
@@ -537,7 +561,7 @@ export class TokenSim {
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
       buyBias: effectiveBuyBias,
       impactK: this.impactK * impactMul,
-      whaleChance: (isLaunchTick || inPostMigrationWarmup) ? 0 : this.getWhaleChance(inMigrationChaos, sessionProfile),
+      whaleChance: (isLaunchTick || inPostMigrationWarmup || inDeadMode || inCollapseMode) ? 0 : this.getWhaleChance(inMigrationChaos, sessionProfile),
       externalFlow: devFlow?.externalFlow,
     });
 
@@ -579,7 +603,6 @@ export class TokenSim {
     const targetSellUsd = Math.max(0, Number.isFinite(input.targetSellUsd) ? input.targetSellUsd : 0);
     const totalUsd = targetBuyUsd + targetSellUsd;
     if (totalUsd <= 1e-6) {
-      this.recordPassiveTick(input.candleTsMs);
       return;
     }
 
@@ -653,9 +676,7 @@ export class TokenSim {
       }
     }
 
-    if (executedTrades === 0) {
-      this.recordPassiveTick(input.candleTsMs);
-    }
+    if (executedTrades === 0) return;
   }
 
   private splitNotional(totalUsd: number, parts: number): number[] {
@@ -909,18 +930,15 @@ export class TokenSim {
     return;
   }
 
-  private recordPassiveTick(candleTsMs: number): void {
-    this.aggr1s.pushTick(candleTsMs, this.lastPriceUsd, 0);
-    this.aggr15s.pushTick(candleTsMs, this.lastPriceUsd, 0);
-    this.aggr30s.pushTick(candleTsMs, this.lastPriceUsd, 0);
-    this.aggr1m.pushTick(candleTsMs, this.lastPriceUsd, 0);
-    this.mcapAggr1s.pushTick(candleTsMs, this.lastMcapUsd, 0);
-    this.mcapAggr15s.pushTick(candleTsMs, this.lastMcapUsd, 0);
-    this.mcapAggr30s.pushTick(candleTsMs, this.lastMcapUsd, 0);
-    this.mcapAggr1m.pushTick(candleTsMs, this.lastMcapUsd, 0);
-  }
-
   private getPhaseModel(): PhaseModel {
+    if (this.phase === 'DEAD') {
+      return {
+        liquidityMul: 0.55,
+        lambdaMul: 0.22,
+        volMul: 0.3,
+        attentionDecayPerSec: 0.08,
+      };
+    }
     if (this.phase === 'MIGRATED') {
       return {
         liquidityMul: 4.5,
@@ -1129,7 +1147,11 @@ export class TokenSim {
   }
 
   private updatePhase(candleTsMs: number): TokenChartEvent | null {
-    if (this.phase === 'RUGGED' || this.phase === 'DEAD' || this.phase === 'MIGRATED') return null;
+    if (this.phase === 'DEAD' || this.phase === 'MIGRATED') return null;
+    if (this.phase === 'RUGGED') {
+      this.phase = 'DEAD';
+      return null;
+    }
 
     if (this.hasMigrated) {
       this.phase = 'MIGRATED';
@@ -1173,8 +1195,14 @@ export class TokenSim {
     this.phase = this.hasEnteredFinal ? 'FINAL' : 'NEW';
 
     if (this.simTimeMs >= this.fateTimeoutSimMs) {
-      this.phase = 'RUGGED';
-      this.ruggedAtSimMs = this.simTimeMs;
+      if (this.ruggedAtSimMs == null) {
+        this.ruggedAtSimMs = this.simTimeMs;
+      }
+      if (this.lastMcapUsd <= MCAP_FLOOR_USD) {
+        this.phase = 'DEAD';
+        this.lastMcapUsd = MCAP_FLOOR_USD;
+        this.lastPriceUsd = MCAP_FLOOR_USD / SUPPLY;
+      }
     }
     return null;
   }
@@ -1321,9 +1349,7 @@ export class TokenSim {
   }
 
   quoteUserTrade(side: UserTradeSide, amountIn: number, slippageBps: number): UserTradeQuote {
-    if (this.phase === 'RUGGED' || this.phase === 'DEAD') {
-      return { ok: false, side, amountIn, reason: 'Token unavailable' };
-    }
+    if (this.phase === 'RUGGED') this.phase = 'DEAD';
     if (!Number.isFinite(amountIn) || amountIn <= 0) {
       return { ok: false, side, amountIn, reason: 'Invalid amount' };
     }
@@ -1355,9 +1381,7 @@ export class TokenSim {
   submitUserTrade(req: UserTradeSubmitRequest): UserTradeSubmitResult {
     const side = req.side;
     const amountIn = req.amountIn;
-    if (this.phase === 'RUGGED' || this.phase === 'DEAD') {
-      return { ok: false, side, amountIn, reason: 'Token unavailable' };
-    }
+    if (this.phase === 'RUGGED') this.phase = 'DEAD';
     if (!Number.isFinite(amountIn) || amountIn <= 0) {
       return { ok: false, side, amountIn, reason: 'Invalid amount' };
     }
@@ -1571,12 +1595,7 @@ export class TokenSim {
     fill: UserTradeFill;
     events: TokenChartEvent[];
   } {
-    if (this.phase === 'RUGGED' || this.phase === 'DEAD') {
-      return {
-        fill: { ok: false, side, requestedAmount: amount, reason: 'Token unavailable' },
-        events: [],
-      };
-    }
+    if (this.phase === 'RUGGED') this.phase = 'DEAD';
     if (!Number.isFinite(amount) || amount <= 0) {
       return {
         fill: { ok: false, side, requestedAmount: amount, reason: 'Invalid amount' },
