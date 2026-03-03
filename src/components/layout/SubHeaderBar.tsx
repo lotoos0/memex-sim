@@ -4,19 +4,13 @@ import HoverTooltip from '../ui/HoverTooltip';
 import { useFavoritesStore } from '../../store/favoritesStore';
 import { useTokenStore } from '../../store/tokenStore';
 import { useTradingStore } from '../../store/tradingStore';
+import SubHeaderTokenPill from './SubHeaderTokenPill';
 
 const PREVIEW_LIMIT = 5;
 
 function shortId(id: string): string {
   if (id.length <= 10) return id;
   return `${id.slice(0, 4)}...${id.slice(-4)}`;
-}
-
-function formatQty(qty: number): string {
-  if (!Number.isFinite(qty) || qty <= 0) return '0';
-  if (qty >= 1000) return `${(qty / 1000).toFixed(1)}k`;
-  if (qty >= 1) return qty.toFixed(0);
-  return qty.toFixed(2);
 }
 
 export default function SubHeaderBar() {
@@ -48,6 +42,33 @@ export default function SubHeaderBar() {
     navigate(`/token/${tokenId}`);
   };
 
+  const openPreview = useMemo(() => {
+    return openPreviewIds.map((tokenId) => {
+      const token = tokensById[tokenId];
+      const position = quickPositionsByTokenId[tokenId];
+      const label = token?.ticker || token?.name || shortId(tokenId);
+      const avgEntry = position?.avgEntryUsd;
+      const markPrice = token?.lastPriceUsd;
+      const pnlPct = Number.isFinite(avgEntry) && Number.isFinite(markPrice) && (avgEntry ?? 0) > 0
+        ? (((markPrice as number) / (avgEntry as number)) - 1) * 100
+        : null;
+      return {
+        tokenId,
+        label,
+        qty: position?.qty ?? null,
+        pnlPct,
+      };
+    });
+  }, [openPreviewIds, quickPositionsByTokenId, tokensById]);
+
+  const favoritePreview = useMemo(() => {
+    return favoritePreviewIds.map((tokenId) => {
+      const token = tokensById[tokenId];
+      const label = token?.ticker || token?.name || shortId(tokenId);
+      return { tokenId, label };
+    });
+  }, [favoritePreviewIds, tokensById]);
+
   const onSectionClick = (section: 'open' | 'watchlist') => {
     if (import.meta.env.DEV) {
       // Placeholder for Krok 3 drawer launch.
@@ -72,19 +93,17 @@ export default function SubHeaderBar() {
             {openPreviewIds.length === 0 ? (
               <span className="text-[11px] text-ax-text-dim">No open positions</span>
             ) : (
-              openPreviewIds.map((tokenId) => {
-                const token = tokensById[tokenId];
-                const label = token?.ticker || token?.name || shortId(tokenId);
-                const qty = quickPositionsByTokenId[tokenId]?.qty ?? 0;
+              openPreview.map((item) => {
                 return (
-                  <button
-                    key={`open-${tokenId}`}
-                    type="button"
-                    onClick={() => openToken(tokenId)}
-                    className="shrink-0 rounded border border-ax-border bg-ax-surface px-2 py-1 text-[11px] text-ax-text hover:border-[#4f6dff66]"
-                  >
-                    {label} <span className="text-ax-text-dim">({formatQty(qty)})</span>
-                  </button>
+                  <SubHeaderTokenPill
+                    key={`open-${item.tokenId}`}
+                    tokenId={item.tokenId}
+                    name={item.label}
+                    remainingQty={item.qty}
+                    pnlPct={item.pnlPct}
+                    showPositionMetrics
+                    onClick={() => openToken(item.tokenId)}
+                  />
                 );
               })
             )}
@@ -107,18 +126,14 @@ export default function SubHeaderBar() {
             {favoritePreviewIds.length === 0 ? (
               <span className="text-[11px] text-ax-text-dim">No favorites yet</span>
             ) : (
-              favoritePreviewIds.map((tokenId) => {
-                const token = tokensById[tokenId];
-                const label = token?.ticker || token?.name || shortId(tokenId);
+              favoritePreview.map((item) => {
                 return (
-                  <button
-                    key={`fav-${tokenId}`}
-                    type="button"
-                    onClick={() => openToken(tokenId)}
-                    className="shrink-0 rounded border border-ax-border bg-ax-surface px-2 py-1 text-[11px] text-ax-text hover:border-[#f5c54288]"
-                  >
-                    {label}
-                  </button>
+                  <SubHeaderTokenPill
+                    key={`fav-${item.tokenId}`}
+                    tokenId={item.tokenId}
+                    name={item.label}
+                    onClick={() => openToken(item.tokenId)}
+                  />
                 );
               })
             )}
