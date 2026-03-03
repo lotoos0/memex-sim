@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Star } from 'lucide-react';
 import HoverTooltip from '../ui/HoverTooltip';
@@ -38,26 +38,20 @@ export default function SubHeaderBar() {
       .filter(([tokenId, position]) => {
         if ((position?.qty ?? 0) <= 0) return false;
         const token = tokensById[tokenId];
-        if (!token) return false;
-        return token.phase !== 'DEAD' && token.phase !== 'RUGGED';
+        return Boolean(token);
       })
       .sort((a, b) => (b[1]?.updatedAtMs ?? 0) - (a[1]?.updatedAtMs ?? 0));
     return rows.map(([tokenId]) => tokenId);
   }, [quickPositionsByTokenId, tokensById]);
 
-  useEffect(() => {
-    if (mode === 'open' && openTokenIds.length === 0 && favoriteIds.length > 0) {
-      setMode('watchlist');
-      return;
-    }
-    if (mode === 'watchlist' && favoriteIds.length === 0 && openTokenIds.length > 0) {
-      setMode('open');
-    }
-  }, [favoriteIds.length, mode, openTokenIds.length]);
+  const validFavoriteIds = useMemo(
+    () => favoriteIds.filter((tokenId) => Boolean(tokensById[tokenId])),
+    [favoriteIds, tokensById]
+  );
 
   const favoritePreviewIds = useMemo(
-    () => favoriteIds.slice(0, PREVIEW_LIMIT),
-    [favoriteIds]
+    () => validFavoriteIds.slice(0, PREVIEW_LIMIT),
+    [validFavoriteIds]
   );
   const openPreviewIds = useMemo(
     () => openTokenIds.slice(0, PREVIEW_LIMIT),
@@ -97,7 +91,7 @@ export default function SubHeaderBar() {
     });
   }, [favoritePreviewIds, tokensById]);
 
-  const activeLabel = mode === 'open' ? `Active Positions (${openTokenIds.length})` : `Watchlist (${favoriteIds.length})`;
+  const activeLabel = mode === 'open' ? `Active Positions (${openTokenIds.length})` : `Watchlist (${validFavoriteIds.length})`;
   const activeEmptyLabel = mode === 'open' ? 'No open positions' : 'No favorites yet';
   const activeRows = mode === 'open' ? openPreview : favoritePreview;
 
@@ -115,7 +109,7 @@ export default function SubHeaderBar() {
               <LineChart size={13} />
             </button>
           </HoverTooltip>
-          <HoverTooltip label={`Watchlist (${favoriteIds.length})`}>
+          <HoverTooltip label={`Watchlist (${validFavoriteIds.length})`}>
             <button
               type="button"
               className={iconButtonClass(mode === 'watchlist')}

@@ -92,7 +92,6 @@ export default function PulsePage() {
       if ((pos?.qty ?? 0) <= 0) continue;
       const token = tokensById[tokenId];
       if (!token) continue;
-      if (token.phase === 'DEAD' || token.phase === 'RUGGED') continue;
       out.push({ token, updatedAtMs: pos.updatedAtMs ?? 0 });
     }
     out.sort((a, b) => b.updatedAtMs - a.updatedAtMs);

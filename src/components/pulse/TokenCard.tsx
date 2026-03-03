@@ -87,14 +87,12 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
   const unrealizedUsd = hasOpenPosition ? holdingUsd - quickPosition!.costBasisUsd : 0;
 
   const handleClick = () => {
-    if (isDead) return;
     setActive(token.id);
     navigate(`/token/${token.id}`);
   };
 
   const handleQuickBuy = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    if (isDead) return;
     quickBuy(token.id, quickBuyAmount, quickBuyOptions);
     setIsBuying(true);
     if (buyTimerRef.current != null) window.clearTimeout(buyTimerRef.current);
@@ -125,7 +123,7 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
         'flex flex-col gap-1 p-2.5 rounded border cursor-pointer transition-all',
         'hover:border-ax-border hover:bg-ax-surface2',
         isDead
-          ? 'border-ax-red/30 bg-ax-red-dim opacity-60 cursor-default'
+          ? 'border-ax-red/30 bg-ax-red-dim/70'
           : 'border-ax-border/50 bg-ax-surface',
       ].join(' ')}
     >

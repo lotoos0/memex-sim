@@ -25,9 +25,16 @@ function viewButtonClass(active: boolean): string {
 export default function PulseSubNav() {
   const [searchParams, setSearchParams] = useSearchParams();
   const view = sanitizePulseView(searchParams.get('view'));
-  const favoriteCount = useFavoritesStore((s) => s.favoriteIds.length);
+  const favoriteIds = useFavoritesStore((s) => s.favoriteIds);
   const quickPositionsByTokenId = useTradingStore((s) => s.quickPositionsByTokenId);
   const tokensById = useTokenStore((s) => s.tokensById);
+  const favoriteCount = useMemo(() => {
+    let count = 0;
+    for (let i = 0; i < favoriteIds.length; i++) {
+      if (tokensById[favoriteIds[i]!] != null) count += 1;
+    }
+    return count;
+  }, [favoriteIds, tokensById]);
   const positionCount = useMemo(() => {
     const rows = Object.entries(quickPositionsByTokenId);
     let open = 0;
@@ -36,7 +43,6 @@ export default function PulseSubNav() {
       if ((position?.qty ?? 0) <= 0) continue;
       const token = tokensById[tokenId];
       if (!token) continue;
-      if (token.phase === 'DEAD' || token.phase === 'RUGGED') continue;
       open += 1;
     }
     return open;
