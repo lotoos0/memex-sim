@@ -1129,7 +1129,11 @@ export class TokenSim {
   }
 
   private updatePhase(candleTsMs: number): TokenChartEvent | null {
-    if (this.phase === 'RUGGED' || this.phase === 'DEAD' || this.phase === 'MIGRATED') return null;
+    if (this.phase === 'DEAD' || this.phase === 'MIGRATED') return null;
+    if (this.phase === 'RUGGED') {
+      this.phase = 'DEAD';
+      return null;
+    }
 
     if (this.hasMigrated) {
       this.phase = 'MIGRATED';
@@ -1173,8 +1177,11 @@ export class TokenSim {
     this.phase = this.hasEnteredFinal ? 'FINAL' : 'NEW';
 
     if (this.simTimeMs >= this.fateTimeoutSimMs) {
-      this.phase = 'RUGGED';
+      this.phase = 'DEAD';
       this.ruggedAtSimMs = this.simTimeMs;
+      this.lastMcapUsd = MCAP_FLOOR_USD;
+      this.lastPriceUsd = MCAP_FLOOR_USD / SUPPLY;
+      this.recordPassiveTick(candleTsMs);
     }
     return null;
   }

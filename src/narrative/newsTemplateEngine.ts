@@ -98,7 +98,7 @@ export function renderPostText(
 
   return {
     templateId: `rug-${author.tone}-1`,
-    text: `${tokenLabel} rugged. Capital protection first.`,
-    tags: ['rug'],
+    text: `${tokenLabel} collapsed to floor and looks dead.`,
+    tags: ['rug', 'dead'],
   };
 }

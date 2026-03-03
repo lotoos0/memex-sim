@@ -13,7 +13,6 @@ import { getSessionBucket } from '../market/session';
 const TICK_MS = 200;
 const FEED_PUBLISH_MS = 1000;
 const SPAWN_INTERVAL_MS = 40_000;
-const RUGGED_LINGER_MS = 90_000;
 const MAX_NEW = 5;
 const MAX_FINAL = 5;
 const MAX_MIGRATED = 5;
@@ -38,7 +37,6 @@ class TokenRegistry {
   private activeTfSec = 1;
   private activeMetric: ChartMetric = 'mcap';
 
-  private ruggedAt = new Map<string, number>();
   private phaseByTokenId = new Map<string, TokenPhase>();
   private lastProcessedTradeMsByToken = new Map<string, number>();
   private narrativeByTokenId = new Map<string, TokenNarrativeState>();
@@ -101,9 +99,6 @@ class TokenRegistry {
         }
         this.phaseByTokenId.set(id, nextPhase);
 
-        if (sim.getPhase() === 'RUGGED' && !this.ruggedAt.has(id)) {
-          this.ruggedAt.set(id, Date.now());
-        }
       }
 
       const activeId = useTokenStore.getState().activeTokenId;
@@ -122,7 +117,6 @@ class TokenRegistry {
     this.feedHandle = setInterval(() => {
       this.updateMarketSessionBucket();
       this.publishFeed();
-      this.cleanupDead();
     }, FEED_PUBLISH_MS);
 
     this.spawnHandle = setInterval(() => {
@@ -136,7 +130,6 @@ class TokenRegistry {
     if (this.spawnHandle) clearInterval(this.spawnHandle);
     this.tickHandle = this.feedHandle = this.spawnHandle = null;
     this.tokens.clear();
-    this.ruggedAt.clear();
     this.tradeOrders.clear();
     this.phaseByTokenId.clear();
     this.lastProcessedTradeMsByToken.clear();
@@ -291,22 +284,6 @@ class TokenRegistry {
     return getSessionBucket(nowMs);
   }
 
-  private cleanupDead(): void {
-    const now = Date.now();
-    for (const [id, rugTime] of this.ruggedAt) {
-      if (now - rugTime > RUGGED_LINGER_MS) {
-        this.tokens.delete(id);
-        this.ruggedAt.delete(id);
-        this.phaseByTokenId.delete(id);
-        this.lastProcessedTradeMsByToken.delete(id);
-        this.narrativeByTokenId.delete(id);
-        usePostStore.getState().clearTokenPosts(id);
-        useTokenStore.getState().removeToken(id);
-        setTimeout(() => this.maybeSpawn(), 1000);
-      }
-    }
-  }
-
   private pruneTradeOrders(): void {
     while (this.tradeOrders.size > MAX_ORDER_SNAPSHOTS) {
       const firstKey = this.tradeOrders.keys().next().value;
@@ -355,7 +332,7 @@ class TokenRegistry {
   }
 
   private postPhaseChange(sim: TokenSim, _prevPhase: TokenPhase, nextPhase: TokenPhase): void {
-    if (nextPhase !== 'MIGRATED' && nextPhase !== 'RUGGED') return;
+    if (nextPhase !== 'MIGRATED' && nextPhase !== 'RUGGED' && nextPhase !== 'DEAD') return;
     this.emitNarrative({
       kind: nextPhase === 'MIGRATED' ? 'TOKEN_MIGRATION' : 'TOKEN_RUG',
       tokenId: sim.meta.id,
