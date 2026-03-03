@@ -75,15 +75,11 @@ export function getFateTimeoutSimMs(fate: TokenFate, rng: RNG): number {
 }
 
 export function getStartingMcapUsd(fate: TokenFate, rng: RNG): number {
-  switch (fate) {
-    // Scam-like launches start immediately at 1m+ mcap.
-    case 'QUICK_RUG':   return 1_000_000 + rng.next() * 2_500_000;
-    // "Normal/healthy" launches stay low and grow from there.
-    case 'SHORT':       return 2_000 + rng.next() * 18_000;
-    case 'NORMAL':      return 3_000 + rng.next() * 32_000;
-    // Rare stronger launch (still below default 100k cap at spawn).
-    case 'LONG_RUNNER': return 8_000 + rng.next() * 52_000;
-  }
+  // All tokens start from the same launch point.
+  // Any explosive move (including scam-like 2k -> 1m) should happen via candle flow, not spawn baseline.
+  void fate;
+  void rng;
+  return 2_000;
 }
 
 export type InitialRegime = 'bull' | 'bear' | 'range' | 'mania' | 'rugRisk';

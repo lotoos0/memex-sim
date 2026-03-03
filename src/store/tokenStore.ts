@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { TokenMeta, TokenRuntime, TokenPhase, TokenState } from '../tokens/types';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
 import { MAX_EVENTS_PER_TOKEN } from '../chart/tokenChartEvents';
+import type { SessionBucket } from '../market/session';
 
 export interface TokenSimTradeRow {
   id: string;
@@ -45,12 +46,16 @@ interface TokenStoreState {
   eventsByTokenId: Record<string, TokenChartEvent[]>;
   marketByTokenId: Record<string, TokenMarketSnapshot>;
   activeTokenId: string | null;
+  marketSessionBucket: SessionBucket;
+  marketSessionBucketOverride: SessionBucket | null;
 
   addToken: (meta: TokenMeta, runtime: TokenRuntime) => void;
   updateToken: (id: string, runtime: TokenRuntime) => void;
   batchUpdateTokens: (updates: Record<string, TokenRuntime>) => void;
   setTokenMarketSnapshot: (tokenId: string, snapshot: TokenMarketSnapshot) => void;
   batchUpdateTokenMarketSnapshots: (updates: Record<string, TokenMarketSnapshot>) => void;
+  setMarketSessionBucket: (bucket: SessionBucket) => void;
+  setMarketSessionBucketOverride: (bucket: SessionBucket | null) => void;
   removeToken: (id: string) => void;
   setActiveToken: (id: string | null) => void;
   pushTokenEvents: (tokenId: string, events: TokenChartEvent[]) => void;
@@ -61,6 +66,8 @@ export const useTokenStore = create<TokenStoreState>((set) => ({
   eventsByTokenId: {},
   marketByTokenId: {},
   activeTokenId: null,
+  marketSessionBucket: 'OFF',
+  marketSessionBucketOverride: null,
 
   addToken: (meta, runtime) =>
     set((s) => ({ tokensById: { ...s.tokensById, [meta.id]: { ...meta, ...runtime } } })),
@@ -98,6 +105,12 @@ export const useTokenStore = create<TokenStoreState>((set) => ({
       }
       return { marketByTokenId: next };
     }),
+
+  setMarketSessionBucket: (bucket) =>
+    set((s) => (s.marketSessionBucket === bucket ? s : { marketSessionBucket: bucket })),
+
+  setMarketSessionBucketOverride: (bucket) =>
+    set((s) => (s.marketSessionBucketOverride === bucket ? s : { marketSessionBucketOverride: bucket })),
 
   removeToken: (id) =>
     set((s) => {
@@ -140,3 +153,6 @@ export const selectActiveToken = (s: TokenStoreState) =>
 
 export const selectTokenMarketSnapshot = (tokenId: string) => (s: TokenStoreState) =>
   s.marketByTokenId[tokenId] ?? null;
+
+export const selectMarketSessionBucket = (s: TokenStoreState) => s.marketSessionBucket;
+export const selectMarketSessionBucketOverride = (s: TokenStoreState) => s.marketSessionBucketOverride;

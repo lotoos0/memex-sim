@@ -8,6 +8,7 @@ import { TokenSim, type MarketMicroSnapshot, type UserTradeExecutionNotice, type
 import type { TokenPhase } from './types';
 import type { NarrativeEvent, NarrativePost, TokenNarrativeState } from '../narrative/narrativeTypes';
 import { applyNarrativeEvent, createTokenNarrativeState } from '../narrative/tokenNarrative';
+import { getSessionBucket } from '../market/session';
 
 const TICK_MS = 200;
 const FEED_PUBLISH_MS = 1000;
@@ -46,12 +47,15 @@ class TokenRegistry {
     if (this.tickHandle) return;
 
     this.spawnBatch(INITIAL_TOKENS);
+    this.updateMarketSessionBucket();
 
     this.tickHandle = setInterval(() => {
       const realDtSec = TICK_MS / 1000;
+      const sessionBucket = this.resolveMarketSessionBucket(Date.now());
+      useTokenStore.getState().setMarketSessionBucket(sessionBucket);
 
       for (const [id, sim] of this.tokens) {
-        const events = sim.tick(realDtSec);
+        const events = sim.tick(realDtSec, sessionBucket);
         if (events.length > 0) {
           useTokenStore.getState().pushTokenEvents(id, events);
         }
@@ -116,6 +120,7 @@ class TokenRegistry {
     }, TICK_MS);
 
     this.feedHandle = setInterval(() => {
+      this.updateMarketSessionBucket();
       this.publishFeed();
       this.cleanupDead();
     }, FEED_PUBLISH_MS);
@@ -273,6 +278,17 @@ class TokenRegistry {
     const store = useTokenStore.getState();
     store.batchUpdateTokens(updates);
     store.batchUpdateTokenMarketSnapshots(marketUpdates);
+  }
+
+  private updateMarketSessionBucket(): void {
+    const bucket = this.resolveMarketSessionBucket(Date.now());
+    useTokenStore.getState().setMarketSessionBucket(bucket);
+  }
+
+  private resolveMarketSessionBucket(nowMs: number): ReturnType<typeof getSessionBucket> {
+    const override = useTokenStore.getState().marketSessionBucketOverride;
+    if (override) return override;
+    return getSessionBucket(nowMs);
   }
 
   private cleanupDead(): void {

@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
-import { useTokenStore, selectActiveToken } from '../store/tokenStore';
+import {
+  useTokenStore,
+  selectActiveToken,
+  selectMarketSessionBucket,
+  selectMarketSessionBucketOverride,
+} from '../store/tokenStore';
 import Chart from '../components/chart/Chart';
 import TradeSidebar from '../components/token/TradeSidebar';
 import BottomTabs from '../components/token/BottomTabs';
@@ -11,10 +16,18 @@ import TokenAvatar from '../components/common/TokenAvatar';
 import { registry } from '../tokens/registry';
 import type { CurveDebugSnapshot } from '../tokens/tokenSim';
 import { useTradingStore, type QuickTrade } from '../store/tradingStore';
+import { SESSION_BUCKET_LABEL, type SessionBucket } from '../market/session';
 
 const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 const INSTANT_TRADE_ENABLED_STORAGE_KEY = 'memex:instant-trade:enabled';
 const TRADES_TABLE_ENABLED_STORAGE_KEY = 'memex:trades-table:enabled';
+const SESSION_OVERRIDE_CYCLE: Array<SessionBucket | null> = [null, 'EU', 'NA', 'OVERLAP', 'OFF'];
+const SESSION_BUCKET_CLASS: Record<SessionBucket, string> = {
+  EU: 'text-[#4fa7ff] bg-[#4fa7ff1c] border-[#4fa7ff55]',
+  NA: 'text-[#ff8a3d] bg-[#ff8a3d1a] border-[#ff8a3d55]',
+  OVERLAP: 'text-ax-green bg-[#00d4a118] border-[#00d4a155]',
+  OFF: 'text-ax-text-dim bg-ax-bg border-ax-border',
+};
 
 function fmtUsd(v: number): string {
   if (!Number.isFinite(v)) return '$0';
@@ -51,6 +64,9 @@ export default function TokenPage() {
   const location = useLocation();
   const setActive = useTokenStore(s => s.setActiveToken);
   const token = useTokenStore(selectActiveToken);
+  const marketSessionBucket = useTokenStore(selectMarketSessionBucket);
+  const marketSessionBucketOverride = useTokenStore(selectMarketSessionBucketOverride);
+  const setMarketSessionBucketOverride = useTokenStore(s => s.setMarketSessionBucketOverride);
   const selectQuickPosition = useMemo(
     () => (s: ReturnType<typeof useTradingStore.getState>) => (id ? (s.quickPositionsByTokenId[id] ?? null) : null),
     [id]
@@ -130,6 +146,11 @@ export default function TokenPage() {
   }
 
   const isRugged = token.phase === 'RUGGED';
+  const cycleSessionOverride = () => {
+    const currentIdx = SESSION_OVERRIDE_CYCLE.findIndex(v => v === marketSessionBucketOverride);
+    const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % SESSION_OVERRIDE_CYCLE.length : 0;
+    setMarketSessionBucketOverride(SESSION_OVERRIDE_CYCLE[nextIdx]!);
+  };
   const positionQty = quickPosition?.qty ?? 0;
   const hasOpenPosition = positionQty > 0;
   const holdingUsd = hasOpenPosition ? positionQty * token.lastPriceUsd : 0;
@@ -159,6 +180,14 @@ export default function TokenPage() {
                 RUGGED
               </span>
             )}
+            <span
+              className={[
+                'text-[10px] font-bold px-1.5 py-0.5 rounded border',
+                SESSION_BUCKET_CLASS[marketSessionBucket],
+              ].join(' ')}
+            >
+              {SESSION_BUCKET_LABEL[marketSessionBucket]}
+            </span>
             <span className="text-ax-text-dim text-xs">{token.name}</span>
           </div>
 
@@ -187,17 +216,31 @@ export default function TokenPage() {
         </div>
 
         {isDev && (
-          <button
-            onClick={() => setShowCurveDebug(v => !v)}
-            className={[
-              'ml-auto text-[11px] px-2 py-1 rounded border transition-colors',
-              showCurveDebug
-                ? 'border-ax-green text-ax-green bg-[#00d4a118]'
-                : 'border-ax-border text-ax-text-dim hover:text-ax-text',
-            ].join(' ')}
-          >
-            Curve Debug
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={cycleSessionOverride}
+              className={[
+                'text-[11px] px-2 py-1 rounded border transition-colors',
+                marketSessionBucketOverride
+                  ? 'border-[#4fa7ff77] text-[#9ac9ff] bg-[#4fa7ff1c]'
+                  : 'border-ax-border text-ax-text-dim hover:text-ax-text',
+              ].join(' ')}
+              title="Cycle session debug override: AUTO -> EU -> NA -> OVERLAP -> OFF"
+            >
+              Session {marketSessionBucketOverride ?? 'AUTO'}
+            </button>
+            <button
+              onClick={() => setShowCurveDebug(v => !v)}
+              className={[
+                'text-[11px] px-2 py-1 rounded border transition-colors',
+                showCurveDebug
+                  ? 'border-ax-green text-ax-green bg-[#00d4a118]'
+                  : 'border-ax-border text-ax-text-dim hover:text-ax-text',
+              ].join(' ')}
+            >
+              Curve Debug
+            </button>
+          </div>
         )}
       </div>
 

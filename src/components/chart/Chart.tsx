@@ -14,7 +14,7 @@ import {
 } from 'lightweight-charts';
 import { registry, type ChartMetric } from '../../tokens/registry';
 import type { Candle } from '../../engine/types';
-import { useTokenStore } from '../../store/tokenStore';
+import { useTokenStore, selectMarketSessionBucket } from '../../store/tokenStore';
 import {
   useTradingStore,
   selectAvgEntryPriceByTokenId,
@@ -24,6 +24,7 @@ import {
 } from '../../store/tradingStore';
 import type { TokenChartEvent } from '../../chart/tokenChartEvents';
 import { toSeriesMarkers, type DisplayOptions } from '../../chart/tokenChartEvents';
+import { SESSION_BUCKET_LABEL, type SessionBucket } from '../../market/session';
 
 const TF_OPTIONS = [
   { label: '1s', sec: 1 },
@@ -46,6 +47,12 @@ const AVG_EXIT_PRICE_LINE = {
 const MIGRATION_LINE = {
   title: 'Migration Price',
   color: '#4c7dffdd',
+};
+const SESSION_BUCKET_CLASS: Record<SessionBucket, string> = {
+  EU: 'text-[#4fa7ff] bg-[#4fa7ff1c] border-[#4fa7ff55]',
+  NA: 'text-[#ff8a3d] bg-[#ff8a3d1a] border-[#ff8a3d55]',
+  OVERLAP: 'text-ax-green bg-[#00d4a118] border-[#00d4a155]',
+  OFF: 'text-ax-text-dim bg-ax-bg border-ax-border',
 };
 
 type Metric = 'mcap' | 'price';
@@ -92,6 +99,7 @@ export default function Chart({ tokenId }: Props) {
   const selectAvgSellPrice = useMemo(() => selectAvgSellPriceByTokenId(tokenId), [tokenId]);
   const selectAvgSellMcap = useMemo(() => selectAvgSellMcapByTokenId(tokenId), [tokenId]);
   const tokenEvents = useTokenStore(selectTokenEvents);
+  const marketSessionBucket = useTokenStore(selectMarketSessionBucket);
   const avgEntryPrice = useTradingStore(selectAvgEntryPrice);
   const avgEntryMcap = useTradingStore(selectAvgEntryMcap);
   const avgSellPrice = useTradingStore(selectAvgSellPrice);
@@ -545,6 +553,14 @@ export default function Chart({ tokenId }: Props) {
             {metric === 'mcap' ? '$' + fmtCompact(lastDisplay) : '$' + fmtPrice(lastDisplay)}
           </span>
         )}
+        <span
+          className={[
+            'ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded border',
+            SESSION_BUCKET_CLASS[marketSessionBucket],
+          ].join(' ')}
+        >
+          {SESSION_BUCKET_LABEL[marketSessionBucket]}
+        </span>
       </div>
 
       <div ref={containerRef} className="flex-1 min-h-0" />

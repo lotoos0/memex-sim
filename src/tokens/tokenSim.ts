@@ -6,6 +6,7 @@ import {
 } from './types';
 import { stepMarket, type FlowRegime } from './marketModel';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
+import { SESSION_SIM_PROFILE, getSessionBucket, type SessionBucket, type SessionSimProfile } from '../market/session';
 
 interface StatBucket {
   simMs: number;
@@ -345,12 +346,14 @@ export class TokenSim {
   // Rolling 5-min stats window (in simMs)
   private statWindow: StatBucket[] = [];
   private readonly WINDOW_SIM_MS = 5 * 60_000;
+  private sessionBucket: SessionBucket = 'OFF';
 
   constructor(meta: TokenMeta, startMcapUsd: number, fateTimeoutSimMs: number) {
     this.meta = meta;
     this.fateTimeoutSimMs = fateTimeoutSimMs;
     this.spawnRealMs = Date.now();
     this.lastTickRealMs = this.spawnRealMs;
+    this.sessionBucket = getSessionBucket(this.spawnRealMs);
     this.rng = new RNG(meta.id);
 
     // Token-specific baseline params.
@@ -380,7 +383,7 @@ export class TokenSim {
     this.seedGenesisHolders();
     this.priceAtSpawn = this.lastPriceUsd;
     this.phase = 'NEW';
-    this.rollRegime();
+    this.rollRegime(this.getSessionProfile());
 
     // Seed initial flat candle so first dev buy grows from launch baseline.
     this.aggr1s.pushTick(this.spawnRealMs, startPriceUsd, 0);
@@ -393,7 +396,9 @@ export class TokenSim {
     this.mcapAggr1m.pushTick(this.spawnRealMs, this.lastMcapUsd, 0);
   }
 
-  tick(fallbackRealDtSec: number): TokenChartEvent[] {
+  tick(fallbackRealDtSec: number, sessionBucket: SessionBucket = getSessionBucket(Date.now())): TokenChartEvent[] {
+    this.sessionBucket = sessionBucket;
+    const sessionProfile = this.getSessionProfile();
     if (this.phase === 'RUGGED' || this.phase === 'DEAD') {
       if (this.pendingUserOrders.length > 0) {
         const nowMs = Date.now();
@@ -434,7 +439,7 @@ export class TokenSim {
     this.simTimeMs += simDtSec * 1000;
     const queuedEvents = this.processPendingUserTrades(nowMs);
 
-    this.advanceRegime(realDtSec);
+    this.advanceRegime(realDtSec, sessionProfile);
     const phaseModel = this.getPhaseModel();
     this.attention = Math.max(0.12, this.attention * Math.exp(-phaseModel.attentionDecayPerSec * realDtSec));
 
@@ -451,11 +456,13 @@ export class TokenSim {
     let volMul = phaseModel.volMul * regimeVolMul;
     let liquidityMul = phaseModel.liquidityMul;
     let driftPerSec = regimeDriftPerSec + this.archetypeProfile.driftBiasPerSec;
-    let effectiveBuyBias = regimeBuyBias;
+    let effectiveBuyBias = clamp(regimeBuyBias + sessionProfile.buyBiasShift, 0.14, 0.86);
     const inPostMigrationWarmup = this.phase === 'MIGRATED' && this.postMigrationWarmupMs > 0;
 
     lambdaMul *= this.archetypeProfile.lambdaMul;
     volMul *= this.archetypeProfile.volMul;
+    lambdaMul *= sessionProfile.tempoMul;
+    volMul *= Math.max(0.6, 0.9 + (sessionProfile.tempoMul - 1) * 0.45);
 
     if (this.postMigrationChaosLeftMs > 0) {
       this.postMigrationChaosLeftMs = Math.max(0, this.postMigrationChaosLeftMs - realDtSec * 1000);
@@ -491,8 +498,12 @@ export class TokenSim {
     }
 
     const heatRatio = mcapHeat / (1 + mcapHeat);
-    const tradeSizeMul = Math.max(0.12, flowPowerMul * (1 - 0.45 * heatRatio));
-    const impactMul = Math.max(0.45, 0.75 + 0.25 * flowPowerMul - 0.2 * heatRatio);
+    const sessionTradeSizeMul = 0.6 + sessionProfile.tempoMul * 0.4;
+    const tradeSizeMul = Math.max(0.12, flowPowerMul * (1 - 0.45 * heatRatio) * sessionTradeSizeMul);
+    const impactMul = Math.max(
+      0.45,
+      (0.75 + 0.25 * flowPowerMul - 0.2 * heatRatio) * (0.78 + 0.28 * sessionProfile.whaleMul)
+    );
 
     const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
     const candleTsMs = nowMs;
@@ -526,7 +537,7 @@ export class TokenSim {
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
       buyBias: effectiveBuyBias,
       impactK: this.impactK * impactMul,
-      whaleChance: (isLaunchTick || inPostMigrationWarmup) ? 0 : this.getWhaleChance(inMigrationChaos),
+      whaleChance: (isLaunchTick || inPostMigrationWarmup) ? 0 : this.getWhaleChance(inMigrationChaos, sessionProfile),
       externalFlow: devFlow?.externalFlow,
     });
 
@@ -893,27 +904,9 @@ export class TokenSim {
   }
 
   private seedGenesisHolders(): void {
-    const holders = 10 + Math.floor(this.rng.next() * 21); // 10..30
-    const seedTsMs = this.spawnRealMs - 1_500;
-    for (let i = 0; i < holders; i++) {
-      const walletId = this.createWalletId('g');
-      const targetUsd = 5 + this.rng.next() * 45; // 5..50 USD
-      this.sanitizeCurveState();
-      const buy = this.executeCurveBuy(targetUsd);
-      if (buy.baseInUsd <= 0 || buy.tokensOut <= 0) continue;
-      this.sanitizeCurveState();
-      this.bondingProgress = this.getCurveProgress();
-      this.lastPriceUsd = this.getCurvePriceUsd();
-      this.lastMcapUsd = this.getCurveMcapUsd();
-      this.applyWalletDelta(walletId, buy.tokensOut, seedTsMs);
-      this.recordWalletTradeStats(walletId, 'BUY', buy.tokensOut, buy.baseInUsd, this.lastPriceUsd, seedTsMs);
-      this.lastCurveSwap = {
-        direction: 'BUY',
-        amountIn: buy.baseInUsd,
-        amountOut: buy.tokensOut,
-        simMs: this.simTimeMs,
-      };
-    }
+    // Keep launch baseline deterministic (2k mcap from generator).
+    // Holders should be created by live market flow, not pre-launch simulated buys.
+    return;
   }
 
   private recordPassiveTick(candleTsMs: number): void {
@@ -952,40 +945,66 @@ export class TokenSim {
     };
   }
 
-  private advanceRegime(realDtSec: number): void {
-    this.regimeTtlSec -= realDtSec;
-    if (this.regimeTtlSec <= 0) this.rollRegime();
+  private getSessionProfile(): SessionSimProfile {
+    return SESSION_SIM_PROFILE[this.sessionBucket] ?? SESSION_SIM_PROFILE.OFF;
   }
 
-  private rollRegime(): void {
+  private advanceRegime(realDtSec: number, sessionProfile: SessionSimProfile): void {
+    if (
+      this.regime === 'IMPULSE'
+      && sessionProfile.fakeoutChancePerSec > 0
+      && this.rng.next() < sessionProfile.fakeoutChancePerSec * realDtSec
+    ) {
+      this.regime = this.rng.next() < 0.82 ? 'PULLBACK' : 'DUMP';
+      this.regimeTtlSec = 1 + this.rng.next() * 4;
+      return;
+    }
+    this.regimeTtlSec -= realDtSec;
+    if (this.regimeTtlSec <= 0) this.rollRegime(sessionProfile);
+  }
+
+  private rollRegime(sessionProfile: SessionSimProfile = this.getSessionProfile()): void {
     const u = this.rng.next();
     if (this.archetype === 'DOA') {
       this.regime = u < 0.12 ? 'IMPULSE' : u < 0.75 ? 'PAUSE' : 'DUMP';
       this.regimeTtlSec = 4 + this.rng.next() * 18;
+      this.applySessionRegimeTtl(sessionProfile);
       return;
     }
     if (this.archetype === 'SLOW_COOK') {
       this.regime = u < 0.2 ? 'IMPULSE' : u < 0.62 ? 'PAUSE' : u < 0.93 ? 'PULLBACK' : 'DUMP';
       this.regimeTtlSec = 5 + this.rng.next() * 16;
+      this.applySessionRegimeTtl(sessionProfile);
       return;
     }
     if (this.archetype === 'CHAOS') {
       this.regime = u < 0.3 ? 'IMPULSE' : u < 0.42 ? 'PAUSE' : u < 0.75 ? 'PULLBACK' : 'DUMP';
       this.regimeTtlSec = 2 + this.rng.next() * 10;
+      this.applySessionRegimeTtl(sessionProfile);
       return;
     }
     if (this.phase === 'MIGRATED') {
       this.regime = u < 0.15 ? 'IMPULSE' : u < 0.65 ? 'PAUSE' : u < 0.92 ? 'PULLBACK' : 'DUMP';
       this.regimeTtlSec = 4 + this.rng.next() * 14;
+      this.applySessionRegimeTtl(sessionProfile);
       return;
     }
     if (this.phase === 'FINAL') {
       this.regime = u < 0.22 ? 'IMPULSE' : u < 0.48 ? 'PAUSE' : u < 0.85 ? 'PULLBACK' : 'DUMP';
       this.regimeTtlSec = 3 + this.rng.next() * 12;
+      this.applySessionRegimeTtl(sessionProfile);
       return;
     }
     this.regime = u < 0.4 ? 'IMPULSE' : u < 0.72 ? 'PAUSE' : u < 0.92 ? 'PULLBACK' : 'DUMP';
     this.regimeTtlSec = 2 + this.rng.next() * 9;
+    this.applySessionRegimeTtl(sessionProfile);
+  }
+
+  private applySessionRegimeTtl(sessionProfile: SessionSimProfile): void {
+    if (this.regime === 'IMPULSE') {
+      this.regimeTtlSec *= sessionProfile.impulseTtlMul;
+    }
+    this.regimeTtlSec = clamp(this.regimeTtlSec, 1.2, 36);
   }
 
   private getRegimeDriftPerSec(): number {
@@ -1036,11 +1055,16 @@ export class TokenSim {
     return this.regime === 'IMPULSE' ? 0.07 : this.regime === 'DUMP' ? 0.06 : 0.025;
   }
 
-  private getWhaleChance(inMigrationChaos: boolean): number {
-    if (inMigrationChaos) return this.regime === 'IMPULSE' ? 0.04 : this.regime === 'DUMP' ? 0.035 : 0.025;
-    if (this.phase === 'MIGRATED') return this.regime === 'IMPULSE' ? 0.012 : this.regime === 'PAUSE' ? 0.006 : 0.009;
-    if (this.phase === 'FINAL') return this.regime === 'IMPULSE' ? 0.014 : this.regime === 'PAUSE' ? 0.007 : 0.011;
-    return this.regime === 'IMPULSE' ? 0.015 : this.regime === 'PAUSE' ? 0.008 : 0.012;
+  private getWhaleChance(inMigrationChaos: boolean, sessionProfile: SessionSimProfile): number {
+    let chance: number;
+    if (inMigrationChaos) chance = this.regime === 'IMPULSE' ? 0.04 : this.regime === 'DUMP' ? 0.035 : 0.025;
+    else if (this.phase === 'MIGRATED') chance = this.regime === 'IMPULSE' ? 0.012 : this.regime === 'PAUSE' ? 0.006 : 0.009;
+    else if (this.phase === 'FINAL') chance = this.regime === 'IMPULSE' ? 0.014 : this.regime === 'PAUSE' ? 0.007 : 0.011;
+    else chance = this.regime === 'IMPULSE' ? 0.015 : this.regime === 'PAUSE' ? 0.008 : 0.012;
+
+    chance *= sessionProfile.whaleMul;
+    if (this.regime === 'DUMP') chance *= sessionProfile.nukeChanceMul;
+    return clamp(chance, 0, 0.16);
   }
 
   private buildDevFlow(
@@ -1117,19 +1141,22 @@ export class TokenSim {
     }
 
     if ((this.bondingProgress >= MIGRATE_PROGRESS || this.curveRealToken <= CURVE_TOKEN_EPS) && !this.hasMigrated) {
+      const sessionProfile = this.getSessionProfile();
       this.hasMigrated = true;
       this.phase = 'MIGRATED';
       this.postMigrationWarmupMs = POST_MIGRATION_WARMUP_MS;
       // Seed post-migration liquidity from curve reserves to avoid first-tick teleport.
       const handoffLiquidity = Math.max(5_000, (this.curveVirtualBase + this.curveRealBase) * 3);
       this.baseLiquidityUsd = Math.max(this.baseLiquidityUsd, handoffLiquidity);
-      this.rollRegime();
-      if (this.rng.next() < this.archetypeProfile.migrationChaosChance) {
+      this.rollRegime(sessionProfile);
+      const migrationChaosChance = clamp(this.archetypeProfile.migrationChaosChance * sessionProfile.nukeChanceMul, 0, 0.98);
+      if (this.rng.next() < migrationChaosChance) {
         this.postMigrationChaosLeftMs = 8_000 + this.rng.next() * 17_000;
       } else {
         this.postMigrationChaosLeftMs = 0;
       }
-      if (this.rng.next() < this.archetypeProfile.deathSpiralChance) {
+      const deathSpiralChance = clamp(this.archetypeProfile.deathSpiralChance * sessionProfile.nukeChanceMul, 0, 0.98);
+      if (this.rng.next() < deathSpiralChance) {
         this.deathSpiralLeftMs = 5_000 + this.rng.next() * 15_000;
       } else {
         this.deathSpiralLeftMs = 0;
