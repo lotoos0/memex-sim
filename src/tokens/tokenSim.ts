@@ -415,8 +415,9 @@ export class TokenSim {
     this.simTimeMs += simDtSec * 1000;
     const queuedEvents = this.processPendingUserTrades(nowMs);
     const inDeadMode = this.phase === 'DEAD';
+    const inCollapseMode = !inDeadMode && this.ruggedAtSimMs != null;
     const hasUserBuyEvent = queuedEvents.some((ev) => ev.type === 'USER_BUY');
-    if (inDeadMode && hasUserBuyEvent) {
+    if ((inDeadMode || inCollapseMode) && hasUserBuyEvent) {
       this.deadUserReboundMs = Math.max(this.deadUserReboundMs, 8_000 + this.rng.next() * 14_000);
     }
 
@@ -464,6 +465,24 @@ export class TokenSim {
       this.postMigrationWarmupMs = Math.max(0, this.postMigrationWarmupMs - realDtSec * 1000);
       volMul *= 0.5;
       lambdaMul *= 0.9;
+    }
+
+    if (inCollapseMode) {
+      const collapseAgeMs = Math.max(0, this.simTimeMs - (this.ruggedAtSimMs ?? this.simTimeMs));
+      const collapseFade = clamp(collapseAgeMs / 120_000, 0, 1);
+      lambdaMul *= 0.45 - collapseFade * 0.2;
+      volMul *= 0.55;
+      liquidityMul *= 0.62;
+      driftPerSec -= 0.09;
+      effectiveBuyBias = clamp(effectiveBuyBias - 0.34, 0.05, 0.28);
+
+      if (this.deadUserReboundMs > 0) {
+        this.deadUserReboundMs = Math.max(0, this.deadUserReboundMs - realDtSec * 1000);
+        lambdaMul *= 1.65;
+        volMul *= 1.25;
+        driftPerSec += 0.01;
+        effectiveBuyBias = clamp(effectiveBuyBias + 0.18, 0.08, 0.5);
+      }
     }
 
     if (inDeadMode) {
@@ -518,7 +537,7 @@ export class TokenSim {
       realDtSec,
       effectiveBuyBias,
       isLaunchTick,
-      !inPostMigrationWarmup && !inDeadMode
+      !inPostMigrationWarmup && !inDeadMode && !inCollapseMode
     );
     const prevPriceUsd = this.lastPriceUsd;
 
@@ -542,7 +561,7 @@ export class TokenSim {
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
       buyBias: effectiveBuyBias,
       impactK: this.impactK * impactMul,
-      whaleChance: (isLaunchTick || inPostMigrationWarmup || inDeadMode) ? 0 : this.getWhaleChance(inMigrationChaos, sessionProfile),
+      whaleChance: (isLaunchTick || inPostMigrationWarmup || inDeadMode || inCollapseMode) ? 0 : this.getWhaleChance(inMigrationChaos, sessionProfile),
       externalFlow: devFlow?.externalFlow,
     });
 
@@ -584,7 +603,6 @@ export class TokenSim {
     const targetSellUsd = Math.max(0, Number.isFinite(input.targetSellUsd) ? input.targetSellUsd : 0);
     const totalUsd = targetBuyUsd + targetSellUsd;
     if (totalUsd <= 1e-6) {
-      this.recordPassiveTick(input.candleTsMs);
       return;
     }
 
@@ -658,9 +676,7 @@ export class TokenSim {
       }
     }
 
-    if (executedTrades === 0) {
-      this.recordPassiveTick(input.candleTsMs);
-    }
+    if (executedTrades === 0) return;
   }
 
   private splitNotional(totalUsd: number, parts: number): number[] {
@@ -912,17 +928,6 @@ export class TokenSim {
     // Keep launch baseline deterministic (2k mcap from generator).
     // Holders should be created by live market flow, not pre-launch simulated buys.
     return;
-  }
-
-  private recordPassiveTick(candleTsMs: number): void {
-    this.aggr1s.pushTick(candleTsMs, this.lastPriceUsd, 0);
-    this.aggr15s.pushTick(candleTsMs, this.lastPriceUsd, 0);
-    this.aggr30s.pushTick(candleTsMs, this.lastPriceUsd, 0);
-    this.aggr1m.pushTick(candleTsMs, this.lastPriceUsd, 0);
-    this.mcapAggr1s.pushTick(candleTsMs, this.lastMcapUsd, 0);
-    this.mcapAggr15s.pushTick(candleTsMs, this.lastMcapUsd, 0);
-    this.mcapAggr30s.pushTick(candleTsMs, this.lastMcapUsd, 0);
-    this.mcapAggr1m.pushTick(candleTsMs, this.lastMcapUsd, 0);
   }
 
   private getPhaseModel(): PhaseModel {
@@ -1190,11 +1195,14 @@ export class TokenSim {
     this.phase = this.hasEnteredFinal ? 'FINAL' : 'NEW';
 
     if (this.simTimeMs >= this.fateTimeoutSimMs) {
-      this.phase = 'DEAD';
-      this.ruggedAtSimMs = this.simTimeMs;
-      this.lastMcapUsd = MCAP_FLOOR_USD;
-      this.lastPriceUsd = MCAP_FLOOR_USD / SUPPLY;
-      this.recordPassiveTick(candleTsMs);
+      if (this.ruggedAtSimMs == null) {
+        this.ruggedAtSimMs = this.simTimeMs;
+      }
+      if (this.lastMcapUsd <= MCAP_FLOOR_USD * 1.05) {
+        this.phase = 'DEAD';
+        this.lastMcapUsd = MCAP_FLOOR_USD;
+        this.lastPriceUsd = MCAP_FLOOR_USD / SUPPLY;
+      }
     }
     return null;
   }
