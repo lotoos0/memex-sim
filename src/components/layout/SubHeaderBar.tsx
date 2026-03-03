@@ -91,15 +91,13 @@ export default function SubHeaderBar() {
     });
   }, [favoritePreviewIds, tokensById]);
 
-  const activeLabel = mode === 'open' ? `Active Positions (${openTokenIds.length})` : `Watchlist (${validFavoriteIds.length})`;
-  const activeEmptyLabel = mode === 'open' ? 'No open positions' : 'No favorites yet';
   const activeRows = mode === 'open' ? openPreview : favoritePreview;
 
   return (
     <div className="sticky top-[60px] z-40 h-10 shrink-0 border-b border-ax-border bg-ax-surface2/85 backdrop-blur-sm">
       <div className="mx-auto flex h-full w-full max-w-[1800px] items-center gap-2 overflow-hidden px-3">
         <div className="flex shrink-0 items-center gap-1 border-r border-ax-border pr-2">
-          <HoverTooltip label={`Active Positions (${openTokenIds.length})`}>
+          <HoverTooltip label="Active Positions">
             <button
               type="button"
               className={iconButtonClass(mode === 'open')}
@@ -109,7 +107,7 @@ export default function SubHeaderBar() {
               <LineChart size={13} />
             </button>
           </HoverTooltip>
-          <HoverTooltip label={`Watchlist (${validFavoriteIds.length})`}>
+          <HoverTooltip label="Watchlist">
             <button
               type="button"
               className={iconButtonClass(mode === 'watchlist')}
@@ -121,24 +119,18 @@ export default function SubHeaderBar() {
           </HoverTooltip>
         </div>
 
-        <div className="shrink-0 text-[11px] text-ax-text-dim">{activeLabel}</div>
-
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto no-scrollbar">
-          {activeRows.length === 0 ? (
-            <span className="text-[11px] text-ax-text-dim">{activeEmptyLabel}</span>
-          ) : (
-            activeRows.map((item) => (
-              <SubHeaderTokenPill
-                key={`${mode}-${item.tokenId}`}
-                tokenId={item.tokenId}
-                name={item.label}
-                remainingQty={mode === 'open' ? item.qty : undefined}
-                pnlPct={mode === 'open' ? item.pnlPct : undefined}
-                showPositionMetrics={mode === 'open'}
-                onClick={() => openToken(item.tokenId)}
-              />
-            ))
-          )}
+          {activeRows.map((item) => (
+            <SubHeaderTokenPill
+              key={`${mode}-${item.tokenId}`}
+              tokenId={item.tokenId}
+              name={item.label}
+              remainingQty={mode === 'open' ? item.qty : undefined}
+              pnlPct={mode === 'open' ? item.pnlPct : undefined}
+              showPositionMetrics={mode === 'open'}
+              onClick={() => openToken(item.tokenId)}
+            />
+          ))}
         </div>
       </div>
     </div>
