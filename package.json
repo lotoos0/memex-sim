@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "qa:sim:dead-floor": "powershell -ExecutionPolicy Bypass -File scripts/qa/sim-dead-floor-test.ps1"
   },
   "dependencies": {
     "idb-keyval": "^6.2.2",
