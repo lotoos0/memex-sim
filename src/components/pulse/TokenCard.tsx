@@ -81,20 +81,18 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
   const [isBuying, setIsBuying] = useState(false);
   const buyTimerRef = useRef<number | null>(null);
 
-  const isRugged = token.phase === 'RUGGED';
+  const isDead = token.phase === 'DEAD' || token.phase === 'RUGGED';
   const hasOpenPosition = (quickPosition?.qty ?? 0) > 0;
   const holdingUsd = hasOpenPosition ? (quickPosition!.qty * token.lastPriceUsd) : 0;
   const unrealizedUsd = hasOpenPosition ? holdingUsd - quickPosition!.costBasisUsd : 0;
 
   const handleClick = () => {
-    if (isRugged) return;
     setActive(token.id);
     navigate(`/token/${token.id}`);
   };
 
   const handleQuickBuy = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    if (isRugged) return;
     quickBuy(token.id, quickBuyAmount, quickBuyOptions);
     setIsBuying(true);
     if (buyTimerRef.current != null) window.clearTimeout(buyTimerRef.current);
@@ -124,8 +122,8 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
       className={[
         'flex flex-col gap-1 p-2.5 rounded border cursor-pointer transition-all',
         'hover:border-ax-border hover:bg-ax-surface2',
-        isRugged
-          ? 'border-ax-red/30 bg-ax-red-dim opacity-60 cursor-default'
+        isDead
+          ? 'border-ax-red/30 bg-ax-red-dim/70'
           : 'border-ax-border/50 bg-ax-surface',
       ].join(' ')}
     >
@@ -141,11 +139,11 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1">
-            <span className={`font-bold text-xs truncate ${isRugged ? 'text-ax-red' : 'text-ax-text'}`}>
+            <span className={`font-bold text-xs truncate ${isDead ? 'text-ax-red' : 'text-ax-text'}`}>
               {token.ticker}
             </span>
-            {isRugged && (
-              <span className="text-[10px] text-ax-red font-bold">RUGGED</span>
+            {isDead && (
+              <span className="text-[10px] text-ax-red font-bold">DEAD</span>
             )}
           </div>
           <div className="text-ax-text-dim text-[10px] truncate">{token.name}</div>
@@ -219,7 +217,7 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
           className="h-full rounded-full transition-all"
           style={{
             width: `${token.bondingCurvePct}%`,
-            backgroundColor: token.bondingCurvePct > 80 ? '#f5c542' : token.phase === 'RUGGED' ? '#ff4d6a' : '#00d4a1',
+            backgroundColor: token.bondingCurvePct > 80 ? '#f5c542' : isDead ? '#ff4d6a' : '#00d4a1',
           }}
         />
       </div>

@@ -1,11 +1,15 @@
 import type { ReactNode } from 'react';
 
 type HoverTooltipProps = {
-  label: string;
+  label?: string;
+  content?: ReactNode;
   children: ReactNode;
 };
 
-export default function HoverTooltip({ label, children }: HoverTooltipProps) {
+export default function HoverTooltip({ label, content, children }: HoverTooltipProps) {
+  const body = content ?? label;
+  if (!body) return <>{children}</>;
+
   return (
     <div className="group relative inline-flex">
       {children}
@@ -18,7 +22,7 @@ export default function HoverTooltip({ label, children }: HoverTooltipProps) {
           'opacity-0 transition-opacity duration-150 group-hover:opacity-100',
         ].join(' ')}
       >
-        {label}
+        {body}
       </div>
     </div>
   );

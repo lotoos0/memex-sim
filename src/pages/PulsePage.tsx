@@ -15,19 +15,19 @@ const DEFAULT_COLUMN_FILTERS: Record<ColumnKey, PulseColumnFilters> = {
   migrated: { newPairs: false, finalStretch: false, migrated: true },
 };
 
-function withRugged(
+function withDead(
   filters: PulseColumnFilters,
   buckets: {
     newPairs: TokenState[];
     finalStretch: TokenState[];
     migrated: TokenState[];
-    ruggedLow: TokenState[];
-    ruggedHigh: TokenState[];
+    deadLow: TokenState[];
+    deadHigh: TokenState[];
   }
 ): TokenState[] {
   const out: TokenState[] = [];
-  if (filters.newPairs) out.push(...buckets.newPairs, ...buckets.ruggedLow);
-  if (filters.finalStretch) out.push(...buckets.finalStretch, ...buckets.ruggedHigh);
+  if (filters.newPairs) out.push(...buckets.newPairs, ...buckets.deadLow);
+  if (filters.finalStretch) out.push(...buckets.finalStretch, ...buckets.deadHigh);
   if (filters.migrated) out.push(...buckets.migrated);
   return out.sort((a, b) => b.mcapUsd - a.mcapUsd);
 }
@@ -57,21 +57,21 @@ export default function PulsePage() {
       newPairs: all.filter(t => t.phase === 'NEW').sort(byMcapDesc),
       finalStretch: all.filter(t => t.phase === 'FINAL').sort(byMcapDesc),
       migrated: all.filter(t => t.phase === 'MIGRATED').sort(byMcapDesc),
-      ruggedLow: all.filter(t => t.phase === 'RUGGED' && t.mcapUsd < 30_000).sort(byMcapDesc),
-      ruggedHigh: all.filter(t => t.phase === 'RUGGED' && t.mcapUsd >= 30_000).sort(byMcapDesc),
+      deadLow: all.filter(t => (t.phase === 'DEAD' || t.phase === 'RUGGED') && t.mcapUsd < 30_000).sort(byMcapDesc),
+      deadHigh: all.filter(t => (t.phase === 'DEAD' || t.phase === 'RUGGED') && t.mcapUsd >= 30_000).sort(byMcapDesc),
     };
   }, [tokensById]);
 
   const newPairs = useMemo(
-    () => withRugged(columnFilters.newPairs, buckets),
+    () => withDead(columnFilters.newPairs, buckets),
     [buckets, columnFilters.newPairs]
   );
   const finalStretch = useMemo(
-    () => withRugged(columnFilters.finalStretch, buckets),
+    () => withDead(columnFilters.finalStretch, buckets),
     [buckets, columnFilters.finalStretch]
   );
   const migrated = useMemo(
-    () => withRugged(columnFilters.migrated, buckets),
+    () => withDead(columnFilters.migrated, buckets),
     [buckets, columnFilters.migrated]
   );
   const watchlistTokens = useMemo(() => {
