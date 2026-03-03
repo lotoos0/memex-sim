@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, LineChart, Star } from 'lucide-react';
 import {
   useTokenStore,
   selectActiveToken,
@@ -13,10 +13,12 @@ import BottomTabs from '../components/token/BottomTabs';
 import TradesTablePanel from '../components/token/TradesTablePanel';
 import InstantTradePanel from '../components/floating/InstantTradePanel';
 import TokenAvatar from '../components/common/TokenAvatar';
+import HoverTooltip from '../components/ui/HoverTooltip';
 import { registry } from '../tokens/registry';
 import type { CurveDebugSnapshot } from '../tokens/tokenSim';
 import { useTradingStore, type QuickTrade } from '../store/tradingStore';
 import { SESSION_BUCKET_LABEL, type SessionBucket } from '../market/session';
+import { useFavoritesStore } from '../store/favoritesStore';
 
 const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 const INSTANT_TRADE_ENABLED_STORAGE_KEY = 'memex:instant-trade:enabled';
@@ -64,6 +66,8 @@ export default function TokenPage() {
   const location = useLocation();
   const setActive = useTokenStore(s => s.setActiveToken);
   const token = useTokenStore(selectActiveToken);
+  const isFavorite = useFavoritesStore((s) => (id ? Boolean(s.favoritesById[id]) : false));
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const marketSessionBucket = useTokenStore(selectMarketSessionBucket);
   const marketSessionBucketOverride = useTokenStore(selectMarketSessionBucketOverride);
   const setMarketSessionBucketOverride = useTokenStore(s => s.setMarketSessionBucketOverride);
@@ -151,6 +155,12 @@ export default function TokenPage() {
     const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % SESSION_OVERRIDE_CYCLE.length : 0;
     setMarketSessionBucketOverride(SESSION_OVERRIDE_CYCLE[nextIdx]!);
   };
+  const handleToggleFavorite = (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!token?.id) return;
+    toggleFavorite(token.id);
+  };
   const positionQty = quickPosition?.qty ?? 0;
   const hasOpenPosition = positionQty > 0;
   const holdingUsd = hasOpenPosition ? positionQty * token.lastPriceUsd : 0;
@@ -163,6 +173,32 @@ export default function TokenPage() {
         <button onClick={() => navigate('/')} className="text-ax-text-dim hover:text-ax-text transition-colors">
           <ArrowLeft size={14} />
         </button>
+        <div className="flex items-center gap-1">
+          <HoverTooltip label="Active Positions">
+            <button
+              type="button"
+              aria-label="Active Positions"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-ax-border bg-ax-surface2 text-ax-text-dim hover:text-ax-text transition-colors"
+            >
+              <LineChart size={13} />
+            </button>
+          </HoverTooltip>
+          <HoverTooltip label="Watchlist">
+            <button
+              type="button"
+              onClick={handleToggleFavorite}
+              aria-label={isFavorite ? 'Remove from watchlist' : 'Add to watchlist'}
+              className={[
+                'inline-flex h-6 w-6 items-center justify-center rounded-md border transition-colors',
+                isFavorite
+                  ? 'border-[#f5c54288] bg-[#f5c5421f] text-[#f5c542]'
+                  : 'border-ax-border bg-ax-surface2 text-ax-text-dim hover:text-ax-text',
+              ].join(' ')}
+            >
+              <Star size={13} fill={isFavorite ? 'currentColor' : 'none'} />
+            </button>
+          </HoverTooltip>
+        </div>
 
         <TokenAvatar
           tokenId={token.id}

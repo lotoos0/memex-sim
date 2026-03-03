@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Feather, LoaderCircle, Zap } from 'lucide-react';
+import { Feather, LoaderCircle, Star, Zap } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
 import { useTokenStore } from '../../store/tokenStore';
 import { useTradingStore } from '../../store/tradingStore';
 import { usePostStore, type TokenPost } from '../../store/postStore';
+import { useFavoritesStore } from '../../store/favoritesStore';
 import TokenAvatar from '../common/TokenAvatar';
 import TweetHoverCard from '../news/TweetHoverCard';
+import HoverTooltip from '../ui/HoverTooltip';
 
 const EMPTY_POSTS: TokenPost[] = [];
 
@@ -74,6 +76,8 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
     [token.id]
   );
   const latestNews = usePostStore(selectLatestNews);
+  const isFavorite = useFavoritesStore((s) => Boolean(s.favoritesById[token.id]));
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const [isBuying, setIsBuying] = useState(false);
   const buyTimerRef = useRef<number | null>(null);
 
@@ -98,6 +102,12 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
       setIsBuying(false);
       buyTimerRef.current = null;
     }, 1_000);
+  };
+
+  const handleToggleFavorite = (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleFavorite(token.id);
   };
 
   useEffect(() => {
@@ -141,11 +151,28 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
           <div className="text-ax-text-dim text-[10px] truncate">{token.name}</div>
         </div>
 
-        <div className="text-right shrink-0">
-          <div className={`text-xs font-bold ${token.changePct >= 0 ? 'text-ax-green' : 'text-ax-red'}`}>
-            {fmtPct(token.changePct)}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <HoverTooltip label="Watchlist">
+            <button
+              type="button"
+              onClick={handleToggleFavorite}
+              aria-label={isFavorite ? 'Remove from watchlist' : 'Add to watchlist'}
+              className={[
+                'inline-flex h-6 w-6 items-center justify-center rounded-md border transition-colors',
+                isFavorite
+                  ? 'border-[#f5c54288] bg-[#f5c5421f] text-[#f5c542]'
+                  : 'border-ax-border bg-ax-surface2 text-ax-text-dim hover:text-ax-text',
+              ].join(' ')}
+            >
+              <Star size={13} fill={isFavorite ? 'currentColor' : 'none'} />
+            </button>
+          </HoverTooltip>
+          <div className="text-right">
+            <div className={`text-xs font-bold ${token.changePct >= 0 ? 'text-ax-green' : 'text-ax-red'}`}>
+              {fmtPct(token.changePct)}
+            </div>
+            <div className="text-ax-text-dim text-[10px]">{fmtAge(token.simTimeMs)}</div>
           </div>
-          <div className="text-ax-text-dim text-[10px]">{fmtAge(token.simTimeMs)}</div>
         </div>
       </div>
 
