@@ -1198,7 +1198,7 @@ export class TokenSim {
       if (this.ruggedAtSimMs == null) {
         this.ruggedAtSimMs = this.simTimeMs;
       }
-      if (this.lastMcapUsd <= MCAP_FLOOR_USD * 1.05) {
+      if (this.lastMcapUsd <= MCAP_FLOOR_USD) {
         this.phase = 'DEAD';
         this.lastMcapUsd = MCAP_FLOOR_USD;
         this.lastPriceUsd = MCAP_FLOOR_USD / SUPPLY;
