@@ -105,6 +105,7 @@ interface Props {
   accent?: string;
   filters: PulseColumnFilters;
   onFiltersChange: (next: PulseColumnFilters) => void;
+  filtersEnabled?: boolean;
 }
 
 export default function TokenColumn({
@@ -113,6 +114,7 @@ export default function TokenColumn({
   accent = '#00d4a1',
   filters,
   onFiltersChange,
+  filtersEnabled = true,
 }: Props) {
   const [showFilters, setShowFilters] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -276,45 +278,47 @@ export default function TokenColumn({
             ))}
           </div>
 
-          <div className="relative" ref={filtersRef}>
-            <button
-              type="button"
-              onClick={() => setShowFilters((v) => !v)}
-              className="relative h-7 w-7 rounded border border-ax-border bg-ax-surface inline-flex items-center justify-center text-ax-text-dim hover:text-ax-text"
-              title="Column filters"
-            >
-              <SlidersHorizontal size={12} />
-              <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-[#4f6dff]" />
-            </button>
-            {showFilters && (
-              <div className="absolute right-0 top-8 z-30 min-w-[142px] rounded border border-ax-border bg-ax-surface p-2 shadow-lg text-[11px]">
-                <label className="flex items-center gap-2 py-1">
-                  <input
-                    type="checkbox"
-                    checked={filters.newPairs}
-                    onChange={() => toggleFilter('newPairs')}
-                  />
-                  <span className="text-ax-text">New Pairs</span>
-                </label>
-                <label className="flex items-center gap-2 py-1">
-                  <input
-                    type="checkbox"
-                    checked={filters.finalStretch}
-                    onChange={() => toggleFilter('finalStretch')}
-                  />
-                  <span className="text-ax-text">Final Stretch</span>
-                </label>
-                <label className="flex items-center gap-2 py-1">
-                  <input
-                    type="checkbox"
-                    checked={filters.migrated}
-                    onChange={() => toggleFilter('migrated')}
-                  />
-                  <span className="text-ax-text">Migrated</span>
-                </label>
-              </div>
-            )}
-          </div>
+          {filtersEnabled && (
+            <div className="relative" ref={filtersRef}>
+              <button
+                type="button"
+                onClick={() => setShowFilters((v) => !v)}
+                className="relative h-7 w-7 rounded border border-ax-border bg-ax-surface inline-flex items-center justify-center text-ax-text-dim hover:text-ax-text"
+                title="Column filters"
+              >
+                <SlidersHorizontal size={12} />
+                <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-[#4f6dff]" />
+              </button>
+              {showFilters && (
+                <div className="absolute right-0 top-8 z-30 min-w-[142px] rounded border border-ax-border bg-ax-surface p-2 shadow-lg text-[11px]">
+                  <label className="flex items-center gap-2 py-1">
+                    <input
+                      type="checkbox"
+                      checked={filters.newPairs}
+                      onChange={() => toggleFilter('newPairs')}
+                    />
+                    <span className="text-ax-text">New Pairs</span>
+                  </label>
+                  <label className="flex items-center gap-2 py-1">
+                    <input
+                      type="checkbox"
+                      checked={filters.finalStretch}
+                      onChange={() => toggleFilter('finalStretch')}
+                    />
+                    <span className="text-ax-text">Final Stretch</span>
+                  </label>
+                  <label className="flex items-center gap-2 py-1">
+                    <input
+                      type="checkbox"
+                      checked={filters.migrated}
+                      onChange={() => toggleFilter('migrated')}
+                    />
+                    <span className="text-ax-text">Migrated</span>
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
