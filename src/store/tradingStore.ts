@@ -111,6 +111,7 @@ export interface QuickExecutionSnapshot {
 }
 
 type Ghost = { price: number } | null;
+const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 
 type PosAcc = { side: Side; openTs: number; lots: { qty:number; price:number; ts:number }[]; fees:number };
 export interface PositionHistory {
@@ -927,7 +928,7 @@ export const selectQuickPositionByTokenId = (tokenId: string) =>
 
 export const selectQuickTradesByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickTrade[] =>
-    s.quickTradesByTokenId[tokenId] ?? [];
+    s.quickTradesByTokenId[tokenId] ?? EMPTY_QUICK_TRADES;
 
 export const selectLastQuickExecutionByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickExecutionSnapshot | null =>
