@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BadgeDollarSign, Bolt, Coins, Percent, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowUpDown, BadgeDollarSign, Bolt, Check, Coins, Percent, SlidersHorizontal, X } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
 import solIcon from '../../assets/sol-fill.svg';
 import TokenCard, { type PulseDisplayMode } from './TokenCard';
 import type { PulseBucketKey } from './pulseFilters';
+import HoverTooltip from '../ui/HoverTooltip';
+import { PULSE_SORT_MODE_LABELS, type PulseBucketSortMode } from './pulseSorts';
 
 type PresetId = 'P1' | 'P2' | 'P3';
 type SideKey = 'buy' | 'sell';
@@ -23,6 +25,7 @@ type PresetTradeSettings = { buy: SideTradeSettings; sell: SideTradeSettings };
 type TradeSettingsMap = Record<PresetId, PresetTradeSettings>;
 
 const PRESETS: PresetId[] = ['P1', 'P2', 'P3'];
+const SORT_MODES: PulseBucketSortMode[] = ['flow60s', 'vol', 'mc', 'age'];
 const ACTIVE_PRESET_STORAGE_KEY = 'memex:instant-trade:active-preset';
 const TRADE_SETTINGS_STORAGE_KEY = 'memex:instant-trade:trade-settings-v1';
 
@@ -110,6 +113,9 @@ interface Props {
   displayMode?: PulseDisplayMode;
   bucketKey?: PulseBucketKey;
   activeFilterCount?: number;
+  activeFilterSummaryLines?: string[];
+  sortMode?: PulseBucketSortMode;
+  onSortChange?: (bucket: PulseBucketKey, sortMode: PulseBucketSortMode) => void;
   onOpenFilters?: (bucket: PulseBucketKey) => void;
 }
 
@@ -123,9 +129,13 @@ export default function TokenColumn({
   displayMode = 'comfortable',
   bucketKey,
   activeFilterCount = 0,
+  activeFilterSummaryLines = [],
+  sortMode = 'flow60s',
+  onSortChange,
   onOpenFilters,
 }: Props) {
   const [showFilters, setShowFilters] = useState(false);
+  const [showSortMenu, setShowSortMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [activePreset, setActivePreset] = useState<PresetId>(() => loadPreset());
   const [settingsPreset, setSettingsPreset] = useState<PresetId>('P1');
@@ -141,6 +151,7 @@ export default function TokenColumn({
   const [amountInput, setAmountInput] = useState<string>(() => formatAmount(quickBuyAmount));
 
   const filtersRef = useRef<HTMLDivElement | null>(null);
+  const sortRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -159,10 +170,11 @@ export default function TokenColumn({
 
   useEffect(() => {
     const onPointerDown = (ev: PointerEvent) => {
-      if (!filtersRef.current) return;
       const target = ev.target as Node | null;
-      if (target && filtersRef.current.contains(target)) return;
+      if (filtersRef.current && target && filtersRef.current.contains(target)) return;
+      if (sortRef.current && target && sortRef.current.contains(target)) return;
       setShowFilters(false);
+      setShowSortMenu(false);
     };
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
@@ -239,6 +251,19 @@ export default function TokenColumn({
   }), [buySettings.bribe, buySettings.priority, buySettings.slippage]);
 
   const modal = tradeSettings[settingsPreset][settingsSide];
+  const filterSummaryContent = (
+    <div className="min-w-[180px] space-y-1 whitespace-normal">
+      {activeFilterSummaryLines.length > 0 ? (
+        activeFilterSummaryLines.map((line) => (
+          <div key={line} className="text-[11px] leading-4 text-ax-text">
+            {line}
+          </div>
+        ))
+      ) : (
+        <div className="text-[11px] leading-4 text-ax-text">No active filters</div>
+      )}
+    </div>
+  );
 
   return (
     <div className="flex flex-col flex-1 min-w-0 rounded-lg border border-ax-border bg-ax-surface shadow-[0_0_0_1px_rgba(24,30,51,0.22)] overflow-hidden">
@@ -330,26 +355,80 @@ export default function TokenColumn({
           )}
 
           {!filtersEnabled && bucketKey && onOpenFilters && (
-            <button
-              type="button"
-              onClick={() => onOpenFilters(bucketKey)}
-              className={[
-                'relative inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors',
-                activeFilterCount > 0
-                  ? 'border-[#f5c54266] bg-[#f5c54214] text-[#f5c542]'
-                  : 'border-ax-border bg-ax-surface text-ax-text-dim hover:text-ax-text',
-              ].join(' ')}
-              title={`${title} filters`}
-              aria-label={`${title} filters`}
-            >
-              <SlidersHorizontal size={12} />
-              <span
-                className={[
-                  'absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full',
-                  activeFilterCount > 0 ? 'bg-[#f5c542]' : 'bg-[#2a3044]',
-                ].join(' ')}
-              />
-            </button>
+            <>
+              {bucketKey && onSortChange && (
+                <div className="relative" ref={sortRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowSortMenu((value) => !value)}
+                    className={[
+                      'inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors',
+                      showSortMenu
+                        ? 'border-[#6e83ff55] bg-[#6e83ff18] text-[#9badff]'
+                        : 'border-ax-border bg-ax-surface text-ax-text-dim hover:text-ax-text',
+                    ].join(' ')}
+                    title={`${title} sort`}
+                    aria-label={`${title} sort`}
+                  >
+                    <ArrowUpDown size={12} />
+                  </button>
+                  {showSortMenu && (
+                    <div className="absolute right-0 top-8 z-30 min-w-[136px] rounded-xl border border-ax-border bg-ax-surface p-1.5 shadow-lg">
+                      {SORT_MODES.map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => {
+                            onSortChange(bucketKey, mode);
+                            setShowSortMenu(false);
+                          }}
+                          className={[
+                            'flex h-8 w-full items-center justify-between rounded-lg px-2 text-[11px] transition-colors',
+                            sortMode === mode
+                              ? 'bg-[#6e83ff1f] text-[#d7deff]'
+                              : 'text-ax-text-dim hover:bg-ax-surface2 hover:text-ax-text',
+                          ].join(' ')}
+                        >
+                          <span>{PULSE_SORT_MODE_LABELS[mode]}</span>
+                          {sortMode === mode && <Check size={12} className="text-[#8fa2ff]" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <HoverTooltip content={filterSummaryContent}>
+                <button
+                  type="button"
+                  onClick={() => onOpenFilters(bucketKey)}
+                  className={[
+                    'relative inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors',
+                    activeFilterCount > 0
+                      ? 'border-[#f5c54266] bg-[#f5c54214] text-[#f5c542]'
+                      : 'border-ax-border bg-ax-surface text-ax-text-dim hover:text-ax-text',
+                  ].join(' ')}
+                  title={`${title} filters`}
+                  aria-label={`${title} filters`}
+                >
+                  <SlidersHorizontal size={12} />
+                  <span
+                    className={[
+                      'absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full',
+                      activeFilterCount > 0 ? 'bg-[#f5c542]' : 'bg-[#2a3044]',
+                    ].join(' ')}
+                  />
+                </button>
+              </HoverTooltip>
+
+              {activeFilterCount > 0 && (
+                <HoverTooltip content={filterSummaryContent}>
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-[#f5c54255] bg-[#f5c54214] px-1.5 text-[10px] font-semibold text-[#f5c542]">
+                    {activeFilterCount}
+                  </span>
+                </HoverTooltip>
+              )}
+            </>
           )}
         </div>
       </div>

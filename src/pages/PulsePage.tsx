@@ -6,12 +6,19 @@ import PulseFiltersModal from '../components/pulse/PulseFiltersModal';
 import {
   countActivePulseBucketFilters,
   createDefaultPulseFiltersByBucket,
+  getPulseBucketFilterSummaryLines,
   parseFilterNumber,
   sanitizePulseFiltersByBucket,
   type PulseBucketKey,
   type PulseBucketTokenFilters,
   type PulseFiltersByBucket,
 } from '../components/pulse/pulseFilters';
+import {
+  createDefaultPulseSortsByBucket,
+  sanitizePulseSortsByBucket,
+  sortPulseTokensForBucket,
+  type PulseSortsByBucket,
+} from '../components/pulse/pulseSorts';
 import type { TokenState } from '../tokens/types';
 
 type ColumnKey = 'newPairs' | 'finalStretch' | 'migrated';
@@ -20,6 +27,7 @@ type CompiledPulseBucketFilters = { [K in keyof PulseBucketTokenFilters]: number
 
 const DISPLAY_MODE_STORAGE_KEY = 'memex:pulse:display-mode';
 const PULSE_FILTERS_STORAGE_KEY = 'memex:pulse:filters:v1';
+const PULSE_SORTS_STORAGE_KEY = 'memex:pulse:sorts:v1';
 
 const DEFAULT_COLUMN_FILTERS: Record<ColumnKey, PulseColumnFilters> = {
   newPairs: { newPairs: true, finalStretch: false, migrated: false },
@@ -42,6 +50,17 @@ function loadPulseFilters(): PulseFiltersByBucket {
     return sanitizePulseFiltersByBucket(JSON.parse(raw) as Partial<PulseFiltersByBucket>);
   } catch {
     return createDefaultPulseFiltersByBucket();
+  }
+}
+
+function loadPulseSorts(): PulseSortsByBucket {
+  if (typeof window === 'undefined') return createDefaultPulseSortsByBucket();
+  try {
+    const raw = window.localStorage.getItem(PULSE_SORTS_STORAGE_KEY);
+    if (!raw) return createDefaultPulseSortsByBucket();
+    return sanitizePulseSortsByBucket(JSON.parse(raw) as Partial<PulseSortsByBucket>);
+  } catch {
+    return createDefaultPulseSortsByBucket();
   }
 }
 
@@ -127,6 +146,7 @@ export default function PulsePage() {
   const [filtersModalOpen, setFiltersModalOpen] = useState(false);
   const [filtersModalBucket, setFiltersModalBucket] = useState<PulseBucketKey>('newPairs');
   const [pulseFiltersByBucket, setPulseFiltersByBucket] = useState<PulseFiltersByBucket>(() => loadPulseFilters());
+  const [pulseSortsByBucket, setPulseSortsByBucket] = useState<PulseSortsByBucket>(() => loadPulseSorts());
   const [columnFilters, setColumnFilters] = useState<Record<ColumnKey, PulseColumnFilters>>(
     DEFAULT_COLUMN_FILTERS
   );
@@ -147,6 +167,11 @@ export default function PulsePage() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(PULSE_FILTERS_STORAGE_KEY, JSON.stringify(pulseFiltersByBucket));
   }, [pulseFiltersByBucket]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(PULSE_SORTS_STORAGE_KEY, JSON.stringify(pulseSortsByBucket));
+  }, [pulseSortsByBucket]);
 
   const buckets = useMemo(() => {
     const all = Object.values(tokensById);
@@ -172,22 +197,29 @@ export default function PulsePage() {
   const filterTokensForBucket = (bucket: PulseBucketKey, rows: TokenState[]) =>
     rows.filter((token) => tokenMatchesPulseFilters(token, tradeFlowByTokenId[token.id], compiledFiltersByBucket[bucket]));
 
+  const sortTokensForBucket = (bucket: PulseBucketKey, rows: TokenState[]) =>
+    sortPulseTokensForBucket(rows, bucket, pulseSortsByBucket[bucket], tradeFlowByTokenId);
+
   const newPairs = useMemo(
-    () => filterTokensForBucket('newPairs', withDead(columnFilters.newPairs, buckets)),
-    [buckets, columnFilters.newPairs, compiledFiltersByBucket, tradeFlowByTokenId]
+    () => sortTokensForBucket('newPairs', filterTokensForBucket('newPairs', withDead(columnFilters.newPairs, buckets))),
+    [buckets, columnFilters.newPairs, compiledFiltersByBucket, pulseSortsByBucket, tradeFlowByTokenId]
   );
   const finalStretch = useMemo(
-    () => filterTokensForBucket('finalStretch', withDead(columnFilters.finalStretch, buckets)),
-    [buckets, columnFilters.finalStretch, compiledFiltersByBucket, tradeFlowByTokenId]
+    () => sortTokensForBucket('finalStretch', filterTokensForBucket('finalStretch', withDead(columnFilters.finalStretch, buckets))),
+    [buckets, columnFilters.finalStretch, compiledFiltersByBucket, pulseSortsByBucket, tradeFlowByTokenId]
   );
   const migrated = useMemo(
-    () => filterTokensForBucket('migrated', withDead(columnFilters.migrated, buckets)),
-    [buckets, columnFilters.migrated, compiledFiltersByBucket, tradeFlowByTokenId]
+    () => sortTokensForBucket('migrated', filterTokensForBucket('migrated', withDead(columnFilters.migrated, buckets))),
+    [buckets, columnFilters.migrated, compiledFiltersByBucket, pulseSortsByBucket, tradeFlowByTokenId]
   );
 
   const openBucketFilters = (bucket: PulseBucketKey) => {
     setFiltersModalBucket(bucket);
     setFiltersModalOpen(true);
+  };
+
+  const updateBucketSort = (bucket: PulseBucketKey, sortMode: PulseSortsByBucket[PulseBucketKey]) => {
+    setPulseSortsByBucket((current) => ({ ...current, [bucket]: sortMode }));
   };
 
   return (
@@ -231,6 +263,9 @@ export default function PulsePage() {
           filtersEnabled={false}
           bucketKey="newPairs"
           activeFilterCount={countActivePulseBucketFilters(pulseFiltersByBucket.newPairs)}
+          activeFilterSummaryLines={getPulseBucketFilterSummaryLines(pulseFiltersByBucket.newPairs)}
+          sortMode={pulseSortsByBucket.newPairs}
+          onSortChange={updateBucketSort}
           onOpenFilters={openBucketFilters}
           displayMode={displayMode}
         />
@@ -243,6 +278,9 @@ export default function PulsePage() {
           filtersEnabled={false}
           bucketKey="finalStretch"
           activeFilterCount={countActivePulseBucketFilters(pulseFiltersByBucket.finalStretch)}
+          activeFilterSummaryLines={getPulseBucketFilterSummaryLines(pulseFiltersByBucket.finalStretch)}
+          sortMode={pulseSortsByBucket.finalStretch}
+          onSortChange={updateBucketSort}
           onOpenFilters={openBucketFilters}
           displayMode={displayMode}
         />
@@ -255,6 +293,9 @@ export default function PulsePage() {
           filtersEnabled={false}
           bucketKey="migrated"
           activeFilterCount={countActivePulseBucketFilters(pulseFiltersByBucket.migrated)}
+          activeFilterSummaryLines={getPulseBucketFilterSummaryLines(pulseFiltersByBucket.migrated)}
+          sortMode={pulseSortsByBucket.migrated}
+          onSortChange={updateBucketSort}
           onOpenFilters={openBucketFilters}
           displayMode={displayMode}
         />

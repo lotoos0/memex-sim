@@ -98,3 +98,40 @@ export function parseFilterNumber(raw: string): number | null {
   if (!Number.isFinite(parsed)) return null;
   return parsed;
 }
+
+export function getPulseBucketFilterSummaryLines(filters: PulseBucketTokenFilters, limit = 6): string[] {
+  const lines = buildPulseBucketFilterSummary(filters);
+  if (lines.length <= limit) return lines;
+  const visible = lines.slice(0, limit);
+  visible.push(`+${lines.length - limit} more`);
+  return visible;
+}
+
+function buildPulseBucketFilterSummary(filters: PulseBucketTokenFilters): string[] {
+  const lines: string[] = [];
+  pushFilterSummary(lines, filters.minMC, 'MC', '>=');
+  pushFilterSummary(lines, filters.maxMC, 'MC', '<=');
+  pushFilterSummary(lines, filters.minLiq, 'Liq', '>=');
+  pushFilterSummary(lines, filters.maxLiq, 'Liq', '<=');
+  pushFilterSummary(lines, filters.minVol, 'Vol', '>=');
+  pushFilterSummary(lines, filters.maxVol, 'Vol', '<=');
+  pushFilterSummary(lines, filters.minTx60s, 'Tx60s', '>=');
+  pushFilterSummary(lines, filters.maxTx60s, 'Tx60s', '<=');
+  pushFilterSummary(lines, filters.minBuys60s, 'Buys60s', '>=');
+  pushFilterSummary(lines, filters.maxBuys60s, 'Buys60s', '<=');
+  pushFilterSummary(lines, filters.minSells60s, 'Sells60s', '>=');
+  pushFilterSummary(lines, filters.maxSells60s, 'Sells60s', '<=');
+  pushFilterSummary(lines, filters.maxAgeMinutes, 'Age', '<=', 'm');
+  pushFilterSummary(lines, filters.maxTopHoldersPct, 'Top H', '<=', '%');
+  pushFilterSummary(lines, filters.maxDevHoldingPct, 'Dev', '<=', '%');
+  pushFilterSummary(lines, filters.maxSnipersPct, 'Snipers', '<=', '%');
+  pushFilterSummary(lines, filters.maxInsidersPct, 'Insiders', '<=', '%');
+  pushFilterSummary(lines, filters.maxBundlePct, 'Bundle', '<=', '%');
+  return lines;
+}
+
+function pushFilterSummary(lines: string[], rawValue: string, label: string, operator: '>=' | '<=', suffix = ''): void {
+  const normalized = rawValue.trim();
+  if (!normalized) return;
+  lines.push(`${label} ${operator} ${normalized}${suffix}`);
+}
