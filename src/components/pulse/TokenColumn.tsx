@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { BadgeDollarSign, Bolt, Coins, Percent, SlidersHorizontal, X } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
 import solIcon from '../../assets/sol-fill.svg';
-import TokenCard from './TokenCard';
+import TokenCard, { type PulseDisplayMode } from './TokenCard';
 
 type PresetId = 'P1' | 'P2' | 'P3';
 type SideKey = 'buy' | 'sell';
@@ -106,6 +106,7 @@ interface Props {
   filters: PulseColumnFilters;
   onFiltersChange: (next: PulseColumnFilters) => void;
   filtersEnabled?: boolean;
+  displayMode?: PulseDisplayMode;
 }
 
 export default function TokenColumn({
@@ -115,6 +116,7 @@ export default function TokenColumn({
   filters,
   onFiltersChange,
   filtersEnabled = true,
+  displayMode = 'comfortable',
 }: Props) {
   const [showFilters, setShowFilters] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -322,7 +324,12 @@ export default function TokenColumn({
         </div>
       </div>
 
-      <div className="flex flex-col gap-1.5 p-2 overflow-y-auto flex-1 bg-ax-bg/35">
+      <div
+        className={[
+          'flex flex-col overflow-y-auto flex-1 bg-ax-bg/35',
+          displayMode === 'dense' ? 'gap-1 p-1.5' : 'gap-1.5 p-2',
+        ].join(' ')}
+      >
         {tokens.length === 0 ? (
           <div className="flex items-center justify-center h-20 text-ax-text-dim text-xs opacity-50">
             No tokens
@@ -334,6 +341,7 @@ export default function TokenColumn({
               token={token}
               quickBuyAmount={quickBuyAmount}
               quickBuyOptions={quickBuyOptions}
+              displayMode={displayMode}
             />
           ))
         )}
