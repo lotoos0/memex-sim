@@ -41,10 +41,17 @@ export interface TokenMarketSnapshot {
   updatedAtMs: number;
 }
 
+export interface TokenTradeFlowSnapshot {
+  buys60s: number;
+  sells60s: number;
+  tx60s: number;
+}
+
 interface TokenStoreState {
   tokensById: Record<string, TokenState>;
   eventsByTokenId: Record<string, TokenChartEvent[]>;
   marketByTokenId: Record<string, TokenMarketSnapshot>;
+  tradeFlowByTokenId: Record<string, TokenTradeFlowSnapshot>;
   activeTokenId: string | null;
   marketSessionBucket: SessionBucket;
   marketSessionBucketOverride: SessionBucket | null;
@@ -65,6 +72,7 @@ export const useTokenStore = create<TokenStoreState>((set) => ({
   tokensById: {},
   eventsByTokenId: {},
   marketByTokenId: {},
+  tradeFlowByTokenId: {},
   activeTokenId: null,
   marketSessionBucket: 'OFF',
   marketSessionBucketOverride: null,
@@ -94,16 +102,22 @@ export const useTokenStore = create<TokenStoreState>((set) => ({
         ...s.marketByTokenId,
         [tokenId]: snapshot,
       },
+      tradeFlowByTokenId: {
+        ...s.tradeFlowByTokenId,
+        [tokenId]: computeTradeFlow60s(snapshot),
+      },
     })),
 
   batchUpdateTokenMarketSnapshots: (updates) =>
     set((s) => {
       const next = { ...s.marketByTokenId };
+      const nextFlow = { ...s.tradeFlowByTokenId };
       for (const [id, snapshot] of Object.entries(updates)) {
         if (!s.tokensById[id]) continue;
         next[id] = snapshot;
+        nextFlow[id] = computeTradeFlow60s(snapshot);
       }
-      return { marketByTokenId: next };
+      return { marketByTokenId: next, tradeFlowByTokenId: nextFlow };
     }),
 
   setMarketSessionBucket: (bucket) =>
@@ -120,7 +134,14 @@ export const useTokenStore = create<TokenStoreState>((set) => ({
       delete nextEvents[id];
       const nextMarket = { ...s.marketByTokenId };
       delete nextMarket[id];
-      return { tokensById: nextTokens, eventsByTokenId: nextEvents, marketByTokenId: nextMarket };
+      const nextFlow = { ...s.tradeFlowByTokenId };
+      delete nextFlow[id];
+      return {
+        tokensById: nextTokens,
+        eventsByTokenId: nextEvents,
+        marketByTokenId: nextMarket,
+        tradeFlowByTokenId: nextFlow,
+      };
     }),
 
   setActiveToken: (id) => set({ activeTokenId: id }),
@@ -154,5 +175,43 @@ export const selectActiveToken = (s: TokenStoreState) =>
 export const selectTokenMarketSnapshot = (tokenId: string) => (s: TokenStoreState) =>
   s.marketByTokenId[tokenId] ?? null;
 
+export const selectTokenTradeFlow60s = (tokenId: string) => (s: TokenStoreState): TokenTradeFlowSnapshot =>
+  s.tradeFlowByTokenId[tokenId] ?? EMPTY_TRADE_FLOW;
+
+export const selectTokenAgeLabel = (tokenId: string) => (s: TokenStoreState): string => {
+  const token = s.tokensById[tokenId];
+  if (!token) return '0s';
+  return formatTokenAgeLabel(token.simTimeMs, token.createdAtSimMs);
+};
+
 export const selectMarketSessionBucket = (s: TokenStoreState) => s.marketSessionBucket;
 export const selectMarketSessionBucketOverride = (s: TokenStoreState) => s.marketSessionBucketOverride;
+
+const FLOW_WINDOW_MS = 60_000;
+const EMPTY_TRADE_FLOW: TokenTradeFlowSnapshot = Object.freeze({ buys60s: 0, sells60s: 0, tx60s: 0 });
+
+function computeTradeFlow60s(snapshot: TokenMarketSnapshot): TokenTradeFlowSnapshot {
+  const rows = snapshot.recentTrades ?? [];
+  if (rows.length === 0) return EMPTY_TRADE_FLOW;
+
+  const cutoff = snapshot.updatedAtMs - FLOW_WINDOW_MS;
+  let buys = 0;
+  let sells = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const trade = rows[i]!;
+    if (trade.tMs < cutoff) continue;
+    if (trade.side === 'BUY') buys += 1;
+    else sells += 1;
+  }
+  const tx = buys + sells;
+  if (tx === 0) return EMPTY_TRADE_FLOW;
+  return { buys60s: buys, sells60s: sells, tx60s: tx };
+}
+
+function formatTokenAgeLabel(simTimeMs: number, createdAtSimMs: number): string {
+  const ageMs = Math.max(0, simTimeMs - createdAtSimMs);
+  const ageSec = Math.floor(ageMs / 1000);
+  if (ageSec < 60) return `${ageSec}s`;
+  if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m`;
+  return `${Math.floor(ageSec / 3600)}h`;
+}
