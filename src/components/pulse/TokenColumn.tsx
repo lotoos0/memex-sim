@@ -336,7 +336,7 @@ export default function TokenColumn({
               className={[
                 'relative inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors',
                 activeFilterCount > 0
-                  ? 'border-[#4f6dff55] bg-[#4f6dff18] text-[#9badff]'
+                  ? 'border-[#f5c54266] bg-[#f5c54214] text-[#f5c542]'
                   : 'border-ax-border bg-ax-surface text-ax-text-dim hover:text-ax-text',
               ].join(' ')}
               title={`${title} filters`}
@@ -346,7 +346,7 @@ export default function TokenColumn({
               <span
                 className={[
                   'absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full',
-                  activeFilterCount > 0 ? 'bg-[#4f6dff]' : 'bg-[#2a3044]',
+                  activeFilterCount > 0 ? 'bg-[#f5c542]' : 'bg-[#2a3044]',
                 ].join(' ')}
               />
             </button>
