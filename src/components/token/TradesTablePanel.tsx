@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Funnel, RefreshCcw, User } from 'lucide-react';
 import { useTokenStore } from '../../store/tokenStore';
-import { useTradingStore, type QuickTrade } from '../../store/tradingStore';
+import { selectQuickTradesByTokenId, useTradingStore } from '../../store/tradingStore';
 
 const SOL_PRICE_USD = 150;
-const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 
 interface Props {
   tokenId: string;
@@ -83,12 +82,8 @@ export default function TradesTablePanel({ tokenId }: Props) {
   const [pauseOnHover, setPauseOnHover] = useState(false);
   const [frozenRows, setFrozenRows] = useState<PanelTradeRow[] | null>(null);
   const market = useTokenStore((s) => s.marketByTokenId[tokenId] ?? null);
-  const yourTrades = useTradingStore(
-    useMemo(
-      () => (s: ReturnType<typeof useTradingStore.getState>) => s.quickTradesByTokenId[tokenId] ?? EMPTY_QUICK_TRADES,
-      [tokenId]
-    )
-  );
+  const quickTradesSelector = useMemo(() => selectQuickTradesByTokenId(tokenId), [tokenId]);
+  const yourTrades = useTradingStore(quickTradesSelector);
 
   const liveRows = useMemo<PanelTradeRow[]>(() => {
     const src = market?.recentTrades ?? [];

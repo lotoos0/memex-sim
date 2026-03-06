@@ -114,9 +114,38 @@ export interface QuickExecutionSnapshot {
   tsMs: number;
 }
 
+export interface QuickPositionSummary {
+  tokenId: string;
+  qty: number;
+  avgBuyPriceUsd: number | null;
+  avgSellPriceUsd: number | null;
+  boughtUsd: number;
+  soldUsd: number;
+  costBasisUsd: number;
+  realizedUsd: number;
+  holdingUsd: number;
+  unrealizedUsd: number;
+  totalPnlUsd: number;
+  updatedAtMs: number;
+  hasOpenPosition: boolean;
+  hasHistory: boolean;
+  tradesCount: number;
+  recentFills: QuickTrade[];
+}
+
+export interface QuickOrderPanelState {
+  tokenId: string;
+  pendingOrders: QuickPendingOrder[];
+  executions: QuickExecutionSnapshot[];
+  hasPendingOrders: boolean;
+  hasExecutionHistory: boolean;
+  isEmpty: boolean;
+}
+
 type Ghost = { price: number } | null;
 const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 const EMPTY_QUICK_EXECUTIONS: QuickExecutionSnapshot[] = [];
+const EMPTY_PENDING_QUICK_ORDERS: QuickPendingOrder[] = [];
 
 type PosAcc = { side: Side; openTs: number; lots: { qty:number; price:number; ts:number }[]; fees:number };
 export interface PositionHistory {
@@ -951,7 +980,11 @@ export const selectQuickPositionByTokenId = (tokenId: string) =>
 
 export const selectQuickTradesByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickTrade[] =>
-    s.quickTradesByTokenId[tokenId] ?? EMPTY_QUICK_TRADES;
+    getQuickTradesForToken(s, tokenId);
+
+export const selectQuickPendingOrdersByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): QuickPendingOrder[] =>
+    getQuickPendingOrdersForToken(s, tokenId);
 
 export const selectLastQuickExecutionByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickExecutionSnapshot | null =>
@@ -959,22 +992,31 @@ export const selectLastQuickExecutionByTokenId = (tokenId: string) =>
 
 export const selectQuickExecutionHistoryByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickExecutionSnapshot[] =>
-    s.quickExecutionHistoryByTokenId[tokenId] ?? EMPTY_QUICK_EXECUTIONS;
+    getQuickExecutionHistoryForToken(s, tokenId);
+
+export const selectQuickPositionSummaryByTokenId = (tokenId: string, currentPriceUsd: number) =>
+  (s: ReturnType<typeof useTradingStore.getState>): QuickPositionSummary =>
+    buildQuickPositionSummary(s, tokenId, currentPriceUsd);
+
+export const selectQuickOrderPanelStateByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): QuickOrderPanelState => {
+    const pendingOrders = getQuickPendingOrdersForToken(s, tokenId);
+    const executions = getQuickExecutionHistoryForToken(s, tokenId).slice().reverse();
+    return {
+      tokenId,
+      pendingOrders,
+      executions,
+      hasPendingOrders: pendingOrders.length > 0,
+      hasExecutionHistory: executions.length > 0,
+      isEmpty: pendingOrders.length === 0 && executions.length === 0,
+    };
+  };
 
 export const selectAvgEntryPriceByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): number | null => {
-    const trades = s.quickTradesByTokenId[tokenId] ?? [];
-    let buyQty = 0;
-    let buyNotional = 0;
-    for (let i = 0; i < trades.length; i++) {
-      const t = trades[i]!;
-      if (t.side !== 'buy') continue;
-      if (!Number.isFinite(t.qty) || !Number.isFinite(t.priceUsd)) continue;
-      if (t.qty <= 0 || t.priceUsd <= 0) continue;
-      buyQty += t.qty;
-      buyNotional += t.qty * t.priceUsd;
-    }
-    if (buyQty > 0) return buyNotional / buyQty;
+    const trades = getQuickTradesForToken(s, tokenId);
+    const avg = getAvgTradePrice(trades, 'buy');
+    if (avg != null) return avg;
 
     const p = s.quickPositionsByTokenId[tokenId];
     if (!p || !Number.isFinite(p.avgEntryUsd) || p.avgEntryUsd <= 0) return null;
@@ -982,25 +1024,12 @@ export const selectAvgEntryPriceByTokenId = (tokenId: string) =>
   };
 
 export const selectAvgSellPriceByTokenId = (tokenId: string) =>
-  (s: ReturnType<typeof useTradingStore.getState>): number | null => {
-    const trades = s.quickTradesByTokenId[tokenId] ?? [];
-    let sellQty = 0;
-    let sellNotional = 0;
-    for (let i = 0; i < trades.length; i++) {
-      const t = trades[i]!;
-      if (t.side !== 'sell') continue;
-      if (!Number.isFinite(t.qty) || !Number.isFinite(t.priceUsd)) continue;
-      if (t.qty <= 0 || t.priceUsd <= 0) continue;
-      sellQty += t.qty;
-      sellNotional += t.qty * t.priceUsd;
-    }
-    if (sellQty <= 0) return null;
-    return sellNotional / sellQty;
-  };
+  (s: ReturnType<typeof useTradingStore.getState>): number | null =>
+    getAvgTradePrice(getQuickTradesForToken(s, tokenId), 'sell');
 
 export const selectAvgEntryMcapByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): number | null => {
-    const trades = s.quickTradesByTokenId[tokenId] ?? [];
+    const trades = getQuickTradesForToken(s, tokenId);
     let buyUsdWeight = 0;
     let buyMcapWeighted = 0;
     for (let i = 0; i < trades.length; i++) {
@@ -1020,7 +1049,7 @@ export const selectAvgEntryMcapByTokenId = (tokenId: string) =>
 
 export const selectAvgSellMcapByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): number | null => {
-    const trades = s.quickTradesByTokenId[tokenId] ?? [];
+    const trades = getQuickTradesForToken(s, tokenId);
     let sellUsdWeight = 0;
     let sellMcapWeighted = 0;
     for (let i = 0; i < trades.length; i++) {
@@ -1037,5 +1066,83 @@ export const selectAvgSellMcapByTokenId = (tokenId: string) =>
     if (sellUsdWeight <= 0) return null;
     return sellMcapWeighted / sellUsdWeight;
   };
+
+function getQuickTradesForToken(
+  s: ReturnType<typeof useTradingStore.getState>,
+  tokenId: string
+): QuickTrade[] {
+  return s.quickTradesByTokenId[tokenId] ?? EMPTY_QUICK_TRADES;
+}
+
+function getQuickExecutionHistoryForToken(
+  s: ReturnType<typeof useTradingStore.getState>,
+  tokenId: string
+): QuickExecutionSnapshot[] {
+  return s.quickExecutionHistoryByTokenId[tokenId] ?? EMPTY_QUICK_EXECUTIONS;
+}
+
+function getQuickPendingOrdersForToken(
+  s: ReturnType<typeof useTradingStore.getState>,
+  tokenId: string
+): QuickPendingOrder[] {
+  const values = Object.values(s.pendingQuickOrdersById);
+  if (values.length === 0) return EMPTY_PENDING_QUICK_ORDERS;
+  const rows = values
+    .filter((order) => order.tokenId === tokenId)
+    .sort((a, b) => b.submitMs - a.submitMs);
+  return rows.length > 0 ? rows : EMPTY_PENDING_QUICK_ORDERS;
+}
+
+function getAvgTradePrice(trades: QuickTrade[], side: Side): number | null {
+  let qty = 0;
+  let notional = 0;
+  for (let i = 0; i < trades.length; i++) {
+    const t = trades[i]!;
+    if (t.side !== side) continue;
+    if (!Number.isFinite(t.qty) || !Number.isFinite(t.priceUsd)) continue;
+    if (t.qty <= 0 || t.priceUsd <= 0) continue;
+    qty += t.qty;
+    notional += t.qty * t.priceUsd;
+  }
+  if (qty <= 0) return null;
+  return notional / qty;
+}
+
+function buildQuickPositionSummary(
+  s: ReturnType<typeof useTradingStore.getState>,
+  tokenId: string,
+  currentPriceUsd: number
+): QuickPositionSummary {
+  const position = s.quickPositionsByTokenId[tokenId] ?? null;
+  const trades = getQuickTradesForToken(s, tokenId);
+  const qty = position?.qty ?? 0;
+  const boughtUsd = position?.boughtUsd ?? 0;
+  const soldUsd = position?.soldUsd ?? 0;
+  const costBasisUsd = position?.costBasisUsd ?? 0;
+  const realizedUsd = position?.realizedPnlUsd ?? 0;
+  const safePriceUsd = Number.isFinite(currentPriceUsd) && currentPriceUsd > 0 ? currentPriceUsd : 0;
+  const holdingUsd = qty > 0 ? qty * safePriceUsd : 0;
+  const unrealizedUsd = qty > 0 ? holdingUsd - costBasisUsd : 0;
+  const avgBuyPriceUsd = getAvgTradePrice(trades, 'buy') ?? (position?.avgEntryUsd ?? null);
+  const avgSellPriceUsd = getAvgTradePrice(trades, 'sell');
+  return {
+    tokenId,
+    qty,
+    avgBuyPriceUsd,
+    avgSellPriceUsd,
+    boughtUsd,
+    soldUsd,
+    costBasisUsd,
+    realizedUsd,
+    holdingUsd,
+    unrealizedUsd,
+    totalPnlUsd: realizedUsd + unrealizedUsd,
+    updatedAtMs: position?.updatedAtMs ?? 0,
+    hasOpenPosition: qty > 0,
+    hasHistory: trades.length > 0,
+    tradesCount: trades.length,
+    recentFills: trades.slice(-8).reverse(),
+  };
+}
 
 

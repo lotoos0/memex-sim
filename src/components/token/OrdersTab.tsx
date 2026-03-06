@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Clock3, ListOrdered } from 'lucide-react';
 import {
-  selectQuickExecutionHistoryByTokenId,
+  selectQuickOrderPanelStateByTokenId,
   useTradingStore,
   type QuickPendingOrder,
 } from '../../store/tradingStore';
@@ -61,21 +61,13 @@ function statusClass(status: 'pending' | 'filled' | 'failed'): string {
 }
 
 export default function OrdersTab({ tokenId, displayUnit }: Props) {
-  const pendingById = useTradingStore((s) => s.pendingQuickOrdersById);
-  const executionHistory = useTradingStore(selectQuickExecutionHistoryByTokenId(tokenId));
+  const panelStateSelector = useMemo(() => selectQuickOrderPanelStateByTokenId(tokenId), [tokenId]);
+  const panelState = useTradingStore(panelStateSelector);
 
   const fmtMoney = (usd: number): string =>
     displayUnit === 'usd' ? fmtUsd(usd) : `${fmtSol(usdToSol(usd))} SOL`;
 
-  const pendingOrders = useMemo(
-    () =>
-      Object.values(pendingById)
-        .filter((order) => order.tokenId === tokenId)
-        .sort((a, b) => b.submitMs - a.submitMs),
-    [pendingById, tokenId]
-  );
-
-  if (pendingOrders.length === 0 && executionHistory.length === 0) {
+  if (panelState.isEmpty) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="max-w-[420px] rounded-xl border border-ax-border bg-ax-surface2 px-5 py-4 text-center">
@@ -100,9 +92,9 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
               <div className="text-[12px] font-semibold text-ax-text">Active Quick Orders</div>
               <div className="text-[10px] text-ax-text-dim">Pending submissions only</div>
             </div>
-            <div className="text-[10px] text-ax-text-dim">{pendingOrders.length} pending</div>
+            <div className="text-[10px] text-ax-text-dim">{panelState.pendingOrders.length} pending</div>
           </div>
-          {pendingOrders.length === 0 ? (
+          {!panelState.hasPendingOrders ? (
             <div className="px-3 py-4 text-center text-[11px] text-ax-text-dim">No active quick orders.</div>
           ) : (
             <div className="space-y-1 px-3 py-2">
@@ -114,7 +106,7 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
                 <span>Status</span>
                 <span>ETA</span>
               </div>
-              {pendingOrders.map((order) => (
+              {panelState.pendingOrders.map((order) => (
                 <PendingRow key={order.orderId} order={order} />
               ))}
             </div>
@@ -127,10 +119,10 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
               <div className="text-[12px] font-semibold text-ax-text">Recent Executions</div>
               <div className="text-[10px] text-ax-text-dim">Quick execution notices, latest first</div>
             </div>
-            <div className="text-[10px] text-ax-text-dim">{executionHistory.length} rows</div>
+            <div className="text-[10px] text-ax-text-dim">{panelState.executions.length} rows</div>
           </div>
 
-          {executionHistory.length === 0 ? (
+          {!panelState.hasExecutionHistory ? (
             <div className="px-3 py-4 text-center text-[11px] text-ax-text-dim">No execution history yet.</div>
           ) : (
             <div className="space-y-1 px-3 py-2">
@@ -143,10 +135,7 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
                 <span>Price / Cost</span>
                 <span>Age</span>
               </div>
-              {executionHistory
-                .slice()
-                .reverse()
-                .map((execution) => (
+              {panelState.executions.map((execution) => (
                   <div
                     key={`${execution.orderId}-${execution.tsMs}`}
                     className="grid grid-cols-[58px_92px_92px_82px_68px_1fr_56px] gap-2 border-b border-ax-border/40 py-1 text-[11px]"
@@ -168,7 +157,7 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
                     </span>
                     <span className="text-ax-text-dim">{fmtAgo(execution.tsMs)}</span>
                   </div>
-                ))}
+              ))}
             </div>
           )}
         </div>
