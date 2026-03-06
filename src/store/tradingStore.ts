@@ -79,7 +79,7 @@ export interface QuickTradeResult {
   etaMs?: number;
 }
 
-interface PendingQuickOrder {
+export interface QuickPendingOrder {
   orderId: string;
   tokenId: string;
   side: Side;
@@ -99,9 +99,13 @@ export interface QuickExecutionSnapshot {
   orderId: string;
   side: Side;
   status: 'filled' | 'failed';
+  amountIn: number;
   expectedOut: number;
   minOut: number;
   actualOut: number;
+  submitMs: number;
+  execMs: number;
+  txCostSol: number;
   avgPriceUsd?: number;
   impactPct?: number;
   priceBeforeUsd?: number;
@@ -112,6 +116,7 @@ export interface QuickExecutionSnapshot {
 
 type Ghost = { price: number } | null;
 const EMPTY_QUICK_TRADES: QuickTrade[] = [];
+const EMPTY_QUICK_EXECUTIONS: QuickExecutionSnapshot[] = [];
 
 type PosAcc = { side: Side; openTs: number; lots: { qty:number; price:number; ts:number }[]; fees:number };
 export interface PositionHistory {
@@ -153,8 +158,9 @@ type Store = {
   trades: Trade[];
   quickPositionsByTokenId: Record<string, QuickPosition>;
   quickTradesByTokenId: Record<string, QuickTrade[]>;
-  pendingQuickOrdersById: Record<string, PendingQuickOrder>;
+  pendingQuickOrdersById: Record<string, QuickPendingOrder>;
   lastQuickExecutionByTokenId: Record<string, QuickExecutionSnapshot>;
+  quickExecutionHistoryByTokenId: Record<string, QuickExecutionSnapshot[]>;
   presets: Preset[];
   risk: RiskLimits;
   feeBps: number;
@@ -217,6 +223,7 @@ export const useTradingStore = create<Store>((set, get) => ({
   quickTradesByTokenId: {},
   pendingQuickOrdersById: {},
   lastQuickExecutionByTokenId: {},
+  quickExecutionHistoryByTokenId: {},
   presets: [
     { id: 'p1', label: '0.10', qtyPct: 0.10, slPct: 0.01, tpPct: 0.02 },
     { id: 'p2', label: '0.20', qtyPct: 0.20, slPct: 0.015, tpPct: 0.03 },
@@ -318,7 +325,7 @@ export const useTradingStore = create<Store>((set, get) => ({
       return { ok: false, reason: submit.reason };
     }
 
-    const pending: PendingQuickOrder = {
+    const pending: QuickPendingOrder = {
       orderId: submit.orderId,
       tokenId,
       side: 'buy',
@@ -409,7 +416,7 @@ export const useTradingStore = create<Store>((set, get) => ({
       return { ok: false, reason: submit.reason };
     }
 
-    const pending: PendingQuickOrder = {
+    const pending: QuickPendingOrder = {
       orderId: submit.orderId,
       tokenId,
       side: 'sell',
@@ -753,7 +760,7 @@ function slippagePctToBps(slippagePct: number): number {
   return Math.max(0, Math.min(10_000, Math.round(slippagePct * 100)));
 }
 
-function sumReservedSellQty(pending: Record<string, PendingQuickOrder>, tokenId: string): number {
+function sumReservedSellQty(pending: Record<string, QuickPendingOrder>, tokenId: string): number {
   let qty = 0;
   for (const p of Object.values(pending)) {
     if (p.tokenId !== tokenId) continue;
@@ -778,9 +785,13 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
       orderId: execution.orderId,
       side,
       status: 'filled',
+      amountIn: execution.amountIn,
       expectedOut: execution.expectedOut,
       minOut: execution.minOut,
       actualOut: execution.actualOut,
+      submitMs: execution.submitMs,
+      execMs: execution.execMs,
+      txCostSol: execution.txCostSol,
       avgPriceUsd: execution.fill.avgPriceUsd,
       impactPct: execution.fill.impactPct,
       priceBeforeUsd: execution.fill.priceBeforeUsd,
@@ -792,9 +803,13 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
       orderId: execution.orderId,
       side,
       status: 'failed',
+      amountIn: execution.amountIn,
       expectedOut: execution.expectedOut,
       minOut: execution.minOut,
       actualOut: execution.actualOut,
+      submitMs: execution.submitMs,
+      execMs: execution.execMs,
+      txCostSol: execution.txCostSol,
       reason: execution.reason,
       tsMs: execution.execMs,
     };
@@ -802,6 +817,11 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
   const nextLastByToken = {
     ...st.lastQuickExecutionByTokenId,
     [execution.tokenId]: nextLastExec,
+  };
+  const prevExecHistory = st.quickExecutionHistoryByTokenId[execution.tokenId] ?? EMPTY_QUICK_EXECUTIONS;
+  const nextExecHistoryByToken = {
+    ...st.quickExecutionHistoryByTokenId,
+    [execution.tokenId]: prevExecHistory.concat([nextLastExec]).slice(-20),
   };
 
   if (execution.status === 'FAILED') {
@@ -811,6 +831,7 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
     useTradingStore.setState({
       pendingQuickOrdersById: nextPending,
       lastQuickExecutionByTokenId: nextLastByToken,
+      quickExecutionHistoryByTokenId: nextExecHistoryByToken,
     });
     return;
   }
@@ -856,6 +877,7 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
     useTradingStore.setState({
       pendingQuickOrdersById: nextPending,
       lastQuickExecutionByTokenId: nextLastByToken,
+      quickExecutionHistoryByTokenId: nextExecHistoryByToken,
       quickPositionsByTokenId: {
         ...st.quickPositionsByTokenId,
         [execution.tokenId]: nextPos,
@@ -905,6 +927,7 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
   useTradingStore.setState({
     pendingQuickOrdersById: nextPending,
     lastQuickExecutionByTokenId: nextLastByToken,
+    quickExecutionHistoryByTokenId: nextExecHistoryByToken,
     quickPositionsByTokenId: {
       ...st.quickPositionsByTokenId,
       [execution.tokenId]: nextPos,
@@ -933,6 +956,10 @@ export const selectQuickTradesByTokenId = (tokenId: string) =>
 export const selectLastQuickExecutionByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickExecutionSnapshot | null =>
     s.lastQuickExecutionByTokenId[tokenId] ?? null;
+
+export const selectQuickExecutionHistoryByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): QuickExecutionSnapshot[] =>
+    s.quickExecutionHistoryByTokenId[tokenId] ?? EMPTY_QUICK_EXECUTIONS;
 
 export const selectAvgEntryPriceByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): number | null => {
