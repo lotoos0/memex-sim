@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import { useNavigate } from 'react-router-dom';
 import { Check, Copy, ExternalLink, Feather, LoaderCircle, Star, Zap } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
-import { useTokenStore } from '../../store/tokenStore';
+import { selectTokenAgeLabel, selectTokenTradeFlow60s, useTokenStore } from '../../store/tokenStore';
 import { useTradingStore } from '../../store/tradingStore';
 import { usePostStore, type TokenPost } from '../../store/postStore';
 import { useFavoritesStore } from '../../store/favoritesStore';
@@ -17,13 +17,6 @@ function fmtUsd(v: number): string {
   if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
   if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
   return `$${v.toFixed(0)}`;
-}
-
-function fmtAge(simMs: number): string {
-  const s = simMs / 1000;
-  if (s < 60) return `${Math.floor(s)}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  return `${Math.floor(s / 3600)}h`;
 }
 
 function fmtPct(v: number): string {
@@ -66,6 +59,8 @@ export default function TokenCard({
 }: Props) {
   const navigate = useNavigate();
   const setActive = useTokenStore(s => s.setActiveToken);
+  const ageLabel = useTokenStore(useCallback(selectTokenAgeLabel(token.id), [token.id]));
+  const tradeFlow60s = useTokenStore(useCallback(selectTokenTradeFlow60s(token.id), [token.id]));
   const selectQuickPosition = useCallback(
     (s: ReturnType<typeof useTradingStore.getState>) => s.quickPositionsByTokenId[token.id] ?? null,
     [token.id]
@@ -96,7 +91,7 @@ export default function TokenCard({
   const hasOpenPosition = (quickPosition?.qty ?? 0) > 0;
   const holdingUsd = hasOpenPosition ? (quickPosition!.qty * token.lastPriceUsd) : 0;
   const unrealizedUsd = hasOpenPosition ? holdingUsd - quickPosition!.costBasisUsd : 0;
-  const txCount5m = token.buys5m + token.sells5m;
+  const txCount60s = tradeFlow60s.tx60s;
   const copyLabel = copyState === 'ok' ? 'Copied CA' : copyState === 'err' ? 'Copy failed' : 'Copy CA';
   const externalTokenUrl = `https://solscan.io/token/${encodeURIComponent(token.id)}`;
 
@@ -191,7 +186,6 @@ export default function TokenCard({
             <div className={`text-[10px] font-semibold ${token.changePct >= 0 ? 'text-ax-green' : 'text-ax-red'}`}>
               {fmtPct(token.changePct)}
             </div>
-            <div className="text-[9px] text-ax-text-dim">{fmtAge(token.simTimeMs)}</div>
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
@@ -233,7 +227,17 @@ export default function TokenCard({
           </div>
         </div>
 
-        <div className="grid grid-cols-5 gap-1 text-[10px]">
+        <div className="flex items-center gap-2 overflow-hidden whitespace-nowrap text-[10px]">
+          <span className="text-ax-text-dim">
+            Age <span className="text-ax-text">{ageLabel}</span>
+          </span>
+          <HoverTooltip label="Buys (60s) / Sells (60s)">
+            <span className="text-ax-text-dim">
+              <span className="text-ax-green">{tradeFlow60s.buys60s}B</span>
+              {' / '}
+              <span className="text-ax-red">{tradeFlow60s.sells60s}S</span>
+            </span>
+          </HoverTooltip>
           <span className="text-ax-text-dim">
             MC <span className="text-ax-text">{fmtUsd(token.mcapUsd)}</span>
           </span>
@@ -244,12 +248,7 @@ export default function TokenCard({
             Vol <span className="text-ax-text">{fmtUsd(token.vol5mUsd)}</span>
           </span>
           <span className="text-ax-text-dim">
-            TX <span className="text-ax-text">{txCount5m}</span>
-          </span>
-          <span className="text-ax-text-dim">
-            <span className="text-ax-green">{token.buys5m}B</span>
-            {' / '}
-            <span className="text-ax-red">{token.sells5m}S</span>
+            TX <span className="text-ax-text">{txCount60s}</span>
           </span>
         </div>
       </div>
@@ -329,7 +328,7 @@ export default function TokenCard({
             <div className={`text-xs font-bold ${token.changePct >= 0 ? 'text-ax-green' : 'text-ax-red'}`}>
               {fmtPct(token.changePct)}
             </div>
-            <div className="text-ax-text-dim text-[10px]">{fmtAge(token.simTimeMs)}</div>
+            <div className="text-ax-text-dim text-[10px]">{ageLabel}</div>
           </div>
         </div>
       </div>
