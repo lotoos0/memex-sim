@@ -2,11 +2,8 @@ import { useMemo } from 'react';
 import { Activity, Clock3, Wallet } from 'lucide-react';
 import { useTokenStore } from '../../store/tokenStore';
 import {
-  selectAvgEntryPriceByTokenId,
-  selectAvgSellPriceByTokenId,
   selectLastQuickExecutionByTokenId,
-  selectQuickPositionByTokenId,
-  selectQuickTradesByTokenId,
+  selectQuickPositionSummaryByTokenId,
   useTradingStore,
 } from '../../store/tradingStore';
 import { usdToSol } from '../../store/walletStore';
@@ -70,11 +67,12 @@ function executionStatusTone(status: 'filled' | 'failed'): string {
 
 export default function PositionsTab({ tokenId, displayUnit }: Props) {
   const token = useTokenStore((s) => s.tokensById[tokenId] ?? null);
-  const quickPosition = useTradingStore(selectQuickPositionByTokenId(tokenId));
-  const avgBuyPrice = useTradingStore(selectAvgEntryPriceByTokenId(tokenId));
-  const avgSellPrice = useTradingStore(selectAvgSellPriceByTokenId(tokenId));
+  const positionSummarySelector = useMemo(
+    () => selectQuickPositionSummaryByTokenId(tokenId, token?.lastPriceUsd ?? 0),
+    [token?.lastPriceUsd, tokenId]
+  );
+  const summary = useTradingStore(positionSummarySelector);
   const lastExecution = useTradingStore(selectLastQuickExecutionByTokenId(tokenId));
-  const quickTrades = useTradingStore(selectQuickTradesByTokenId(tokenId));
 
   const fmtMoney = (usd: number): string =>
     displayUnit === 'usd' ? fmtUsd(usd) : `${fmtSol(usdToSol(usd))} SOL`;
@@ -84,21 +82,7 @@ export default function PositionsTab({ tokenId, displayUnit }: Props) {
     return `${sign}${fmtMoney(Math.abs(usd))}`;
   };
 
-  const positionQty = quickPosition?.qty ?? 0;
-  const priceUsd = token?.lastPriceUsd ?? 0;
-  const holdingUsd = positionQty > 0 ? positionQty * priceUsd : 0;
-  const unrealizedUsd = positionQty > 0 ? holdingUsd - (quickPosition?.costBasisUsd ?? 0) : 0;
-  const realizedUsd = quickPosition?.realizedPnlUsd ?? 0;
-  const totalPnlUsd = realizedUsd + unrealizedUsd;
-  const hasOpenPosition = positionQty > 0;
-  const hasHistory = quickTrades.length > 0;
-
-  const recentFills = useMemo(
-    () => quickTrades.slice(-8).reverse(),
-    [quickTrades]
-  );
-
-  if (!hasOpenPosition && !hasHistory) {
+  if (!summary.hasOpenPosition && !summary.hasHistory) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="max-w-[420px] rounded-xl border border-ax-border bg-ax-surface2 px-5 py-4 text-center">
@@ -119,37 +103,37 @@ export default function PositionsTab({ tokenId, displayUnit }: Props) {
       <div className="space-y-3">
         <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
           <PositionStat
-            label={hasOpenPosition ? 'Remaining' : 'Closed Size'}
-            value={fmtQty(positionQty)}
-            subValue={hasOpenPosition ? fmtMoney(holdingUsd) : '0'}
+            label={summary.hasOpenPosition ? 'Remaining' : 'Closed Size'}
+            value={fmtQty(summary.qty)}
+            subValue={summary.hasOpenPosition ? fmtMoney(summary.holdingUsd) : '0'}
           />
           <PositionStat
             label="Avg Buy"
-            value={fmtPrice(avgBuyPrice)}
-            subValue={quickPosition?.boughtUsd ? fmtMoney(quickPosition.boughtUsd) : '-'}
+            value={fmtPrice(summary.avgBuyPriceUsd)}
+            subValue={summary.boughtUsd ? fmtMoney(summary.boughtUsd) : '-'}
           />
           <PositionStat
             label="Avg Sell"
-            value={fmtPrice(avgSellPrice)}
-            subValue={quickPosition?.soldUsd ? fmtMoney(quickPosition.soldUsd) : '-'}
+            value={fmtPrice(summary.avgSellPriceUsd)}
+            subValue={summary.soldUsd ? fmtMoney(summary.soldUsd) : '-'}
           />
           <PositionStat
             label="Realized"
-            value={fmtSignedMoney(realizedUsd)}
-            valueClassName={statTone(realizedUsd)}
-            subValue={quickPosition?.soldUsd ? `Sold ${fmtMoney(quickPosition.soldUsd)}` : '-'}
+            value={fmtSignedMoney(summary.realizedUsd)}
+            valueClassName={statTone(summary.realizedUsd)}
+            subValue={summary.soldUsd ? `Sold ${fmtMoney(summary.soldUsd)}` : '-'}
           />
           <PositionStat
             label="Unrealized"
-            value={fmtSignedMoney(unrealizedUsd)}
-            valueClassName={statTone(unrealizedUsd)}
-            subValue={hasOpenPosition ? `Cost ${fmtMoney(quickPosition?.costBasisUsd ?? 0)}` : '-'}
+            value={fmtSignedMoney(summary.unrealizedUsd)}
+            valueClassName={statTone(summary.unrealizedUsd)}
+            subValue={summary.hasOpenPosition ? `Cost ${fmtMoney(summary.costBasisUsd)}` : '-'}
           />
           <PositionStat
             label="Total PnL"
-            value={fmtSignedMoney(totalPnlUsd)}
-            valueClassName={statTone(totalPnlUsd)}
-            subValue={quickPosition ? `Updated ${fmtAgo(quickPosition.updatedAtMs)}` : '-'}
+            value={fmtSignedMoney(summary.totalPnlUsd)}
+            valueClassName={statTone(summary.totalPnlUsd)}
+            subValue={summary.updatedAtMs > 0 ? `Updated ${fmtAgo(summary.updatedAtMs)}` : '-'}
           />
         </div>
 
@@ -160,10 +144,10 @@ export default function PositionsTab({ tokenId, displayUnit }: Props) {
                 <div className="text-[12px] font-semibold text-ax-text">Recent Fills</div>
                 <div className="text-[10px] text-ax-text-dim">Quick executions only</div>
               </div>
-              <div className="text-[10px] text-ax-text-dim">{quickTrades.length} total</div>
+              <div className="text-[10px] text-ax-text-dim">{summary.tradesCount} total</div>
             </div>
 
-            {recentFills.length === 0 ? (
+            {summary.recentFills.length === 0 ? (
               <div className="px-3 py-5 text-center text-[11px] text-ax-text-dim">
                 No fills yet.
               </div>
@@ -177,7 +161,7 @@ export default function PositionsTab({ tokenId, displayUnit }: Props) {
                   <span>MC</span>
                   <span>Age</span>
                 </div>
-                {recentFills.map((trade) => (
+                {summary.recentFills.map((trade) => (
                   <div
                     key={trade.id}
                     className="grid grid-cols-[54px_92px_92px_88px_1fr_50px] gap-2 border-b border-ax-border/40 py-1 text-[11px]"
@@ -259,15 +243,15 @@ export default function PositionsTab({ tokenId, displayUnit }: Props) {
 
             <div className="rounded-xl border border-ax-border bg-ax-surface2 px-3 py-3">
               <div className="text-[12px] font-semibold text-ax-text">
-                {hasOpenPosition ? 'Open Position' : 'Closed Summary'}
+                {summary.hasOpenPosition ? 'Open Position' : 'Closed Summary'}
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
                 <SummaryRow label="Token" value={token?.ticker ?? tokenId} />
-                <SummaryRow label="Last Price" value={fmtPrice(priceUsd)} />
-                <SummaryRow label="Bought" value={fmtMoney(quickPosition?.boughtUsd ?? 0)} />
-                <SummaryRow label="Sold" value={fmtMoney(quickPosition?.soldUsd ?? 0)} />
-                <SummaryRow label="Cost Basis" value={fmtMoney(quickPosition?.costBasisUsd ?? 0)} />
-                <SummaryRow label="Remaining Qty" value={fmtQty(positionQty)} />
+                <SummaryRow label="Last Price" value={fmtPrice(token?.lastPriceUsd ?? 0)} />
+                <SummaryRow label="Bought" value={fmtMoney(summary.boughtUsd)} />
+                <SummaryRow label="Sold" value={fmtMoney(summary.soldUsd)} />
+                <SummaryRow label="Cost Basis" value={fmtMoney(summary.costBasisUsd)} />
+                <SummaryRow label="Remaining Qty" value={fmtQty(summary.qty)} />
               </div>
             </div>
           </div>

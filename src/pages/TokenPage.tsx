@@ -16,11 +16,14 @@ import TokenAvatar from '../components/common/TokenAvatar';
 import HoverTooltip from '../components/ui/HoverTooltip';
 import { registry } from '../tokens/registry';
 import type { CurveDebugSnapshot } from '../tokens/tokenSim';
-import { useTradingStore, type QuickTrade } from '../store/tradingStore';
+import {
+  selectQuickPositionSummaryByTokenId,
+  selectQuickTradesByTokenId,
+  useTradingStore,
+} from '../store/tradingStore';
 import { SESSION_BUCKET_LABEL, type SessionBucket } from '../market/session';
 import { useFavoritesStore } from '../store/favoritesStore';
 
-const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 const INSTANT_TRADE_ENABLED_STORAGE_KEY = 'memex:instant-trade:enabled';
 const TRADES_TABLE_ENABLED_STORAGE_KEY = 'memex:trades-table:enabled';
 const SESSION_OVERRIDE_CYCLE: Array<SessionBucket | null> = [null, 'EU', 'NA', 'OVERLAP', 'OFF'];
@@ -71,16 +74,13 @@ export default function TokenPage() {
   const marketSessionBucket = useTokenStore(selectMarketSessionBucket);
   const marketSessionBucketOverride = useTokenStore(selectMarketSessionBucketOverride);
   const setMarketSessionBucketOverride = useTokenStore(s => s.setMarketSessionBucketOverride);
-  const selectQuickPosition = useMemo(
-    () => (s: ReturnType<typeof useTradingStore.getState>) => (id ? (s.quickPositionsByTokenId[id] ?? null) : null),
-    [id]
+  const quickPositionSummarySelector = useMemo(
+    () => selectQuickPositionSummaryByTokenId(id ?? '', token?.lastPriceUsd ?? 0),
+    [id, token?.lastPriceUsd]
   );
-  const selectTokenTrades = useMemo(
-    () => (s: ReturnType<typeof useTradingStore.getState>) => (id ? (s.quickTradesByTokenId[id] ?? EMPTY_QUICK_TRADES) : EMPTY_QUICK_TRADES),
-    [id]
-  );
-  const quickPosition = useTradingStore(selectQuickPosition);
-  const quickTrades = useTradingStore(selectTokenTrades);
+  const quickPositionSummary = useTradingStore(quickPositionSummarySelector);
+  const quickTradesSelector = useMemo(() => selectQuickTradesByTokenId(id ?? ''), [id]);
+  const quickTrades = useTradingStore(quickTradesSelector);
   const isDev = import.meta.env.DEV;
   const debugFromQuery = useMemo(() => {
     if (!isDev) return false;
@@ -157,10 +157,6 @@ export default function TokenPage() {
     if (!token?.id) return;
     toggleFavorite(token.id);
   };
-  const positionQty = quickPosition?.qty ?? 0;
-  const hasOpenPosition = positionQty > 0;
-  const holdingUsd = hasOpenPosition ? positionQty * token.lastPriceUsd : 0;
-  const unrealizedUsd = hasOpenPosition ? holdingUsd - (quickPosition?.costBasisUsd ?? 0) : 0;
   const recentTrades = quickTrades.slice(-3).reverse();
 
   return (
@@ -281,28 +277,28 @@ export default function TokenPage() {
           <span>
             Position{' '}
             <span className="text-ax-text font-medium">
-              {hasOpenPosition ? `${positionQty.toFixed(0)} ${token.ticker}` : 'none'}
+              {quickPositionSummary.hasOpenPosition ? `${quickPositionSummary.qty.toFixed(0)} ${token.ticker}` : 'none'}
             </span>
           </span>
           <span>
             Avg Entry{' '}
             <span className="text-ax-text font-medium">
-              {hasOpenPosition ? `$${fmtPrice(quickPosition!.avgEntryUsd)}` : '-'}
+              {quickPositionSummary.hasOpenPosition ? `$${fmtPrice(quickPositionSummary.avgBuyPriceUsd ?? 0)}` : '-'}
             </span>
           </span>
           <span>
-            Holding <span className="text-ax-text font-medium">{hasOpenPosition ? fmtUsd(holdingUsd) : '$0'}</span>
+            Holding <span className="text-ax-text font-medium">{quickPositionSummary.hasOpenPosition ? fmtUsd(quickPositionSummary.holdingUsd) : '$0'}</span>
           </span>
           <span>
             uPnL{' '}
-            <span className={unrealizedUsd >= 0 ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
-              {hasOpenPosition ? fmtSignedUsd(unrealizedUsd) : '$0'}
+            <span className={quickPositionSummary.unrealizedUsd >= 0 ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
+              {quickPositionSummary.hasOpenPosition ? fmtSignedUsd(quickPositionSummary.unrealizedUsd) : '$0'}
             </span>
           </span>
           <span>
             Realized{' '}
-            <span className={(quickPosition?.realizedPnlUsd ?? 0) >= 0 ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
-              {fmtSignedUsd(quickPosition?.realizedPnlUsd ?? 0)}
+            <span className={quickPositionSummary.realizedUsd >= 0 ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
+              {fmtSignedUsd(quickPositionSummary.realizedUsd)}
             </span>
           </span>
         </div>
