@@ -89,3 +89,5 @@ PRs welcome. Report bugs and feature requests in **Issues**:
 ## License
 
 MIT. See `LICENSE` file.
+
+> CI gate smoke test marker (2026-03-06).
