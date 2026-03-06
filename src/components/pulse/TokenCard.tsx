@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Feather, LoaderCircle, Star, Zap } from 'lucide-react';
+import { Check, Copy, ExternalLink, Feather, LoaderCircle, Star, Zap } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
 import { useTokenStore } from '../../store/tokenStore';
 import { useTradingStore } from '../../store/tradingStore';
@@ -11,6 +11,7 @@ import TweetHoverCard from '../news/TweetHoverCard';
 import HoverTooltip from '../ui/HoverTooltip';
 
 const EMPTY_POSTS: TokenPost[] = [];
+const COPY_FEEDBACK_MS = 1_200;
 
 function fmtUsd(v: number): string {
   if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
@@ -44,6 +45,8 @@ function fmtQuickBuyAmount(v: number): string {
   return v.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 }
 
+export type PulseDisplayMode = 'comfortable' | 'dense';
+
 interface Props {
   token: TokenState;
   quickBuyAmount: number;
@@ -52,9 +55,15 @@ interface Props {
     prioritySol: number;
     bribeSol: number;
   };
+  displayMode?: PulseDisplayMode;
 }
 
-export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Props) {
+export default function TokenCard({
+  token,
+  quickBuyAmount,
+  quickBuyOptions,
+  displayMode = 'comfortable',
+}: Props) {
   const navigate = useNavigate();
   const setActive = useTokenStore(s => s.setActiveToken);
   const selectQuickPosition = useCallback(
@@ -79,12 +88,17 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
   const isFavorite = useFavoritesStore((s) => Boolean(s.favoritesById[token.id]));
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const [isBuying, setIsBuying] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'ok' | 'err'>('idle');
   const buyTimerRef = useRef<number | null>(null);
+  const copyTimerRef = useRef<number | null>(null);
 
   const isDead = token.phase === 'DEAD' || token.phase === 'RUGGED';
   const hasOpenPosition = (quickPosition?.qty ?? 0) > 0;
   const holdingUsd = hasOpenPosition ? (quickPosition!.qty * token.lastPriceUsd) : 0;
   const unrealizedUsd = hasOpenPosition ? holdingUsd - quickPosition!.costBasisUsd : 0;
+  const txCount5m = token.buys5m + token.sells5m;
+  const copyLabel = copyState === 'ok' ? 'Copied CA' : copyState === 'err' ? 'Copy failed' : 'Copy CA';
+  const externalTokenUrl = `https://solscan.io/token/${encodeURIComponent(token.id)}`;
 
   const handleClick = () => {
     setActive(token.id);
@@ -108,13 +122,139 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
     toggleFavorite(token.id);
   };
 
+  const handleCopyCa = async (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(token.id);
+      setCopyState('ok');
+    } catch {
+      setCopyState('err');
+    }
+    if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = window.setTimeout(() => {
+      setCopyState('idle');
+      copyTimerRef.current = null;
+    }, COPY_FEEDBACK_MS);
+  };
+
+  const handleOpenExternal = (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    window.open(externalTokenUrl, '_blank', 'noopener,noreferrer');
+  };
+
   useEffect(() => {
     return () => {
       if (buyTimerRef.current != null) {
         window.clearTimeout(buyTimerRef.current);
       }
+      if (copyTimerRef.current != null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
     };
   }, []);
+
+  if (displayMode === 'dense') {
+    return (
+      <div
+        onClick={handleClick}
+        className={[
+          'flex flex-col gap-1 px-2 py-1.5 rounded border cursor-pointer transition-all',
+          'hover:border-ax-border hover:bg-ax-surface2',
+          isDead
+            ? 'border-ax-red/30 bg-ax-red-dim/70'
+            : 'border-ax-border/50 bg-ax-surface',
+        ].join(' ')}
+      >
+        <div className="flex items-center gap-2">
+          <TokenAvatar
+            tokenId={token.id}
+            label={`${token.ticker} avatar`}
+            size={22}
+            className="h-[22px] w-[22px]"
+            previewMode="hover"
+          />
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1 min-w-0">
+              <span className={`font-bold text-[11px] truncate ${isDead ? 'text-ax-red' : 'text-ax-text'}`}>
+                {token.ticker}
+              </span>
+              {isDead && <span className="text-[9px] font-bold text-ax-red shrink-0">DEAD</span>}
+              <span className="text-[10px] text-ax-text-dim truncate">{token.name}</span>
+            </div>
+          </div>
+
+          <div className="text-right shrink-0">
+            <div className={`text-[10px] font-semibold ${token.changePct >= 0 ? 'text-ax-green' : 'text-ax-red'}`}>
+              {fmtPct(token.changePct)}
+            </div>
+            <div className="text-[9px] text-ax-text-dim">{fmtAge(token.simTimeMs)}</div>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <HoverTooltip label="Watchlist">
+              <button
+                type="button"
+                onClick={handleToggleFavorite}
+                aria-label={isFavorite ? 'Remove from watchlist' : 'Add to watchlist'}
+                className={[
+                  'inline-flex h-5 w-5 items-center justify-center rounded border transition-colors',
+                  isFavorite
+                    ? 'border-[#f5c54288] bg-[#f5c5421f] text-[#f5c542]'
+                    : 'border-ax-border bg-ax-surface2 text-ax-text-dim hover:text-ax-text',
+                ].join(' ')}
+              >
+                <Star size={11} fill={isFavorite ? 'currentColor' : 'none'} />
+              </button>
+            </HoverTooltip>
+            <HoverTooltip label={copyLabel}>
+              <button
+                type="button"
+                onClick={handleCopyCa}
+                aria-label="Copy token contract address"
+                className="inline-flex h-5 w-5 items-center justify-center rounded border border-ax-border bg-ax-surface2 text-ax-text-dim hover:text-ax-text transition-colors"
+              >
+                {copyState === 'ok' ? <Check size={11} /> : <Copy size={11} />}
+              </button>
+            </HoverTooltip>
+            <HoverTooltip label="Open external chart">
+              <button
+                type="button"
+                onClick={handleOpenExternal}
+                aria-label="Open external chart"
+                className="inline-flex h-5 w-5 items-center justify-center rounded border border-ax-border bg-ax-surface2 text-ax-text-dim hover:text-ax-text transition-colors"
+              >
+                <ExternalLink size={11} />
+              </button>
+            </HoverTooltip>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-5 gap-1 text-[10px]">
+          <span className="text-ax-text-dim">
+            MC <span className="text-ax-text">{fmtUsd(token.mcapUsd)}</span>
+          </span>
+          <span className="text-ax-text-dim">
+            Liq <span className="text-ax-text">{fmtUsd(token.liquidityUsd)}</span>
+          </span>
+          <span className="text-ax-text-dim">
+            Vol <span className="text-ax-text">{fmtUsd(token.vol5mUsd)}</span>
+          </span>
+          <span className="text-ax-text-dim">
+            TX <span className="text-ax-text">{txCount5m}</span>
+          </span>
+          <span className="text-ax-text-dim">
+            <span className="text-ax-green">{token.buys5m}B</span>
+            {' / '}
+            <span className="text-ax-red">{token.sells5m}S</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -163,6 +303,26 @@ export default function TokenCard({ token, quickBuyAmount, quickBuyOptions }: Pr
               ].join(' ')}
             >
               <Star size={13} fill={isFavorite ? 'currentColor' : 'none'} />
+            </button>
+          </HoverTooltip>
+          <HoverTooltip label={copyLabel}>
+            <button
+              type="button"
+              onClick={handleCopyCa}
+              aria-label="Copy token contract address"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-ax-border bg-ax-surface2 text-ax-text-dim hover:text-ax-text transition-colors"
+            >
+              {copyState === 'ok' ? <Check size={13} /> : <Copy size={13} />}
+            </button>
+          </HoverTooltip>
+          <HoverTooltip label="Open external chart">
+            <button
+              type="button"
+              onClick={handleOpenExternal}
+              aria-label="Open external chart"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-ax-border bg-ax-surface2 text-ax-text-dim hover:text-ax-text transition-colors"
+            >
+              <ExternalLink size={13} />
             </button>
           </HoverTooltip>
           <div className="text-right">
