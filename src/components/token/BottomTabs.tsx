@@ -3,6 +3,7 @@ import { ArrowUpDown, Table2, Zap } from 'lucide-react';
 import { useTokenStore } from '../../store/tokenStore';
 import { usdToSol } from '../../store/walletStore';
 import TokenFeed from './TokenFeed';
+import PositionsTab from './PositionsTab';
 
 const TABS = ['Trades', 'Feed', 'Positions', 'Orders', 'Holders', 'Top Traders', 'Dev Tokens'] as const;
 const BOTTOM_TAB_STORAGE_KEY = 'memex:token:bottom-tab:v1';
@@ -332,7 +333,11 @@ export default function BottomTabs({
           </div>
         )}
 
-        {(active === 'Positions' || active === 'Orders' || active === 'Dev Tokens') && (
+        {active === 'Positions' && (
+          <PositionsTab tokenId={tokenId} displayUnit={displayUnit} />
+        )}
+
+        {(active === 'Orders' || active === 'Dev Tokens') && (
           <div className="h-full flex items-center justify-center text-ax-text-dim/80">
             {active} panel is queued in next slice.
           </div>

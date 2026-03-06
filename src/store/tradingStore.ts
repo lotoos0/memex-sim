@@ -925,6 +925,10 @@ export const selectQuickPositionByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickPosition | null =>
     s.quickPositionsByTokenId[tokenId] ?? null;
 
+export const selectQuickTradesByTokenId = (tokenId: string) =>
+  (s: ReturnType<typeof useTradingStore.getState>): QuickTrade[] =>
+    s.quickTradesByTokenId[tokenId] ?? [];
+
 export const selectLastQuickExecutionByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickExecutionSnapshot | null =>
     s.lastQuickExecutionByTokenId[tokenId] ?? null;
