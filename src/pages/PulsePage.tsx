@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { SlidersHorizontal } from 'lucide-react';
 import { useTokenStore } from '../store/tokenStore';
 import TokenColumn, { type PulseColumnFilters } from '../components/pulse/TokenColumn';
 import PulseFiltersModal from '../components/pulse/PulseFiltersModal';
 import {
+  countActivePulseBucketFilters,
   createDefaultPulseFiltersByBucket,
   parseFilterNumber,
   sanitizePulseFiltersByBucket,
@@ -125,6 +125,7 @@ export default function PulsePage() {
   const tradeFlowByTokenId = useTokenStore(s => s.tradeFlowByTokenId);
   const [displayMode, setDisplayMode] = useState<PulseDisplayMode>(() => loadDisplayMode());
   const [filtersModalOpen, setFiltersModalOpen] = useState(false);
+  const [filtersModalBucket, setFiltersModalBucket] = useState<PulseBucketKey>('newPairs');
   const [pulseFiltersByBucket, setPulseFiltersByBucket] = useState<PulseFiltersByBucket>(() => loadPulseFilters());
   const [columnFilters, setColumnFilters] = useState<Record<ColumnKey, PulseColumnFilters>>(
     DEFAULT_COLUMN_FILTERS
@@ -184,18 +185,14 @@ export default function PulsePage() {
     [buckets, columnFilters.migrated, compiledFiltersByBucket, tradeFlowByTokenId]
   );
 
+  const openBucketFilters = (bucket: PulseBucketKey) => {
+    setFiltersModalBucket(bucket);
+    setFiltersModalOpen(true);
+  };
+
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-hidden px-3 pt-3 pb-3">
       <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={() => setFiltersModalOpen(true)}
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-ax-border bg-ax-surface2/70 px-3 text-[11px] font-semibold text-ax-text transition-colors hover:bg-ax-surface2"
-        >
-          <SlidersHorizontal size={13} className="text-[#8fa2ff]" />
-          Filters
-        </button>
-
         <div className="inline-flex items-center gap-1 rounded-md border border-ax-border bg-ax-surface2/70 px-1 py-1">
           <span className="px-2 text-[11px] font-medium text-ax-text-dim">Display</span>
           <button
@@ -232,6 +229,9 @@ export default function PulsePage() {
           filters={columnFilters.newPairs}
           onFiltersChange={(next) => setColumnFilters((prev) => ({ ...prev, newPairs: next }))}
           filtersEnabled={false}
+          bucketKey="newPairs"
+          activeFilterCount={countActivePulseBucketFilters(pulseFiltersByBucket.newPairs)}
+          onOpenFilters={openBucketFilters}
           displayMode={displayMode}
         />
         <TokenColumn
@@ -241,6 +241,9 @@ export default function PulsePage() {
           filters={columnFilters.finalStretch}
           onFiltersChange={(next) => setColumnFilters((prev) => ({ ...prev, finalStretch: next }))}
           filtersEnabled={false}
+          bucketKey="finalStretch"
+          activeFilterCount={countActivePulseBucketFilters(pulseFiltersByBucket.finalStretch)}
+          onOpenFilters={openBucketFilters}
           displayMode={displayMode}
         />
         <TokenColumn
@@ -250,6 +253,9 @@ export default function PulsePage() {
           filters={columnFilters.migrated}
           onFiltersChange={(next) => setColumnFilters((prev) => ({ ...prev, migrated: next }))}
           filtersEnabled={false}
+          bucketKey="migrated"
+          activeFilterCount={countActivePulseBucketFilters(pulseFiltersByBucket.migrated)}
+          onOpenFilters={openBucketFilters}
           displayMode={displayMode}
         />
       </div>
@@ -257,6 +263,7 @@ export default function PulsePage() {
       <PulseFiltersModal
         open={filtersModalOpen}
         value={pulseFiltersByBucket}
+        initialBucket={filtersModalBucket}
         onClose={() => setFiltersModalOpen(false)}
         onApply={(next) => {
           setPulseFiltersByBucket(next);

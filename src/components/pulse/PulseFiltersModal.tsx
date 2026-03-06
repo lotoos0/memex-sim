@@ -13,6 +13,7 @@ import {
 type Props = {
   open: boolean;
   value: PulseFiltersByBucket;
+  initialBucket?: PulseBucketKey;
   onClose: () => void;
   onApply: (next: PulseFiltersByBucket) => void;
 };
@@ -51,14 +52,15 @@ const AUDIT_FIELDS: Array<FilterFieldDescriptor> = [
   { label: 'Bundle %', singleKey: 'maxBundlePct' },
 ];
 
-export default function PulseFiltersModal({ open, value, onClose, onApply }: Props) {
+export default function PulseFiltersModal({ open, value, initialBucket = 'newPairs', onClose, onApply }: Props) {
   const [activeBucket, setActiveBucket] = useState<PulseBucketKey>('newPairs');
   const [draft, setDraft] = useState<PulseFiltersByBucket>(value);
 
   useEffect(() => {
     if (!open) return;
+    setActiveBucket(initialBucket);
     setDraft(value);
-  }, [open, value]);
+  }, [initialBucket, open, value]);
 
   useEffect(() => {
     if (!open) return;
