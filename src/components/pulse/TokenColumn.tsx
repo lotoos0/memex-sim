@@ -3,6 +3,7 @@ import { BadgeDollarSign, Bolt, Coins, Percent, SlidersHorizontal, X } from 'luc
 import type { TokenState } from '../../tokens/types';
 import solIcon from '../../assets/sol-fill.svg';
 import TokenCard, { type PulseDisplayMode } from './TokenCard';
+import type { PulseBucketKey } from './pulseFilters';
 
 type PresetId = 'P1' | 'P2' | 'P3';
 type SideKey = 'buy' | 'sell';
@@ -107,6 +108,9 @@ interface Props {
   onFiltersChange: (next: PulseColumnFilters) => void;
   filtersEnabled?: boolean;
   displayMode?: PulseDisplayMode;
+  bucketKey?: PulseBucketKey;
+  activeFilterCount?: number;
+  onOpenFilters?: (bucket: PulseBucketKey) => void;
 }
 
 export default function TokenColumn({
@@ -117,6 +121,9 @@ export default function TokenColumn({
   onFiltersChange,
   filtersEnabled = true,
   displayMode = 'comfortable',
+  bucketKey,
+  activeFilterCount = 0,
+  onOpenFilters,
 }: Props) {
   const [showFilters, setShowFilters] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -320,6 +327,29 @@ export default function TokenColumn({
                 </div>
               )}
             </div>
+          )}
+
+          {!filtersEnabled && bucketKey && onOpenFilters && (
+            <button
+              type="button"
+              onClick={() => onOpenFilters(bucketKey)}
+              className={[
+                'relative inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors',
+                activeFilterCount > 0
+                  ? 'border-[#4f6dff55] bg-[#4f6dff18] text-[#9badff]'
+                  : 'border-ax-border bg-ax-surface text-ax-text-dim hover:text-ax-text',
+              ].join(' ')}
+              title={`${title} filters`}
+              aria-label={`${title} filters`}
+            >
+              <SlidersHorizontal size={12} />
+              <span
+                className={[
+                  'absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full',
+                  activeFilterCount > 0 ? 'bg-[#4f6dff]' : 'bg-[#2a3044]',
+                ].join(' ')}
+              />
+            </button>
           )}
         </div>
       </div>
