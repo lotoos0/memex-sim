@@ -214,6 +214,11 @@ The repo currently has 2 deterministic sim QA checks:
 
 These checks are part of CI and should be run locally before touching trading execution or token lifecycle logic.
 
+Local developer note:
+- both QA harnesses use Playwright CLI / Edge and shared local resources
+- run `npm run qa:sim:dead-floor` and `npm run qa:sim:quick-limit` sequentially, not in parallel
+- this is only a local workflow constraint; CI runs the checks linearly, so there is no conflict there
+
 ## 12) Minimum file set for a second AI to read
 - `Plan.md`
 - `package.json`
