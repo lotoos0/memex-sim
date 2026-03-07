@@ -75,7 +75,7 @@ In practice there are now 3 data layers:
   - `marketSessionBucket` and debug `marketSessionBucketOverride`
 - `src/store/tradingStore.ts`
   - quick token-centric trading used by the UI
-  - still also contains legacy symbol-centric flow (`orders`, `positions`, `trades`, `symbol`, `mode`)
+  - still also contains an isolated legacy symbol-centric engine (`orders`, `positions`, `trades`, `symbol`)
 - `src/store/walletStore.ts`
   - SOL balance and realized PnL
 - `src/store/postStore.ts`
@@ -105,9 +105,14 @@ Legacy still exists in the same store:
 - `placeOrder`
 - `cancelOrder`
 - `onPriceTick`
-- `orders`, `positions`, `trades`, `symbol`, `mode`
+- `orders`, `positions`, `trades`, `symbol`
 
-This is still the main architectural issue: quick flow and legacy flow coexist in the same store.
+Important audit result:
+- active `src/` UI no longer reads legacy symbol-centric state directly
+- remaining legacy usage is isolated to internal store logic and the `legacy/` directory
+- dead public API (`mode`, `setMode`, `hydrateFromDB`, `applyPreset`) has been removed
+
+This is still the main architectural issue: quick flow and legacy flow coexist in the same store until the legacy engine is extracted or deleted.
 
 ## 7) UI - what actually works
 ### Pulse
@@ -156,7 +161,7 @@ Working:
 Still incomplete:
 - `Dev Tokens` tab
 - limit mode in `TradeSidebar` is still queued/stub
-- quick-flow selector/helper layer is cleaner now, but `TradeSidebar` and `InstantTradePanel` still carry duplicated summary logic
+- legacy symbol-centric engine still needs further reduction or extraction from `tradingStore`
 
 ## 8) Narrative and social layer
 This is a newer area compared with older project descriptions.
@@ -178,7 +183,7 @@ How it works:
 This is not a separate domain layer yet, but it is already wired into runtime.
 
 ## 9) Main technical risks
-1. `src/store/tradingStore.ts` still mixes new token-centric trading with legacy symbol-centric mode.
+1. `src/store/tradingStore.ts` still mixes quick token-centric trading with a legacy symbol-centric engine.
 2. `src/tokens/registry.ts` keeps growing toward an orchestration god-object: runtime, executions, narrative, session bucket, posting.
 3. There is still no provider abstraction (`Sim/Replay/Live`) in code, even though the broader project plan assumes it.
 4. `Plan.md` is partially outdated relative to the actual repo.
@@ -187,9 +192,9 @@ This is not a separate domain layer yet, but it is already wired into runtime.
 ## 10) What to do next
 Most sensible order:
 1. Keep shrinking legacy symbol flow inside `tradingStore`.
-2. Clean duplicated quick-position summary logic in `TradeSidebar` and `InstantTradePanel`.
-3. Extract a market provider contract from `registry` if the project is meant to move toward Replay/Live.
-4. Consider splitting `registry` into smaller responsibilities: runtime, market snapshots, narrative bridge, order execution bridge.
+2. Keep all active UI on quick selectors/helpers only; do not reintroduce legacy reads.
+3. Decide whether `TradeSidebar` limit mode should become quick-native or wait for provider/order-model cleanup.
+4. Extract a market provider contract from `registry` if the project is meant to move toward Replay/Live.
 5. Add tests for lifecycle, fill logic and market snapshots.
 
 ## 11) Minimum file set for a second AI to read
