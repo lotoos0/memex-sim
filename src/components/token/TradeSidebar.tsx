@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pencil, RefreshCcw } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
-import { selectLastQuickExecutionByTokenId, useTradingStore } from '../../store/tradingStore';
+import {
+  selectLastQuickExecutionByTokenId,
+  selectQuickPositionSummaryByTokenId,
+  useTradingStore,
+} from '../../store/tradingStore';
 import { usdToSol } from '../../store/walletStore';
 
 interface Props {
@@ -104,12 +108,11 @@ export default function TradeSidebar({ token, floating = false }: Props) {
   } | null>(null);
   const quickBuy = useTradingStore(s => s.quickBuy);
   const quickSell = useTradingStore(s => s.quickSell);
-  const quickPosition = useTradingStore(
-    useMemo(
-      () => (s: ReturnType<typeof useTradingStore.getState>) => s.quickPositionsByTokenId[token.id] ?? null,
-      [token.id]
-    )
+  const quickPositionSummarySelector = useMemo(
+    () => selectQuickPositionSummaryByTokenId(token.id, safePrice),
+    [safePrice, token.id]
   );
+  const quickPositionSummary = useTradingStore(quickPositionSummarySelector);
   const lastExecution = useTradingStore(
     useMemo(
       () => selectLastQuickExecutionByTokenId(token.id),
@@ -131,16 +134,15 @@ export default function TradeSidebar({ token, floating = false }: Props) {
     return side === 'buy' ? `Buy ${ticker}` : `Sell ${ticker}`;
   }, [side, token.ticker]);
 
-  const holdingUsd = (quickPosition?.qty ?? 0) * safePrice;
-  const unrealizedUsd = (quickPosition?.qty ?? 0) > 0
-    ? holdingUsd - (quickPosition?.costBasisUsd ?? 0)
-    : 0;
-  const realizedUsd = quickPosition?.realizedPnlUsd ?? 0;
-  const totalPnlUsd = realizedUsd + unrealizedUsd;
-  const openCostUsd = quickPosition?.costBasisUsd ?? 0;
-  const totalBoughtUsd = quickPosition?.boughtUsd ?? 0;
+  const holdingUsd = quickPositionSummary.holdingUsd;
+  const unrealizedUsd = quickPositionSummary.unrealizedUsd;
+  const realizedUsd = quickPositionSummary.realizedUsd;
+  const totalPnlUsd = quickPositionSummary.totalPnlUsd;
+  const openCostUsd = quickPositionSummary.costBasisUsd;
+  const totalBoughtUsd = quickPositionSummary.boughtUsd;
+  const positionQty = quickPositionSummary.qty;
   const movingPnlPct =
-    (quickPosition?.qty ?? 0) > 0 && openCostUsd > 0
+    positionQty > 0 && openCostUsd > 0
       ? (unrealizedUsd / openCostUsd) * 100
       : totalBoughtUsd > 0
         ? (totalPnlUsd / totalBoughtUsd) * 100
@@ -457,8 +459,8 @@ export default function TradeSidebar({ token, floating = false }: Props) {
         )}
 
         <div className="grid grid-cols-4 gap-2 text-[11px]">
-          <MiniStat label="Bought" value={formatByUnit(quickPosition?.boughtUsd ?? 0)} />
-          <MiniStat label="Sold" value={formatByUnit(quickPosition?.soldUsd ?? 0)} />
+          <MiniStat label="Bought" value={formatByUnit(quickPositionSummary.boughtUsd)} />
+          <MiniStat label="Sold" value={formatByUnit(quickPositionSummary.soldUsd)} />
           <MiniStat label="Holding" value={formatByUnit(holdingUsd)} />
           <MiniStat
             label={(

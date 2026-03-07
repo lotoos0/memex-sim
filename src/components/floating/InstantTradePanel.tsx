@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
-import { useTradingStore } from '../../store/tradingStore';
+import { selectQuickPositionSummaryByTokenId, useTradingStore } from '../../store/tradingStore';
 import { usdToSol, useWalletStore } from '../../store/walletStore';
 
 type Pos = { x: number; y: number };
@@ -161,12 +161,11 @@ export default function InstantTradePanel({ token, open, onClose }: Props) {
   const quickBuy = useTradingStore((s) => s.quickBuy);
   const quickSell = useTradingStore((s) => s.quickSell);
   const solBalance = useWalletStore((s) => s.solBalance);
-  const quickPosition = useTradingStore(
-    useMemo(
-      () => (s: ReturnType<typeof useTradingStore.getState>) => s.quickPositionsByTokenId[token.id] ?? null,
-      [token.id]
-    )
+  const quickPositionSummarySelector = useMemo(
+    () => selectQuickPositionSummaryByTokenId(token.id, Number.isFinite(token.lastPriceUsd) ? token.lastPriceUsd : 0),
+    [token.id, token.lastPriceUsd]
   );
+  const quickPositionSummary = useTradingStore(quickPositionSummarySelector);
 
   const defaultPos = useMemo<Pos>(() => {
     if (!isBrowser()) return { x: 96, y: 140 };
@@ -179,14 +178,14 @@ export default function InstantTradePanel({ token, open, onClose }: Props) {
   const buySettings = activeSettings.buy;
   const sellSettings = activeSettings.sell;
 
-  const positionQty = quickPosition?.qty ?? 0;
   const safePrice = Number.isFinite(token.lastPriceUsd) ? token.lastPriceUsd : 0;
-  const holdingUsd = positionQty * safePrice;
-  const boughtUsd = quickPosition?.boughtUsd ?? 0;
-  const soldUsd = quickPosition?.soldUsd ?? 0;
-  const realizedUsd = quickPosition?.realizedPnlUsd ?? 0;
-  const unrealizedUsd = positionQty > 0 ? holdingUsd - (quickPosition?.costBasisUsd ?? 0) : 0;
-  const totalPnlUsd = realizedUsd + unrealizedUsd;
+  const positionQty = quickPositionSummary.qty;
+  const holdingUsd = quickPositionSummary.holdingUsd;
+  const boughtUsd = quickPositionSummary.boughtUsd;
+  const soldUsd = quickPositionSummary.soldUsd;
+  const realizedUsd = quickPositionSummary.realizedUsd;
+  const unrealizedUsd = quickPositionSummary.unrealizedUsd;
+  const totalPnlUsd = quickPositionSummary.totalPnlUsd;
   const pnlPct = boughtUsd > 0 ? (totalPnlUsd / boughtUsd) * 100 : 0;
 
   const clampToViewport = useCallback((raw: Pos): Pos => {
