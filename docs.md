@@ -91,8 +91,10 @@ Architecture takeaway:
 The active trading path is quick token-centric trading:
 - `quickBuy(tokenId, amountSol)`
 - `quickSell(tokenId, amountSol)`
+- `placeQuickLimitOrder(tokenId, side, amountSol, limitPriceUsd)`
 - `quickPositionsByTokenId`
 - `quickTradesByTokenId`
+- `quickLimitOrdersById`
 - `pendingQuickOrdersById`
 - `quickExecutionHistoryByTokenId`
 
@@ -150,7 +152,7 @@ Working:
 - TF: `1s`, `15s`, `30s`, `1m`
 - event markers: `M`, `DB`, `DS`, `B`, `S`
 - price lines: avg buy, avg sell, migration
-- trade sidebar with market buy/sell
+- trade sidebar with market + limit buy/sell
 - floating instant trade panel
 - right-side live trades table
 - bottom tabs: `Trades`, `Feed`, `Positions`, `Orders`, `Holders`, `Top Traders`
@@ -160,7 +162,7 @@ Working:
 
 Still incomplete:
 - `Dev Tokens` tab
-- limit mode in `TradeSidebar` is still queued/stub
+- advanced limit-order management (reprice/expiry/policies) is not built
 - legacy symbol-centric engine still needs further reduction or extraction from `tradingStore`
 
 ## 8) Narrative and social layer
@@ -193,9 +195,9 @@ This is not a separate domain layer yet, but it is already wired into runtime.
 Most sensible order:
 1. Keep shrinking legacy symbol flow inside `tradingStore`.
 2. Keep all active UI on quick selectors/helpers only; do not reintroduce legacy reads.
-3. Decide whether `TradeSidebar` limit mode should become quick-native or wait for provider/order-model cleanup.
+3. Decide whether quick limit orders need cancel/history improvements before any provider abstraction work.
 4. Extract a market provider contract from `registry` if the project is meant to move toward Replay/Live.
-5. Add tests for lifecycle, fill logic and market snapshots.
+5. Add tests for lifecycle, fill logic, limit triggers and market snapshots.
 
 ## 11) Minimum file set for a second AI to read
 - `Plan.md`
