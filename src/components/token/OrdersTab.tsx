@@ -9,6 +9,26 @@ import {
 import { usdToSol } from '../../store/walletStore';
 
 type DisplayUnit = 'usd' | 'sol';
+type AuditStatus = QuickOrderAuditRow['status'];
+
+type GroupedAuditBlock = {
+  limitOrderId: string;
+  side: QuickOrderAuditRow['side'];
+  requestedAmountSol: number;
+  requestedTokenQty: number;
+  limitPriceUsd: number;
+  finalStatus: AuditStatus;
+  latestTsMs: number;
+  rows: QuickOrderAuditRow[];
+};
+
+const AUDIT_STATUS_ORDER: Record<AuditStatus, number> = {
+  open: 0,
+  triggered: 1,
+  filled: 2,
+  failed: 2,
+  cancelled: 2,
+};
 
 interface Props {
   tokenId: string;
@@ -48,19 +68,88 @@ function fmtAgo(tsMs: number): string {
   return `${Math.round(dMs / 3_600_000)}h`;
 }
 
+function fmtTs(tsMs: number): string {
+  if (!Number.isFinite(tsMs) || tsMs <= 0) return '-';
+  return new Date(tsMs).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function fmtLimitPrice(limitPriceUsd: number): string {
+  if (!Number.isFinite(limitPriceUsd) || limitPriceUsd <= 0) return '-';
+  return limitPriceUsd >= 1 ? `$${limitPriceUsd.toFixed(4)}` : `$${limitPriceUsd.toExponential(4)}`;
+}
+
+function fmtRequested(row: Pick<QuickOrderAuditRow, 'side' | 'requestedAmountSol' | 'requestedTokenQty'>): string {
+  return row.side === 'buy' ? `${fmtSol(row.requestedAmountSol)} SOL` : fmtQty(row.requestedTokenQty);
+}
+
 function statusClass(status: 'pending' | 'filled' | 'failed' | 'open' | 'cancelled' | 'triggered'): string {
   if (status === 'filled') return 'text-ax-green';
   if (status === 'failed') return 'text-ax-red';
-  if (status === 'cancelled') return 'text-[#f6c453]';
+  if (status === 'cancelled') return 'text-ax-text-dim';
   if (status === 'triggered') return 'text-[#7ea2ff]';
   if (status === 'open') return 'text-[#8ea0bf]';
   return 'text-[#7ea2ff]';
+}
+
+function statusChipClass(status: 'pending' | 'filled' | 'failed' | 'open' | 'cancelled' | 'triggered'): string {
+  const base = 'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide';
+  if (status === 'filled') return `${base} border-ax-green/30 bg-ax-green/10 text-ax-green`;
+  if (status === 'failed') return `${base} border-ax-red/30 bg-ax-red/10 text-ax-red`;
+  if (status === 'cancelled') return `${base} border-ax-border bg-ax-surface text-ax-text-dim`;
+  if (status === 'triggered') return `${base} border-[#7ea2ff]/30 bg-[#7ea2ff]/10 text-[#7ea2ff]`;
+  if (status === 'open') return `${base} border-ax-border bg-ax-surface text-[#8ea0bf]`;
+  return `${base} border-[#7ea2ff]/30 bg-[#7ea2ff]/10 text-[#7ea2ff]`;
+}
+
+function getFinalAuditStatus(rows: QuickOrderAuditRow[]): AuditStatus {
+  return [...rows].sort((a, b) => {
+    const orderDelta = AUDIT_STATUS_ORDER[a.status] - AUDIT_STATUS_ORDER[b.status];
+    if (orderDelta !== 0) return orderDelta;
+    return a.tsMs - b.tsMs;
+  })[rows.length - 1]?.status ?? 'open';
+}
+
+function groupAuditRows(rows: QuickOrderAuditRow[]): GroupedAuditBlock[] {
+  const groups = new Map<string, QuickOrderAuditRow[]>();
+  for (const row of rows) {
+    const key = row.limitOrderId || row.id;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(row);
+    else groups.set(key, [row]);
+  }
+
+  return Array.from(groups.entries())
+    .map(([limitOrderId, groupRows]) => {
+      const orderedRows = [...groupRows].sort((a, b) => {
+        const orderDelta = AUDIT_STATUS_ORDER[a.status] - AUDIT_STATUS_ORDER[b.status];
+        if (orderDelta !== 0) return orderDelta;
+        return a.tsMs - b.tsMs;
+      });
+      const baseRow = orderedRows.find((row) => row.status === 'open') ?? orderedRows[0];
+      const latestTsMs = orderedRows.reduce((maxTs, row) => Math.max(maxTs, row.tsMs), 0);
+      return {
+        limitOrderId,
+        side: baseRow.side,
+        requestedAmountSol: baseRow.requestedAmountSol,
+        requestedTokenQty: baseRow.requestedTokenQty,
+        limitPriceUsd: baseRow.limitPriceUsd,
+        finalStatus: getFinalAuditStatus(orderedRows),
+        latestTsMs,
+        rows: orderedRows,
+      };
+    })
+    .sort((a, b) => b.latestTsMs - a.latestTsMs);
 }
 
 export default function OrdersTab({ tokenId, displayUnit }: Props) {
   const panelStateSelector = useMemo(() => selectQuickOrderPanelStateByTokenId(tokenId), [tokenId]);
   const panelState = useTradingStore(panelStateSelector);
   const cancelQuickLimitOrder = useTradingStore((s) => s.cancelQuickLimitOrder);
+  const groupedAuditBlocks = useMemo(() => groupAuditRows(panelState.auditRows), [panelState.auditRows]);
 
   const fmtMoney = (usd: number): string =>
     displayUnit === 'usd' ? fmtUsd(usd) : `${fmtSol(usdToSol(usd))} SOL`;
@@ -88,26 +177,20 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
           <div className="flex items-center justify-between border-b border-ax-border px-3 py-2">
             <div>
               <div className="text-[12px] font-semibold text-ax-text">Order Audit Trail</div>
-              <div className="text-[10px] text-ax-text-dim">Quick-native limit lifecycle, latest first</div>
+              <div className="text-[10px] text-ax-text-dim">Quick-native limit lifecycle grouped by order, latest first</div>
             </div>
-            <div className="text-[10px] text-ax-text-dim">{panelState.auditRows.length} events</div>
+            <div className="text-[10px] text-ax-text-dim">
+              {groupedAuditBlocks.length} orders / {panelState.auditRows.length} events
+            </div>
           </div>
           {!panelState.hasAuditHistory ? (
             <div className="px-3 py-4 text-center text-[11px] text-ax-text-dim">No limit lifecycle history yet.</div>
           ) : (
-            <div className="space-y-1 px-3 py-2">
-              <div className="grid grid-cols-[56px_82px_110px_110px_1fr_56px] gap-2 border-b border-ax-border pb-1 text-[10px] uppercase tracking-wide text-ax-text-dim">
-                <span>Side</span>
-                <span>Status</span>
-                <span>Requested</span>
-                <span>Limit</span>
-                <span>Details</span>
-                <span>Age</span>
-              </div>
-              {panelState.auditRows.map((row) => (
-                <AuditTrailRow
-                  key={row.id}
-                  row={row}
+            <div className="space-y-2 px-3 py-2">
+              {groupedAuditBlocks.map((block) => (
+                <AuditTrailBlock
+                  key={block.limitOrderId}
+                  block={block}
                   fmtMoney={fmtMoney}
                 />
               ))}
@@ -169,31 +252,80 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
                 <span>Age</span>
               </div>
               {panelState.executions.map((execution) => (
-                  <div
-                    key={`${execution.orderId}-${execution.tsMs}`}
-                    className="grid grid-cols-[58px_92px_92px_82px_68px_1fr_56px] gap-2 border-b border-ax-border/40 py-1 text-[11px]"
-                  >
-                    <span className={execution.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>
-                      {execution.side.toUpperCase()}
-                    </span>
-                    <span className="text-ax-text">
-                      {execution.side === 'buy'
-                        ? `${fmtSol(execution.amountIn)} SOL`
-                        : fmtQty(execution.amountIn)}
-                    </span>
-                    <span className="text-ax-text">{fmtQty(execution.actualOut)}</span>
-                    <span className="text-ax-text">{fmtQty(execution.expectedOut)}</span>
-                    <span className={statusClass(execution.status)}>{execution.status.toUpperCase()}</span>
-                    <span className="text-ax-text">
-                      <div>{Number.isFinite(execution.avgPriceUsd) ? fmtMoney(execution.avgPriceUsd as number) : '-'}</div>
-                      <div className="text-[10px] text-ax-text-dim">Fee {fmtSol(execution.txCostSol)} SOL</div>
-                    </span>
-                    <span className="text-ax-text-dim">{fmtAgo(execution.tsMs)}</span>
-                  </div>
+                <div
+                  key={`${execution.orderId}-${execution.tsMs}`}
+                  className="grid grid-cols-[58px_92px_92px_82px_68px_1fr_56px] gap-2 border-b border-ax-border/40 py-1 text-[11px]"
+                >
+                  <span className={execution.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>
+                    {execution.side.toUpperCase()}
+                  </span>
+                  <span className="text-ax-text">
+                    {execution.side === 'buy'
+                      ? `${fmtSol(execution.amountIn)} SOL`
+                      : fmtQty(execution.amountIn)}
+                  </span>
+                  <span className="text-ax-text">{fmtQty(execution.actualOut)}</span>
+                  <span className="text-ax-text">{fmtQty(execution.expectedOut)}</span>
+                  <span className={statusClass(execution.status)}>{execution.status.toUpperCase()}</span>
+                  <span className="text-ax-text">
+                    <div>{Number.isFinite(execution.avgPriceUsd) ? fmtMoney(execution.avgPriceUsd as number) : '-'}</div>
+                    <div className="text-[10px] text-ax-text-dim">Fee {fmtSol(execution.txCostSol)} SOL</div>
+                  </span>
+                  <span className="text-ax-text-dim">{fmtAgo(execution.tsMs)}</span>
+                </div>
               ))}
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AuditTrailBlock({
+  block,
+  fmtMoney,
+}: {
+  block: GroupedAuditBlock;
+  fmtMoney: (usd: number) => string;
+}) {
+  return (
+    <div className="rounded-lg border border-ax-border bg-ax-surface px-3 py-2">
+      <div className="grid grid-cols-[56px_120px_110px_120px_1fr_64px] gap-2 border-b border-ax-border/60 pb-2 text-[11px]">
+        <div className={block.side === 'buy' ? 'font-semibold text-ax-green' : 'font-semibold text-ax-red'}>
+          {block.side.toUpperCase()}
+        </div>
+        <div className="text-ax-text">
+          <div className="text-[10px] uppercase tracking-wide text-ax-text-dim">Requested</div>
+          <div>{fmtRequested(block)}</div>
+        </div>
+        <div className="text-ax-text">
+          <div className="text-[10px] uppercase tracking-wide text-ax-text-dim">Limit</div>
+          <div>{fmtLimitPrice(block.limitPriceUsd)}</div>
+        </div>
+        <div className="text-ax-text">
+          <div className="text-[10px] uppercase tracking-wide text-ax-text-dim">Final Status</div>
+          <div className="mt-0.5">
+            <span className={statusChipClass(block.finalStatus)}>{block.finalStatus}</span>
+          </div>
+        </div>
+        <div className="text-ax-text">
+          <div className="text-[10px] uppercase tracking-wide text-ax-text-dim">Order</div>
+          <div className="font-mono text-[10px] text-ax-text-dim">{block.limitOrderId}</div>
+        </div>
+        <div className="text-right text-ax-text-dim">
+          <div className="text-[10px] uppercase tracking-wide">Age</div>
+          <div>{fmtAgo(block.latestTsMs)}</div>
+        </div>
+      </div>
+      <div className="space-y-1 pt-2">
+        {block.rows.map((row) => (
+          <AuditTrailRow
+            key={row.id}
+            row={row}
+            fmtMoney={fmtMoney}
+          />
+        ))}
       </div>
     </div>
   );
@@ -206,12 +338,8 @@ function AuditTrailRow({
   row: QuickOrderAuditRow;
   fmtMoney: (usd: number) => string;
 }) {
-  const requested = row.side === 'buy'
-    ? `${fmtSol(row.requestedAmountSol)} SOL`
-    : fmtQty(row.requestedTokenQty);
-  const limit = row.limitPriceUsd > 0
-    ? (row.limitPriceUsd >= 1 ? `$${row.limitPriceUsd.toFixed(4)}` : `$${row.limitPriceUsd.toExponential(4)}`)
-    : '-';
+  const requested = fmtRequested(row);
+  const limit = fmtLimitPrice(row.limitPriceUsd);
 
   let detailPrimary = 'Limit accepted';
   let detailSecondary = `Fee ${fmtSol(row.txCostSol)} SOL`;
@@ -221,7 +349,7 @@ function AuditTrailRow({
     detailSecondary = row.executionOrderId ? `Exec ${row.executionOrderId}` : detailSecondary;
   } else if (row.status === 'filled') {
     detailPrimary = `Actual ${fmtQty(row.actualOut ?? 0)} / Expected ${fmtQty(row.expectedOut ?? 0)}`;
-    detailSecondary = `${Number.isFinite(row.avgPriceUsd) ? fmtMoney(row.avgPriceUsd as number) : '-'} · Fee ${fmtSol(row.txCostSol)} SOL`;
+    detailSecondary = `${Number.isFinite(row.avgPriceUsd) ? fmtMoney(row.avgPriceUsd as number) : '-'} | Fee ${fmtSol(row.txCostSol)} SOL`;
   } else if (row.status === 'failed') {
     detailPrimary = row.reason ?? 'Execution failed';
     detailSecondary = `Expected ${fmtQty(row.expectedOut ?? 0)} / Min ${fmtQty(row.minOut ?? 0)}`;
@@ -230,18 +358,21 @@ function AuditTrailRow({
   }
 
   return (
-    <div className="grid grid-cols-[56px_82px_110px_110px_1fr_56px] gap-2 border-b border-ax-border/40 py-1 text-[11px]">
-      <span className={row.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>
-        {row.side.toUpperCase()}
+    <div className="grid grid-cols-[56px_88px_110px_110px_1fr_128px] gap-2 border-b border-ax-border/40 py-1 text-[11px] last:border-b-0">
+      <span className={row.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>{row.side.toUpperCase()}</span>
+      <span>
+        <span className={statusChipClass(row.status)}>{row.status}</span>
       </span>
-      <span className={statusClass(row.status)}>{row.status.toUpperCase()}</span>
       <span className="text-ax-text">{requested}</span>
       <span className="text-ax-text">{limit}</span>
       <span className="text-ax-text">
         <div>{detailPrimary}</div>
         <div className="text-[10px] text-ax-text-dim">{detailSecondary}</div>
       </span>
-      <span className="text-ax-text-dim">{fmtAgo(row.tsMs)}</span>
+      <span className="text-right text-ax-text-dim">
+        <div>{fmtAgo(row.tsMs)}</div>
+        <div className="text-[10px]">{fmtTs(row.tsMs)}</div>
+      </span>
     </div>
   );
 }
@@ -255,10 +386,10 @@ function LimitOrderRow({ order, onCancel }: { order: QuickLimitOrder; onCancel: 
       <span className="text-ax-text">
         {order.side === 'buy' ? `${fmtSol(order.amountSol)} SOL` : fmtQty(order.tokenQty)}
       </span>
-      <span className="text-ax-text">
-        {order.limitPriceUsd >= 1 ? `$${order.limitPriceUsd.toFixed(4)}` : `$${order.limitPriceUsd.toExponential(4)}`}
+      <span className="text-ax-text">{fmtLimitPrice(order.limitPriceUsd)}</span>
+      <span>
+        <span className={statusChipClass('pending')}>OPEN</span>
       </span>
-      <span className={statusClass('pending')}>OPEN</span>
       <span className="text-ax-text-dim">{fmtAgo(order.createdAtMs)}</span>
       <div className="flex justify-end">
         <button
