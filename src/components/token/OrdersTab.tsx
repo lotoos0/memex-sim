@@ -5,6 +5,7 @@ import {
   useTradingStore,
   type QuickLimitOrder,
   type QuickOrderAuditRow,
+  type QuickPendingOrder,
 } from '../../store/tradingStore';
 import { usdToSol } from '../../store/walletStore';
 
@@ -192,6 +193,36 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
                   key={block.limitOrderId}
                   block={block}
                   fmtMoney={fmtMoney}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-ax-border bg-ax-surface2">
+          <div className="flex items-center justify-between border-b border-ax-border px-3 py-2">
+            <div>
+              <div className="text-[12px] font-semibold text-ax-text">Pending Quick Orders</div>
+              <div className="text-[10px] text-ax-text-dim">Submitted market or triggered limit executions waiting to settle</div>
+            </div>
+            <div className="text-[10px] text-ax-text-dim">{panelState.pendingOrders.length} pending</div>
+          </div>
+          {!panelState.hasPendingOrders ? (
+            <div className="px-3 py-4 text-center text-[11px] text-ax-text-dim">No pending quick orders.</div>
+          ) : (
+            <div className="space-y-1 px-3 py-2">
+              <div className="grid grid-cols-[58px_110px_110px_82px_82px_56px] gap-2 border-b border-ax-border pb-1 text-[10px] uppercase tracking-wide text-ax-text-dim">
+                <span>Side</span>
+                <span>Requested</span>
+                <span>Expected</span>
+                <span>Status</span>
+                <span>ETA</span>
+                <span>Age</span>
+              </div>
+              {panelState.pendingOrders.map((order) => (
+                <PendingOrderRow
+                  key={order.orderId}
+                  order={order}
                 />
               ))}
             </div>
@@ -400,6 +431,31 @@ function LimitOrderRow({ order, onCancel }: { order: QuickLimitOrder; onCancel: 
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+function PendingOrderRow({ order }: { order: QuickPendingOrder }) {
+  const requested =
+    order.side === 'buy'
+      ? `${fmtSol(order.sourceRequestedAmountSol ?? order.reservedSol)} SOL`
+      : fmtQty(order.sourceRequestedTokenQty ?? order.reservedToken);
+  const etaMs = Math.max(0, order.execMs - order.submitMs);
+
+  return (
+    <div className="grid grid-cols-[58px_110px_110px_82px_82px_56px] gap-2 border-b border-ax-border/40 py-1 text-[11px]">
+      <span className={order.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>
+        {order.side.toUpperCase()}
+      </span>
+      <span className="text-ax-text">{requested}</span>
+      <span className="text-ax-text">
+        {order.side === 'buy' ? fmtQty(order.expectedOut) : `${fmtSol(order.expectedOut)} SOL`}
+      </span>
+      <span>
+        <span className={statusChipClass('pending')}>PENDING</span>
+      </span>
+      <span className="text-ax-text-dim">{Math.round(etaMs)}ms</span>
+      <span className="text-ax-text-dim">{fmtAgo(order.submitMs)}</span>
     </div>
   );
 }

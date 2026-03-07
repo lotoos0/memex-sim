@@ -18,8 +18,13 @@ import {
   X,
 } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
-import { selectQuickPositionSummaryByTokenId, useTradingStore } from '../../store/tradingStore';
+import { selectQuickTradingUiStateByTokenId, useTradingStore } from '../../store/tradingStore';
 import { usdToSol, useWalletStore } from '../../store/walletStore';
+import {
+  TradingStateSummary,
+  fmtQty,
+  type TradingStatUnit,
+} from '../token/tradingUiShared';
 
 type Pos = { x: number; y: number };
 type DragState = { pointerId: number; dx: number; dy: number } | null;
@@ -161,11 +166,12 @@ export default function InstantTradePanel({ token, open, onClose }: Props) {
   const quickBuy = useTradingStore((s) => s.quickBuy);
   const quickSell = useTradingStore((s) => s.quickSell);
   const solBalance = useWalletStore((s) => s.solBalance);
-  const quickPositionSummarySelector = useMemo(
-    () => selectQuickPositionSummaryByTokenId(token.id, Number.isFinite(token.lastPriceUsd) ? token.lastPriceUsd : 0),
+  const quickTradingUiStateSelector = useMemo(
+    () => selectQuickTradingUiStateByTokenId(token.id, Number.isFinite(token.lastPriceUsd) ? token.lastPriceUsd : 0),
     [token.id, token.lastPriceUsd]
   );
-  const quickPositionSummary = useTradingStore(quickPositionSummarySelector);
+  const quickTradingUiState = useTradingStore(quickTradingUiStateSelector);
+  const [statUnit, setStatUnit] = useState<TradingStatUnit>('usd');
 
   const defaultPos = useMemo<Pos>(() => {
     if (!isBrowser()) return { x: 96, y: 140 };
@@ -179,14 +185,9 @@ export default function InstantTradePanel({ token, open, onClose }: Props) {
   const sellSettings = activeSettings.sell;
 
   const safePrice = Number.isFinite(token.lastPriceUsd) ? token.lastPriceUsd : 0;
-  const positionQty = quickPositionSummary.qty;
-  const holdingUsd = quickPositionSummary.holdingUsd;
-  const boughtUsd = quickPositionSummary.boughtUsd;
-  const soldUsd = quickPositionSummary.soldUsd;
-  const realizedUsd = quickPositionSummary.realizedUsd;
-  const unrealizedUsd = quickPositionSummary.unrealizedUsd;
-  const totalPnlUsd = quickPositionSummary.totalPnlUsd;
-  const pnlPct = boughtUsd > 0 ? (totalPnlUsd / boughtUsd) * 100 : 0;
+  const positionSummary = quickTradingUiState.summary;
+  const positionQty = positionSummary.qty;
+  const holdingUsd = positionSummary.holdingUsd;
 
   const clampToViewport = useCallback((raw: Pos): Pos => {
     if (!isBrowser()) return raw;
@@ -532,7 +533,7 @@ export default function InstantTradePanel({ token, open, onClose }: Props) {
             <div className="flex items-center justify-between pt-1">
               <span className="text-[11px] text-ax-text-dim">Sell</span>
               <span className="inline-flex items-center gap-1 text-[11px] text-ax-text-dim">
-                {positionQty.toFixed(0)} {token.ticker} | {fmtUsd(holdingUsd)}
+                {fmtQty(positionQty)} {token.ticker} | {fmtUsd(holdingUsd)}
               </span>
             </div>
 
@@ -572,13 +573,13 @@ export default function InstantTradePanel({ token, open, onClose }: Props) {
               <span className="text-[#f04d93]">Sell Init.</span>
             </div>
 
-            <div className="grid grid-cols-4 gap-2 border-t border-ax-border pt-2 text-[11px]">
-              <div className="text-center text-[#25e8c2]">{fmtUsd(boughtUsd)}</div>
-              <div className="text-center text-[#f04d93]">{fmtUsd(soldUsd)}</div>
-              <div className="text-center text-ax-text-dim">{fmtUsd(holdingUsd)}</div>
-              <div className={['text-center', totalPnlUsd >= 0 ? 'text-[#25e8c2]' : 'text-[#f04d93]'].join(' ')}>
-                {totalPnlUsd >= 0 ? '+' : '-'}{fmtUsd(Math.abs(totalPnlUsd))} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(0)}%)
-              </div>
+            <div className="border-t border-ax-border pt-2">
+              <TradingStateSummary
+                uiState={quickTradingUiState}
+                unit={statUnit}
+                compact
+                onToggleUnit={() => setStatUnit((u) => (u === 'usd' ? 'sol' : 'usd'))}
+              />
             </div>
 
             {statusText && (

@@ -103,37 +103,37 @@ export default function PositionsTab({ tokenId, displayUnit }: Props) {
       <div className="space-y-3">
         <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
           <PositionStat
-            label={summary.hasOpenPosition ? 'Remaining' : 'Closed Size'}
-            value={fmtQty(summary.qty)}
-            subValue={summary.hasOpenPosition ? fmtMoney(summary.holdingUsd) : '0'}
+            label="Holding"
+            value={fmtMoney(summary.holdingUsd)}
+            subValue={`Remaining ${fmtQty(summary.qty)}`}
           />
           <PositionStat
-            label="Avg Buy"
-            value={fmtPrice(summary.avgBuyPriceUsd)}
-            subValue={summary.boughtUsd ? fmtMoney(summary.boughtUsd) : '-'}
+            label="Bought"
+            value={fmtMoney(summary.boughtUsd)}
+            subValue={summary.avgBuyPriceUsd ? `Avg ${fmtPrice(summary.avgBuyPriceUsd)}` : '-'}
           />
           <PositionStat
-            label="Avg Sell"
-            value={fmtPrice(summary.avgSellPriceUsd)}
-            subValue={summary.soldUsd ? fmtMoney(summary.soldUsd) : '-'}
+            label="Sold"
+            value={fmtMoney(summary.soldUsd)}
+            subValue={summary.avgSellPriceUsd ? `Avg ${fmtPrice(summary.avgSellPriceUsd)}` : '-'}
           />
           <PositionStat
             label="Realized"
             value={fmtSignedMoney(summary.realizedUsd)}
             valueClassName={statTone(summary.realizedUsd)}
-            subValue={summary.soldUsd ? `Sold ${fmtMoney(summary.soldUsd)}` : '-'}
+            subValue={summary.updatedAtMs > 0 ? `Updated ${fmtAgo(summary.updatedAtMs)}` : '-'}
           />
           <PositionStat
             label="Unrealized"
             value={fmtSignedMoney(summary.unrealizedUsd)}
             valueClassName={statTone(summary.unrealizedUsd)}
-            subValue={summary.hasOpenPosition ? `Cost ${fmtMoney(summary.costBasisUsd)}` : '-'}
+            subValue={summary.hasOpenPosition ? `Cost ${fmtMoney(summary.costBasisUsd)}` : fmtMoney(0)}
           />
           <PositionStat
             label="Total PnL"
             value={fmtSignedMoney(summary.totalPnlUsd)}
             valueClassName={statTone(summary.totalPnlUsd)}
-            subValue={summary.updatedAtMs > 0 ? `Updated ${fmtAgo(summary.updatedAtMs)}` : '-'}
+            subValue={summary.tradesCount > 0 ? `${summary.tradesCount} fills` : '-'}
           />
         </div>
 
@@ -248,8 +248,8 @@ export default function PositionsTab({ tokenId, displayUnit }: Props) {
               <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
                 <SummaryRow label="Token" value={token?.ticker ?? tokenId} />
                 <SummaryRow label="Last Price" value={fmtPrice(token?.lastPriceUsd ?? 0)} />
-                <SummaryRow label="Bought" value={fmtMoney(summary.boughtUsd)} />
-                <SummaryRow label="Sold" value={fmtMoney(summary.soldUsd)} />
+                <SummaryRow label="Avg Buy" value={fmtPrice(summary.avgBuyPriceUsd)} />
+                <SummaryRow label="Avg Sell" value={fmtPrice(summary.avgSellPriceUsd)} />
                 <SummaryRow label="Cost Basis" value={fmtMoney(summary.costBasisUsd)} />
                 <SummaryRow label="Remaining Qty" value={fmtQty(summary.qty)} />
               </div>
