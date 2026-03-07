@@ -1,60 +1,28 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Pencil, RefreshCcw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Pencil } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
 import {
-  selectLastQuickExecutionByTokenId,
-  selectQuickPositionSummaryByTokenId,
+  selectQuickTradingUiStateByTokenId,
   useTradingStore,
 } from '../../store/tradingStore';
-import { usdToSol } from '../../store/walletStore';
+import {
+  TradingStateSummary,
+  fmtPriceUsd,
+  fmtQty,
+  fmtSignedPct,
+  sideTone,
+  statusTone,
+  fmtUsd,
+  type TradingStatUnit,
+} from './tradingUiShared';
 
 interface Props {
   token: TokenState;
   floating?: boolean;
 }
 
-function fmtUsd(v: number): string {
-  if (!Number.isFinite(v)) return '$0';
-  if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
-  if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
-  return `$${v.toFixed(0)}`;
-}
-
-function fmtSol(v: number): string {
-  if (!Number.isFinite(v)) return '0 SOL';
-  const a = Math.abs(v);
-  if (a >= 1e3) return `${(v / 1e3).toFixed(2)}K SOL`;
-  if (a >= 1) return `${v.toFixed(3)} SOL`;
-  if (a >= 0.01) return `${v.toFixed(4)} SOL`;
-  return `${v.toFixed(6)} SOL`;
-}
-
-function fmtSignedPct(v: number): string {
-  if (!Number.isFinite(v)) return '+0.00%';
-  const sign = v >= 0 ? '+' : '-';
-  return `${sign}${Math.abs(v).toFixed(2)}%`;
-}
-
-function fmtPriceUsd(v: number): string {
-  if (!Number.isFinite(v) || v <= 0) return '$0';
-  if (v >= 1) return `$${v.toFixed(4)}`;
-  if (v >= 0.01) return `$${v.toFixed(6)}`;
-  return `$${v.toExponential(4)}`;
-}
-
-function fmtQty(v: number): string {
-  if (!Number.isFinite(v)) return '0';
-  const a = Math.abs(v);
-  if (a >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
-  if (a >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
-  if (a >= 1e3) return `${(v / 1e3).toFixed(2)}K`;
-  if (a >= 1) return v.toFixed(2);
-  return v.toFixed(6);
-}
-
 type Side = 'buy' | 'sell';
 type OrderType = 'market' | 'limit';
-type StatUnit = 'usd' | 'sol';
 
 const PRESET_STORAGE_KEY = 'dex.quick_amount_presets_v1';
 const DEFAULT_PRESETS = ['0.1', '0.5', '1', '5'];
@@ -76,7 +44,7 @@ function loadPresetValues(): string[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed) || parsed.length !== DEFAULT_PRESETS.length) return DEFAULT_PRESETS;
     const next = parsed.map((v: unknown) => normalizePresetValue(String(v ?? '')));
-    if (next.some(v => v == null)) return DEFAULT_PRESETS;
+    if (next.some((v) => v == null)) return DEFAULT_PRESETS;
     return next as string[];
   } catch {
     return DEFAULT_PRESETS;
@@ -89,10 +57,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
   const [amount, setAmount] = useState('0.10');
   const [editingPresets, setEditingPresets] = useState(false);
   const [presetValues, setPresetValues] = useState<string[]>(() => loadPresetValues());
-  const [statUnit, setStatUnit] = useState<StatUnit>('usd');
-  const [displayMovingPnlPct, setDisplayMovingPnlPct] = useState(0);
-  const pctAnimRef = useRef<number | null>(null);
-  const pctValueRef = useRef(0);
+  const [statUnit, setStatUnit] = useState<TradingStatUnit>('usd');
   const safePrice = Number.isFinite(token.lastPriceUsd) ? token.lastPriceUsd : 0;
   const [limitPrice, setLimitPrice] = useState(safePrice.toFixed(8));
   const [advanced, setAdvanced] = useState(false);
@@ -106,20 +71,14 @@ export default function TradeSidebar({ token, floating = false }: Props) {
     minOut: number;
     etaMs: number;
   } | null>(null);
-  const quickBuy = useTradingStore(s => s.quickBuy);
-  const quickSell = useTradingStore(s => s.quickSell);
-  const placeQuickLimitOrder = useTradingStore(s => s.placeQuickLimitOrder);
-  const quickPositionSummarySelector = useMemo(
-    () => selectQuickPositionSummaryByTokenId(token.id, safePrice),
+  const quickBuy = useTradingStore((s) => s.quickBuy);
+  const quickSell = useTradingStore((s) => s.quickSell);
+  const placeQuickLimitOrder = useTradingStore((s) => s.placeQuickLimitOrder);
+  const quickTradingUiStateSelector = useMemo(
+    () => selectQuickTradingUiStateByTokenId(token.id, safePrice),
     [safePrice, token.id]
   );
-  const quickPositionSummary = useTradingStore(quickPositionSummarySelector);
-  const lastExecution = useTradingStore(
-    useMemo(
-      () => selectLastQuickExecutionByTokenId(token.id),
-      [token.id]
-    )
-  );
+  const quickTradingUiState = useTradingStore(quickTradingUiStateSelector);
 
   useEffect(() => {
     setLimitPrice(safePrice.toFixed(8));
@@ -133,26 +92,13 @@ export default function TradeSidebar({ token, floating = false }: Props) {
   const ctaLabel = useMemo(() => {
     const ticker = token.ticker || 'TOKEN';
     if (orderType === 'limit') {
-      return side === 'buy' ? `Place Buy Limit` : `Place Sell Limit`;
+      return side === 'buy' ? 'Place Buy Limit' : 'Place Sell Limit';
     }
     return side === 'buy' ? `Buy ${ticker}` : `Sell ${ticker}`;
   }, [orderType, side, token.ticker]);
 
-  const holdingUsd = quickPositionSummary.holdingUsd;
-  const unrealizedUsd = quickPositionSummary.unrealizedUsd;
-  const realizedUsd = quickPositionSummary.realizedUsd;
-  const totalPnlUsd = quickPositionSummary.totalPnlUsd;
-  const openCostUsd = quickPositionSummary.costBasisUsd;
-  const totalBoughtUsd = quickPositionSummary.boughtUsd;
-  const positionQty = quickPositionSummary.qty;
-  const movingPnlPct =
-    positionQty > 0 && openCostUsd > 0
-      ? (unrealizedUsd / openCostUsd) * 100
-      : totalBoughtUsd > 0
-        ? (totalPnlUsd / totalBoughtUsd) * 100
-        : 0;
-  const formatByUnit = (usd: number): string =>
-    statUnit === 'usd' ? fmtUsd(usd) : fmtSol(usdToSol(usd));
+  const positionSummary = quickTradingUiState.summary;
+  const lastExecution = quickTradingUiState.lastExecution;
 
   const handleSubmit = () => {
     const parsedAmount = Number(amount);
@@ -200,9 +146,18 @@ export default function TradeSidebar({ token, floating = false }: Props) {
       setStatusText(`Limit order placed @ ${fmtPriceUsd(parsedLimitPrice)}`);
       return;
     }
-    const result = side === 'buy'
-      ? quickBuy(token.id, parsedAmount, { slippagePct: parsedSlippage, prioritySol: parsedPriority, bribeSol: parsedBribe })
-      : quickSell(token.id, parsedAmount, { slippagePct: parsedSlippage, prioritySol: parsedPriority, bribeSol: parsedBribe });
+    const result =
+      side === 'buy'
+        ? quickBuy(token.id, parsedAmount, {
+            slippagePct: parsedSlippage,
+            prioritySol: parsedPriority,
+            bribeSol: parsedBribe,
+          })
+        : quickSell(token.id, parsedAmount, {
+            slippagePct: parsedSlippage,
+            prioritySol: parsedPriority,
+            bribeSol: parsedBribe,
+          });
     if (!result.ok) {
       setLastQuote(null);
       setStatusText(result.reason ?? 'Trade rejected');
@@ -222,49 +177,10 @@ export default function TradeSidebar({ token, floating = false }: Props) {
     }
   };
 
-  useEffect(() => {
-    const target = Number.isFinite(movingPnlPct) ? movingPnlPct : 0;
-    if (pctAnimRef.current != null) {
-      cancelAnimationFrame(pctAnimRef.current);
-      pctAnimRef.current = null;
-    }
-    const start = pctValueRef.current;
-    const delta = target - start;
-    if (Math.abs(delta) < 0.005) {
-      pctValueRef.current = target;
-      setDisplayMovingPnlPct(target);
-      return;
-    }
-
-    const durationMs = 420;
-    const startTs = performance.now();
-
-    const tick = (ts: number) => {
-      const t = Math.min(1, (ts - startTs) / durationMs);
-      const eased = 1 - Math.pow(1 - t, 3);
-      const next = start + delta * eased;
-      pctValueRef.current = next;
-      setDisplayMovingPnlPct(next);
-      if (t < 1) {
-        pctAnimRef.current = requestAnimationFrame(tick);
-      } else {
-        pctAnimRef.current = null;
-      }
-    };
-
-    pctAnimRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (pctAnimRef.current != null) {
-        cancelAnimationFrame(pctAnimRef.current);
-        pctAnimRef.current = null;
-      }
-    };
-  }, [movingPnlPct]);
-
   return (
     <aside className={floating ? 'w-full bg-transparent' : 'w-full xl:w-[300px] 2xl:w-[326px] shrink-0 border-l border-ax-border bg-ax-surface'}>
-      <div className="p-3 space-y-3">
-        <div className="flex rounded-md border border-ax-border overflow-hidden">
+      <div className="space-y-3 p-3">
+        <div className="flex overflow-hidden rounded-md border border-ax-border">
           <button
             onClick={() => setSide('buy')}
             className={[
@@ -285,9 +201,9 @@ export default function TradeSidebar({ token, floating = false }: Props) {
           </button>
         </div>
 
-        <div className="rounded-md border border-ax-border bg-ax-bg/70 p-2 space-y-2">
+        <div className="space-y-2 rounded-md border border-ax-border bg-ax-bg/70 p-2">
           <div className="flex items-center justify-between text-[10px]">
-            <div className="flex gap-1">
+            <div className="flex gap-2">
               <button
                 onClick={() => setOrderType('market')}
                 className={orderType === 'market' ? 'text-ax-text font-semibold' : 'text-ax-text-dim'}
@@ -310,7 +226,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
             <input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="w-full h-8 rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
+              className="h-8 w-full rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
             />
           </div>
 
@@ -320,7 +236,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
               <input
                 value={slippagePct}
                 onChange={(e) => setSlippagePct(e.target.value)}
-                className="w-full h-8 rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
+                className="h-8 w-full rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
               />
             </div>
             <div className="space-y-1">
@@ -328,7 +244,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
               <input
                 value={prioritySol}
                 onChange={(e) => setPrioritySol(e.target.value)}
-                className="w-full h-8 rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
+                className="h-8 w-full rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
               />
             </div>
             <div className="space-y-1">
@@ -336,7 +252,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
               <input
                 value={bribeSol}
                 onChange={(e) => setBribeSol(e.target.value)}
-                className="w-full h-8 rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
+                className="h-8 w-full rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
               />
             </div>
           </div>
@@ -347,7 +263,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
               <input
                 value={limitPrice}
                 onChange={(e) => setLimitPrice(e.target.value)}
-                className="w-full h-8 rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
+                className="h-8 w-full rounded border border-ax-border bg-ax-surface2 px-2 text-xs outline-none focus:border-ax-green"
               />
             </div>
           )}
@@ -384,7 +300,11 @@ export default function TradeSidebar({ token, floating = false }: Props) {
             ))}
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-between">
+            <label className="flex items-center gap-2 text-[11px] text-ax-text-dim">
+              <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
+              Advanced Trading Strategy
+            </label>
             <button
               onClick={() => {
                 if (editingPresets) {
@@ -397,7 +317,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
               className={[
                 'inline-flex h-6 items-center gap-1 rounded border px-2 text-[10px] transition-colors',
                 editingPresets
-                  ? 'border-ax-green/60 text-ax-green bg-ax-green-dim'
+                  ? 'border-ax-green/60 bg-ax-green-dim text-ax-green'
                   : 'border-ax-border text-ax-text-dim hover:text-ax-text',
               ].join(' ')}
               title="Edit quick amount values"
@@ -406,103 +326,78 @@ export default function TradeSidebar({ token, floating = false }: Props) {
               {editingPresets ? 'Done' : 'Edit'}
             </button>
           </div>
-
-          <label className="flex items-center gap-2 text-[11px] text-ax-text-dim">
-            <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
-            Advanced Trading Strategy
-          </label>
         </div>
 
         <button
           onClick={handleSubmit}
           className={[
-            'w-full h-11 rounded-full font-bold text-sm',
+            'h-11 w-full rounded-full text-sm font-bold',
             side === 'buy' ? 'bg-ax-green text-ax-bg' : 'bg-ax-red text-white',
           ].join(' ')}
         >
           {ctaLabel}
         </button>
-        {statusText && (
-          <div className="text-[11px] text-ax-text-dim px-1">{statusText}</div>
-        )}
+
+        {statusText && <div className="px-1 text-[11px] text-ax-text-dim">{statusText}</div>}
+
         {lastQuote && (
-          <div className="grid grid-cols-2 gap-2 text-[11px] px-1">
+          <div className="grid grid-cols-2 gap-2 px-1 text-[11px]">
             <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
               <div className="text-ax-text-dim">Expected Out</div>
-              <div className="text-ax-text font-medium">
-                {lastQuote.side === 'buy'
-                  ? `${fmtQty(lastQuote.expectedOut)} ${token.ticker}`
-                  : fmtSol(lastQuote.expectedOut)}
+              <div className="font-medium text-ax-text">
+                {lastQuote.side === 'buy' ? `${fmtQty(lastQuote.expectedOut)} ${token.ticker}` : `${lastQuote.expectedOut.toFixed(4)} SOL`}
               </div>
             </div>
             <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
               <div className="text-ax-text-dim">Min Out</div>
-              <div className="text-ax-text font-medium">
-                {lastQuote.side === 'buy'
-                  ? `${fmtQty(lastQuote.minOut)} ${token.ticker}`
-                  : fmtSol(lastQuote.minOut)}
+              <div className="font-medium text-ax-text">
+                {lastQuote.side === 'buy' ? `${fmtQty(lastQuote.minOut)} ${token.ticker}` : `${lastQuote.minOut.toFixed(4)} SOL`}
               </div>
             </div>
           </div>
         )}
+
+        <TradingStateSummary
+          uiState={quickTradingUiState}
+          unit={statUnit}
+          onToggleUnit={() => setStatUnit((u) => (u === 'usd' ? 'sol' : 'usd'))}
+        />
+
+        <div className="grid grid-cols-3 gap-2 text-[11px]">
+          <MiniStat label="Remaining Qty" value={fmtQty(positionSummary.qty)} />
+          <MiniStat label="Avg Buy" value={fmtPriceUsd(positionSummary.avgBuyPriceUsd)} />
+          <MiniStat label="Avg Sell" value={fmtPriceUsd(positionSummary.avgSellPriceUsd)} />
+        </div>
+
         {lastExecution && (
-          <div className="grid grid-cols-2 gap-2 text-[11px] px-1">
+          <div className="grid grid-cols-2 gap-2 px-1 text-[11px]">
             <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
-              <div className="text-ax-text-dim">Status</div>
-              <div className={lastExecution.status === 'filled' ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
+              <div className="text-ax-text-dim">Last Execution</div>
+              <div className={`${statusTone(lastExecution.status)} font-medium`}>
                 {lastExecution.status === 'filled' ? 'Filled' : `Failed${lastExecution.reason ? `: ${lastExecution.reason}` : ''}`}
               </div>
             </div>
             <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
+              <div className="text-ax-text-dim">Side</div>
+              <div className={`${sideTone(lastExecution.side)} font-medium`}>{lastExecution.side.toUpperCase()}</div>
+            </div>
+            <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
               <div className="text-ax-text-dim">Actual Out</div>
-              <div className="text-ax-text font-medium">
-                {lastExecution.side === 'buy'
-                  ? `${fmtQty(lastExecution.actualOut)} ${token.ticker}`
-                  : fmtSol(lastExecution.actualOut)}
+              <div className="font-medium text-ax-text">
+                {lastExecution.side === 'buy' ? `${fmtQty(lastExecution.actualOut)} ${token.ticker}` : `${lastExecution.actualOut.toFixed(4)} SOL`}
               </div>
             </div>
-            {lastExecution.status === 'filled' && (
-              <>
-                <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
-                  <div className="text-ax-text-dim">Avg Price</div>
-                  <div className="text-ax-text font-medium">{fmtPriceUsd(lastExecution.avgPriceUsd ?? 0)}</div>
-                </div>
-                <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
-                  <div className="text-ax-text-dim">Impact</div>
-                  <div className={(lastExecution.impactPct ?? 0) >= 0 ? 'text-ax-green font-medium' : 'text-ax-red font-medium'}>
-                    {fmtSignedPct(lastExecution.impactPct ?? 0)}
-                  </div>
-                </div>
-              </>
-            )}
+            <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
+              <div className="text-ax-text-dim">Impact</div>
+              <div className={(lastExecution.impactPct ?? 0) >= 0 ? 'font-medium text-ax-green' : 'font-medium text-ax-red'}>
+                {fmtSignedPct(lastExecution.impactPct ?? 0)}
+              </div>
+            </div>
           </div>
         )}
 
-        <div className="grid grid-cols-4 gap-2 text-[11px]">
-          <MiniStat label="Bought" value={formatByUnit(quickPositionSummary.boughtUsd)} />
-          <MiniStat label="Sold" value={formatByUnit(quickPositionSummary.soldUsd)} />
-          <MiniStat label="Holding" value={formatByUnit(holdingUsd)} />
-          <MiniStat
-            label={(
-              <span className="inline-flex items-center gap-1">
-                <span>PnL</span>
-                <button
-                  type="button"
-                  onClick={() => setStatUnit((u) => (u === 'usd' ? 'sol' : 'usd'))}
-                  title={statUnit === 'usd' ? 'Switch to SOL' : 'Switch to USD'}
-                  className="inline-flex h-3.5 w-3.5 items-center justify-center rounded text-ax-green hover:bg-ax-green-dim"
-                >
-                  <RefreshCcw size={10} />
-                </button>
-              </span>
-            )}
-            value={`${totalPnlUsd >= 0 ? '+' : '-'}${formatByUnit(Math.abs(totalPnlUsd))} (${fmtSignedPct(displayMovingPnlPct)})`}
-            good={totalPnlUsd >= 0}
-          />
-        </div>
-
         <div className="rounded-md border border-ax-border bg-ax-bg/70 p-2">
-          <div className="text-xs font-semibold text-ax-text mb-2">Token Info</div>
+          <div className="mb-2 text-xs font-semibold text-ax-text">Token Info</div>
           <div className="grid grid-cols-2 gap-2 text-[11px]">
             <MetricCard label="Top 10 H." value={`${token.metrics.topHoldersPct}%`} warn={token.metrics.topHoldersPct > 35} />
             <MetricCard label="Dev H." value={`${token.metrics.devHoldingsPct}%`} />
@@ -523,11 +418,11 @@ export default function TradeSidebar({ token, floating = false }: Props) {
   );
 }
 
-function MiniStat({ label, value, good }: { label: ReactNode; value: string; good?: boolean }) {
+function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
       <div className="text-ax-text-dim">{label}</div>
-      <div className={good ? 'text-ax-green font-semibold' : 'text-ax-text'}>{value}</div>
+      <div className="text-ax-text">{value}</div>
     </div>
   );
 }
@@ -535,7 +430,7 @@ function MiniStat({ label, value, good }: { label: ReactNode; value: string; goo
 function MetricCard({ label, value, warn, good }: { label: string; value: string; warn?: boolean; good?: boolean }) {
   return (
     <div className="rounded border border-ax-border bg-ax-surface2 px-2 py-1.5">
-      <div className={good ? 'text-ax-green font-semibold' : warn ? 'text-ax-red font-semibold' : 'text-ax-text'}>
+      <div className={good ? 'font-semibold text-ax-green' : warn ? 'font-semibold text-ax-red' : 'text-ax-text'}>
         {value}
       </div>
       <div className="text-ax-text-dim">{label}</div>

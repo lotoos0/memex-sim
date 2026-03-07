@@ -182,6 +182,21 @@ export interface QuickOrderPanelState {
   isEmpty: boolean;
 }
 
+export interface QuickTradingUiState {
+  tokenId: string;
+  summary: QuickPositionSummary;
+  lastExecution: QuickExecutionSnapshot | null;
+  openLimitCount: number;
+  pendingOrderCount: number;
+  hasOpenPosition: boolean;
+  hasHistory: boolean;
+  hasOpenLimitOrders: boolean;
+  hasPendingOrders: boolean;
+  hasExecution: boolean;
+  isEmpty: boolean;
+  lifecycleState: 'empty' | 'open' | 'closed';
+}
+
 const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 const EMPTY_QUICK_EXECUTIONS: QuickExecutionSnapshot[] = [];
 const EMPTY_PENDING_QUICK_ORDERS: QuickPendingOrder[] = [];
@@ -1330,6 +1345,65 @@ export const selectQuickOrderPanelStateByTokenId = (tokenId: string) =>
         hasPendingOrders: pendingOrders.length > 0,
         hasExecutionHistory: executions.length > 0,
         isEmpty: auditRows.length === 0 && limitOrders.length === 0 && pendingOrders.length === 0 && executions.length === 0,
+      };
+      return prevState;
+    };
+  };
+
+export const selectQuickTradingUiStateByTokenId = (tokenId: string, currentPriceUsd: number) =>
+  {
+    let prevPosition: QuickPosition | null | undefined = undefined;
+    let prevTrades: QuickTrade[] | undefined = undefined;
+    let prevPriceUsd: number | undefined = undefined;
+    let prevLimitMap: ReturnType<typeof useTradingStore.getState>['quickLimitOrdersById'] | null = null;
+    let prevPendingMap: ReturnType<typeof useTradingStore.getState>['pendingQuickOrdersById'] | null = null;
+    let prevLastExecution: QuickExecutionSnapshot | null | undefined = undefined;
+    let prevState: QuickTradingUiState | null = null;
+    return (s: ReturnType<typeof useTradingStore.getState>): QuickTradingUiState => {
+      const position = s.quickPositionsByTokenId[tokenId] ?? null;
+      const trades = getQuickTradesForToken(s, tokenId);
+      const lastExecution = s.lastQuickExecutionByTokenId[tokenId] ?? null;
+      if (
+        prevState &&
+        position === prevPosition &&
+        trades === prevTrades &&
+        prevPriceUsd === currentPriceUsd &&
+        s.quickLimitOrdersById === prevLimitMap &&
+        s.pendingQuickOrdersById === prevPendingMap &&
+        lastExecution === prevLastExecution
+      ) {
+        return prevState;
+      }
+
+      const summary = buildQuickPositionSummary(position, trades, tokenId, currentPriceUsd);
+      const openLimitCount = getQuickOpenLimitOrdersForToken(s, tokenId).length;
+      const pendingOrderCount = getQuickPendingOrdersForToken(s, tokenId).length;
+      const hasOpenPosition = summary.hasOpenPosition;
+      const hasHistory = summary.hasHistory;
+      const hasOpenLimitOrders = openLimitCount > 0;
+      const hasPendingOrders = pendingOrderCount > 0;
+      const hasExecution = lastExecution != null;
+      const isEmpty = !hasOpenPosition && !hasHistory && !hasOpenLimitOrders && !hasPendingOrders && !hasExecution;
+
+      prevPosition = position;
+      prevTrades = trades;
+      prevPriceUsd = currentPriceUsd;
+      prevLimitMap = s.quickLimitOrdersById;
+      prevPendingMap = s.pendingQuickOrdersById;
+      prevLastExecution = lastExecution;
+      prevState = {
+        tokenId,
+        summary,
+        lastExecution,
+        openLimitCount,
+        pendingOrderCount,
+        hasOpenPosition,
+        hasHistory,
+        hasOpenLimitOrders,
+        hasPendingOrders,
+        hasExecution,
+        isEmpty,
+        lifecycleState: hasOpenPosition ? 'open' : hasHistory ? 'closed' : 'empty',
       };
       return prevState;
     };
