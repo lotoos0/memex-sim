@@ -6,7 +6,9 @@ import { registry } from '../tokens/registry';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const BUY_TEST_AMOUNT_SOL = 0.1;
 const SELL_TEST_AMOUNT_SOL = 0.03;
-const TEST_SLIPPAGE_BPS = 100;
+const TEST_SLIPPAGE_PCT = 5;
+const TEST_SLIPPAGE_BPS = TEST_SLIPPAGE_PCT * 100;
+const TEST_PRIORITY_SOL = 0.001;
 
 async function waitFor<T>(predicate: () => T | null | false, timeoutMs: number, label: string): Promise<T> {
   const startedAt = Date.now();
@@ -20,13 +22,25 @@ async function waitFor<T>(predicate: () => T | null | false, timeoutMs: number, 
 
 export async function runQuickLimitQa() {
   const tokenId = await waitFor(() => {
-    const rows = Object.values(useTokenStore.getState().tokensById);
+    const tokenState = useTokenStore.getState();
+    const rows = Object.values(tokenState.tokensById);
     const ranked = rows
       .filter((row) => Number.isFinite(row.lastPriceUsd) && row.lastPriceUsd > 0)
       .filter((row) => Number.isFinite(row.mcapUsd) && row.mcapUsd >= 20_000)
       .filter((row) => Number.isFinite(row.liquidityUsd) && row.liquidityUsd >= 3_000)
       .filter((row) => Number.isFinite(row.vol5mUsd) && row.vol5mUsd >= 1_000)
       .filter((row) => row.phase !== 'DEAD' && row.phase !== 'RUGGED')
+      .filter((row) => {
+        const market = tokenState.marketByTokenId[row.id];
+        const flow = tokenState.tradeFlowByTokenId[row.id];
+        return Boolean(
+          market &&
+          Number.isFinite(market.updatedAtMs) &&
+          market.updatedAtMs > 0 &&
+          flow &&
+          flow.tx60s >= 4
+        );
+      })
       .filter((row) => registry.quoteTrade(row.id, 'BUY', BUY_TEST_AMOUNT_SOL, TEST_SLIPPAGE_BPS).ok)
       .sort((a, b) => {
         const phaseScore = (phase: typeof a.phase) => {
@@ -53,12 +67,17 @@ export async function runQuickLimitQa() {
   const getPosition = () => useTradingStore.getState().quickPositionsByTokenId[tokenId] ?? null;
 
   await waitFor(() => Number.isFinite(getLastPriceUsd()) && getLastPriceUsd() > 0 ? true : null, 4000, 'token price');
+  const initialMarketUpdatedAtMs = useTokenStore.getState().marketByTokenId[tokenId]?.updatedAtMs ?? 0;
+  await waitFor(() => {
+    const market = useTokenStore.getState().marketByTokenId[tokenId];
+    return market && market.updatedAtMs > initialMarketUpdatedAtMs ? true : null;
+  }, 4000, 'fresh token market snapshot');
 
   const walletBeforeCancel = getWalletSol();
   const farBelowPrice = getLastPriceUsd() * 0.2;
   const cancelPlace = useTradingStore.getState().placeQuickLimitOrder(tokenId, 'buy', 0.05, farBelowPrice, {
-    slippagePct: 1,
-    prioritySol: 0,
+    slippagePct: TEST_SLIPPAGE_PCT,
+    prioritySol: TEST_PRIORITY_SOL,
     bribeSol: 0,
   });
   if (!cancelPlace.ok || !cancelPlace.orderId) {
@@ -87,8 +106,8 @@ export async function runQuickLimitQa() {
   const buyExecCountBefore = getExecutions().length;
   const triggerBuyPrice = getLastPriceUsd() * 1.2;
   const buyLimit = useTradingStore.getState().placeQuickLimitOrder(tokenId, 'buy', BUY_TEST_AMOUNT_SOL, triggerBuyPrice, {
-    slippagePct: 1,
-    prioritySol: 0,
+    slippagePct: TEST_SLIPPAGE_PCT,
+    prioritySol: TEST_PRIORITY_SOL,
     bribeSol: 0,
   });
   if (!buyLimit.ok || !buyLimit.orderId) {
@@ -100,6 +119,10 @@ export async function runQuickLimitQa() {
     const history = getExecutions();
     if (history.length <= buyExecCountBefore) return null;
     const nextRows = history.slice(buyExecCountBefore);
+    const failed = nextRows.find((row) => row.side === 'buy' && row.status === 'failed');
+    if (failed) {
+      throw new Error(`BUY limit execution failed: ${failed.reason ?? 'unknown reason'}`);
+    }
     return nextRows.find((row) => row.side === 'buy' && row.status === 'filled') ?? null;
   }, 8000, 'buy limit fill');
   await waitFor(
@@ -125,8 +148,8 @@ export async function runQuickLimitQa() {
   const qtyBeforeSell = postBuyState.qty;
   const triggerSellPrice = postBuyState.priceUsd * 0.5;
   const sellLimit = useTradingStore.getState().placeQuickLimitOrder(tokenId, 'sell', SELL_TEST_AMOUNT_SOL, triggerSellPrice, {
-    slippagePct: 1,
-    prioritySol: 0,
+    slippagePct: TEST_SLIPPAGE_PCT,
+    prioritySol: TEST_PRIORITY_SOL,
     bribeSol: 0,
   });
   if (!sellLimit.ok || !sellLimit.orderId) {
@@ -138,6 +161,10 @@ export async function runQuickLimitQa() {
     const history = getExecutions();
     if (history.length <= sellExecCountBefore) return null;
     const nextRows = history.slice(sellExecCountBefore);
+    const failed = nextRows.find((row) => row.side === 'sell' && row.status === 'failed');
+    if (failed) {
+      throw new Error(`SELL limit execution failed: ${failed.reason ?? 'unknown reason'}`);
+    }
     return nextRows.find((row) => row.side === 'sell' && row.status === 'filled') ?? null;
   }, 8000, 'sell limit fill');
   await waitFor(
