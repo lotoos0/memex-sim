@@ -12,10 +12,6 @@ import type { UserTradeExecutionNotice } from '../tokens/tokenSim';
 export type Side = 'buy' | 'sell';
 export type OrdType = 'market' | 'limit' | 'ioc';
 
-/* --- preferencje wykresu --- */
-export type ChartType = 'candles' | 'bars' | 'line' | 'area' | 'baseline';
-export type Metric = 'price' | 'mcap';
-
 /* --- modele --- */
 export interface Order {
   id: string; ts: number; symbol: string;
@@ -186,7 +182,6 @@ export interface QuickOrderPanelState {
   isEmpty: boolean;
 }
 
-type Ghost = { price: number } | null;
 const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 const EMPTY_QUICK_EXECUTIONS: QuickExecutionSnapshot[] = [];
 const EMPTY_PENDING_QUICK_ORDERS: QuickPendingOrder[] = [];
@@ -218,16 +213,9 @@ type Store = {
   positionHistory: PositionHistory[];
   posAcc: Record<string, PosAcc>;
   // Legacy symbol-centric engine retained only for internal isolation and `legacy/`.
+  // Active UI must stay on the quick-native API below.
   symbol: string;
   lastPrice: number;
-  tfSec: number;
-  tfLeft: number;
-
-  orderTypeUI: OrdType;
-  limitTarget?: number | null;                // w JEDNOSTCE CENY (nie MCAP)
-  setOrderTypeUI: (t: OrdType) => void;
-  setLimitTarget: (p: number | null) => void;
-
   ticks: Tick[];
   candles: Candle[];
 
@@ -248,50 +236,27 @@ type Store = {
   slippagePct: number;
   reduceOnly: boolean;
 
-  ghost: Ghost;
-  resetViewSignal: number;
-
-  // preferencje wykresu
-  chartType: ChartType;
-  metric: Metric;
-  showSMA20: boolean;
-  showSMA50: boolean;
-  supply: number;
-
-  setTfSec: (s: number) => void;
-  setTfLeft: (s: number) => void;
-  setGhost: (p: number | null) => void;
-  resetView: () => void;
-
-  setChartType: (t: ChartType) => void;
-  setMetric: (m: Metric) => void;
-  toggleSMA20: () => void;
-  toggleSMA50: () => void;
-
+  // Legacy-only public methods kept only while the isolated symbol engine remains.
   placeOrder: (partial: Partial<Order> & { side: Side; type: OrdType }) => Order;
   cancelOrder: (id: string) => void;
-  closePct: (pct: number) => void;
-  setSLTP: (levels: { sl?: number; tp?: number }) => void;
+
+  // Quick-native public API used by the active UI.
   placeQuickLimitOrder: (tokenId: string, side: Side, amountSol: number, limitPriceUsd: number, options?: QuickTradeOptions) => QuickTradeResult;
   cancelQuickLimitOrder: (orderId: string) => boolean;
   quickBuy: (tokenId: string, amountSol: number, options?: QuickTradeOptions) => QuickTradeResult;
   quickSell: (tokenId: string, amountSol: number, options?: QuickTradeOptions) => QuickTradeResult;
 
+  // Legacy symbol engine tick bridge retained for internal journal/runtime behavior.
   onPriceTick: (t: Tick, maybeCandle?: { mode: 'new'|'update'; candle: Candle }) => void;
 };
 
 export const useTradingStore = create<Store>((set, get) => ({
   symbol: 'MEME/USDC',
   lastPrice: 0,
-  tfSec: 1,
-  tfLeft: 0,
 
   realizedBySymbol: {},
   positionHistory: [] as PositionHistory[],
   posAcc: {} as Record<string, PosAcc>,
-
-  orderTypeUI: 'market',
-  limitTarget: null,
 
   ticks: [],
   candles: [],
@@ -316,37 +281,7 @@ export const useTradingStore = create<Store>((set, get) => ({
   slippagePct: 0.05,
   reduceOnly: false,
 
-  ghost: null,
-  resetViewSignal: 0,
-
-  // preferencje wykresu
-  chartType: 'candles',
-  metric: 'price',
-  showSMA20: true,
-  showSMA50: false,
-  supply: 1_000_000_000, // stała do MCAP (price * supply)
-  setTfSec: (s) => set({ tfSec: Math.max(1, Math.floor(s)) }),
-  setTfLeft: (s) => set({ tfLeft: Math.max(0, Math.ceil(s)) }),
-  setGhost: (p) => set({ ghost: p == null ? null : { price: p } }),
-  resetView: () => set((st) => ({ resetViewSignal: st.resetViewSignal + 1 })),
-
-  setChartType: (t) => set({ chartType: t }),
-  setMetric: (m) => set({ metric: m }),
-  toggleSMA20: () => set((s)=>({ showSMA20: !s.showSMA20 })),
-  toggleSMA50: () => set((s)=>({ showSMA50: !s.showSMA50 })),
-
-  setOrderTypeUI: (t) => set((s) => {
-    // auto-domyślny target po przełączeniu na LIMIT
-    if (t === 'limit' && s.limitTarget == null) {
-      return { orderTypeUI: t, limitTarget: s.lastPrice || 0 };
-    }
-    // wyczyść target gdy wychodzisz z LIMIT
-    if (t !== 'limit') return { orderTypeUI: t, limitTarget: null };
-    return { orderTypeUI: t };
-  }),
-
-  setLimitTarget: (p) => set({ limitTarget: p }),
-
+  // Quick-native order/position flow used by active src/ UI.
   placeQuickLimitOrder: (tokenId, side, amountSol, limitPriceUsd, options) => {
     const st = get();
     if (!Number.isFinite(amountSol) || amountSol <= 0) {
@@ -678,6 +613,7 @@ export const useTradingStore = create<Store>((set, get) => ({
     };
   },
 
+  // Legacy symbol-centric engine kept only for internal isolation and journal compatibility.
   placeOrder: (partial) => {
     const st = get();
     const id = makeId();
@@ -712,29 +648,6 @@ export const useTradingStore = create<Store>((set, get) => ({
     return { orders: arr };
   }),
 
-  closePct: (pct) => {
-    const st = get();
-    let pos: Position | undefined = undefined;
-    for (let i = 0; i < st.positions.length; i++) {
-      if (st.positions[i].symbol === st.symbol) { pos = st.positions[i]; break; }
-    }
-    if (!pos || pos.qty <= 0) return;
-    const closeQty = Math.max(0, Math.min(pos.qty, pos.qty * pct));
-    const side: Side = pos.side === 'buy' ? 'sell' : 'buy';
-    get().placeOrder({ side, type: 'market', qty: closeQty, reduceOnly: true });
-  },
-
-  setSLTP: ({ sl, tp }) => set((st) => {
-    const arr = st.positions.slice();
-    for (let i = 0; i < arr.length; i++) {
-      if (arr[i].symbol === st.symbol) {
-        arr[i] = { ...arr[i], sl: sl != null ? sl : arr[i].sl, tp: tp != null ? tp : arr[i].tp };
-        break;
-      }
-    }
-    return { positions: arr };
-  }),
-
   onPriceTick: (tk, maybeCandle) => {
     const st = get();
     const price = tk.p;
@@ -753,7 +666,6 @@ export const useTradingStore = create<Store>((set, get) => ({
       if (o.status !== 'new') continue;
 
       const triggered = (o.trigger == null) || (o.side === 'buy' ? (price >= o.trigger) : (price <= o.trigger));
-      // market 
       if ((o.type === 'market' || o.type === 'ioc') && triggered) {
         const slipMul = o.side === 'buy' ? (1 + o.slippagePct / 100) : (1 - o.slippagePct / 100);
         const fillPrice = price * slipMul;
@@ -784,12 +696,11 @@ export const useTradingStore = create<Store>((set, get) => ({
         ));
 
         orders[i] = { ...o, status: 'filled', price: o.price != null ? o.price : fillPrice };
-
         continue;
       } else if ((o.type === 'market' || o.type === 'ioc') && !triggered) {
-        continue; // STOP-MARKET czeka
+        continue;
       }
-      // limit
+
       if (o.type === 'limit') {
         if (o.trigger != null && !triggered) continue;
         if ((o.side === 'buy' && price <= (o.price || 0)) ||
@@ -825,7 +736,6 @@ export const useTradingStore = create<Store>((set, get) => ({
       }
     }
 
-    // SL/TP + PnL live
     const newPositions: Position[] = [];
     for (let j = 0; j < positions.length; j++) {
       const p = positions[j];
@@ -841,7 +751,6 @@ export const useTradingStore = create<Store>((set, get) => ({
       if (!closed) newPositions.push({ ...p, unrealized: unreal });
     }
 
-    // świece
     let candles = st.candles;
     if (maybeCandle) {
       const mode = maybeCandle.mode;
@@ -850,11 +759,9 @@ export const useTradingStore = create<Store>((set, get) => ({
       else if (candles.length) candles = candles.slice(0, -1).concat([c]);
     }
 
-    // sorty + limity
     orders = orders.sort((a,b)=>b.ts-a.ts).slice(0,2000);
     trades = trades.sort((a,b)=>b.ts-a.ts).slice(0,2000);
     positionHistory = positionHistory.sort((a,b)=>b.closeTs-a.closeTs).slice(0,2000);
-
 
     set({
       lastPrice: price,
@@ -872,6 +779,7 @@ export const useTradingStore = create<Store>((set, get) => ({
     saveTradesSnapshot(trades).catch(()=>{});
     savePositionHistorySnapshot(positionHistory).catch(()=>{});
   },
+
 }));
 
 /* --- pomocnicze --- */
@@ -1588,3 +1496,4 @@ function buildQuickPositionSummary(
     recentFills: trades.slice(-8).reverse(),
   };
 }
+
