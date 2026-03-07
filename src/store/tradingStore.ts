@@ -983,8 +983,16 @@ export const selectQuickTradesByTokenId = (tokenId: string) =>
     getQuickTradesForToken(s, tokenId);
 
 export const selectQuickPendingOrdersByTokenId = (tokenId: string) =>
-  (s: ReturnType<typeof useTradingStore.getState>): QuickPendingOrder[] =>
-    getQuickPendingOrdersForToken(s, tokenId);
+  {
+    let prevPendingMap: ReturnType<typeof useTradingStore.getState>['pendingQuickOrdersById'] | null = null;
+    let prevRows: QuickPendingOrder[] = EMPTY_PENDING_QUICK_ORDERS;
+    return (s: ReturnType<typeof useTradingStore.getState>): QuickPendingOrder[] => {
+      if (s.pendingQuickOrdersById === prevPendingMap) return prevRows;
+      prevPendingMap = s.pendingQuickOrdersById;
+      prevRows = getQuickPendingOrdersForToken(s, tokenId);
+      return prevRows;
+    };
+  };
 
 export const selectLastQuickExecutionByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickExecutionSnapshot | null =>
@@ -995,20 +1003,57 @@ export const selectQuickExecutionHistoryByTokenId = (tokenId: string) =>
     getQuickExecutionHistoryForToken(s, tokenId);
 
 export const selectQuickPositionSummaryByTokenId = (tokenId: string, currentPriceUsd: number) =>
-  (s: ReturnType<typeof useTradingStore.getState>): QuickPositionSummary =>
-    buildQuickPositionSummary(s, tokenId, currentPriceUsd);
+  {
+    let prevPosition: QuickPosition | null | undefined = undefined;
+    let prevTrades: QuickTrade[] | undefined = undefined;
+    let prevPriceUsd: number | undefined = undefined;
+    let prevSummary: QuickPositionSummary | null = null;
+    return (s: ReturnType<typeof useTradingStore.getState>): QuickPositionSummary => {
+      const position = s.quickPositionsByTokenId[tokenId] ?? null;
+      const trades = getQuickTradesForToken(s, tokenId);
+      if (
+        prevSummary &&
+        position === prevPosition &&
+        trades === prevTrades &&
+        prevPriceUsd === currentPriceUsd
+      ) {
+        return prevSummary;
+      }
+      prevPosition = position;
+      prevTrades = trades;
+      prevPriceUsd = currentPriceUsd;
+      prevSummary = buildQuickPositionSummary(position, trades, tokenId, currentPriceUsd);
+      return prevSummary;
+    };
+  };
 
 export const selectQuickOrderPanelStateByTokenId = (tokenId: string) =>
-  (s: ReturnType<typeof useTradingStore.getState>): QuickOrderPanelState => {
-    const pendingOrders = getQuickPendingOrdersForToken(s, tokenId);
-    const executions = getQuickExecutionHistoryForToken(s, tokenId).slice().reverse();
-    return {
-      tokenId,
-      pendingOrders,
-      executions,
-      hasPendingOrders: pendingOrders.length > 0,
-      hasExecutionHistory: executions.length > 0,
-      isEmpty: pendingOrders.length === 0 && executions.length === 0,
+  {
+    let prevPendingMap: ReturnType<typeof useTradingStore.getState>['pendingQuickOrdersById'] | null = null;
+    let prevExecutionHistory: QuickExecutionSnapshot[] | undefined = undefined;
+    let prevState: QuickOrderPanelState | null = null;
+    return (s: ReturnType<typeof useTradingStore.getState>): QuickOrderPanelState => {
+      const executionHistory = getQuickExecutionHistoryForToken(s, tokenId);
+      if (
+        prevState &&
+        s.pendingQuickOrdersById === prevPendingMap &&
+        executionHistory === prevExecutionHistory
+      ) {
+        return prevState;
+      }
+      const pendingOrders = getQuickPendingOrdersForToken(s, tokenId);
+      const executions = executionHistory.length > 0 ? executionHistory.slice().reverse() : EMPTY_QUICK_EXECUTIONS;
+      prevPendingMap = s.pendingQuickOrdersById;
+      prevExecutionHistory = executionHistory;
+      prevState = {
+        tokenId,
+        pendingOrders,
+        executions,
+        hasPendingOrders: pendingOrders.length > 0,
+        hasExecutionHistory: executions.length > 0,
+        isEmpty: pendingOrders.length === 0 && executions.length === 0,
+      };
+      return prevState;
     };
   };
 
@@ -1109,12 +1154,11 @@ function getAvgTradePrice(trades: QuickTrade[], side: Side): number | null {
 }
 
 function buildQuickPositionSummary(
-  s: ReturnType<typeof useTradingStore.getState>,
+  position: QuickPosition | null,
+  trades: QuickTrade[],
   tokenId: string,
   currentPriceUsd: number
 ): QuickPositionSummary {
-  const position = s.quickPositionsByTokenId[tokenId] ?? null;
-  const trades = getQuickTradesForToken(s, tokenId);
   const qty = position?.qty ?? 0;
   const boughtUsd = position?.boughtUsd ?? 0;
   const soldUsd = position?.soldUsd ?? 0;

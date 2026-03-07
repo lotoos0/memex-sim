@@ -1,133 +1,232 @@
-# memex-sim - handoff dla drugiego AI
+# memex-sim - handoff for a second AI
 
-Data aktualizacji: 2026-02-21
+Updated: 2026-03-07
 
-## 1) Co to jest
-memex-sim to symulator tradingu memecoinow w stylu DEX.
-Aktualnie dziala jako SPA (React + Vite) z trybem SIM i synthetic marketem.
+## 1) What this is
+`memex-sim` is a memecoin trading simulator inspired by DEX/Axiom UX.
+It is currently a React + Vite SPA running in active `SIM` mode.
 
-Flow usera:
-- Pulse (`/`) z kolumnami tokenow.
-- Wejscie w token (`/token/:id`) -> chart + trading sidebar + dolny panel.
-- Opcjonalny floating `InstantTradePanel` (toggle w BottomTabs).
+Main flow:
+- `Pulse` (`/`) shows a live token feed split into 3 buckets: `New Pairs`, `Final Stretch`, `Migrated`.
+- Clicking a token opens `TokenPage` (`/token/:id`) with chart, trading, feed and market panels.
+- Wallet, quick trading and chart all run on a local synthetic market driven by `registry` + `TokenSim`.
 
-## 2) Faktyczny stack
+## 2) Actual stack
 - Frontend: React 19, TypeScript, Vite
-- Routing: react-router-dom v7
+- Routing: `react-router-dom` v7
 - State: Zustand
-- Chart: lightweight-charts
-- UI: Tailwind CSS v4 (theme w `src/styles.css`)
-- Ikony: lucide-react
+- Chart: `lightweight-charts`
+- UI: Tailwind CSS v4
+- Icons: `lucide-react`
+- Local persistence: `localStorage` + `zustand/persist`
 
-Skrypty:
+Scripts:
 - `npm run dev`
 - `npm run build`
 - `npm run lint`
 - `npm run preview`
+- `npm run qa:sim:dead-floor`
 
-## 3) Kontrakty i stale (traktuj jako zamrozone)
-Plik: `src/tokens/types.ts`
+## 3) Contracts and constants not to change without migration
+The core contract lives in `src/tokens/types.ts`.
 
-- Token lifecycle: `NEW -> FINAL -> MIGRATED`, plus `RUGGED`, `DEAD`
-- Fate: `QUICK_RUG | SHORT | NORMAL | LONG_RUNNER`
+Most important values:
+- lifecycle: `NEW -> FINAL -> MIGRATED`, plus `RUGGED` and `DEAD`
+- fate: `QUICK_RUG | SHORT | NORMAL | LONG_RUNNER`
 - `MIGRATION_THRESHOLD_USD = 69_000`
 - `MCAP_FLOOR_USD = 2_000`
 - `MCAP_CAP_USD = 10_000_000`
 - `SIM_TIME_MULTIPLIER = 60`
 - `SOL_PRICE_USD = 150`
+- wallet start: `120 SOL` in DEV, `1 SOL` outside DEV (`src/store/walletStore.ts`)
 
-Wallet:
-- `src/store/walletStore.ts`
-- start balance: `120 SOL` w DEV, `1 SOL` poza DEV
+## 4) Runtime and data architecture
+The main orchestrator is `src/tokens/registry.ts`.
 
-## 4) Architektura runtime (co faktycznie dziala)
-Glowny orchestrator: `src/tokens/registry.ts`
-
+Runtime loops:
 - engine tick: `200ms`
-- publish feed do store: `1000ms`
-- spawn tokena: `40_000ms`
-- rugged linger przed cleanupem: `90_000ms`
-- startowe tokeny: `12`
+- publish feed/store snapshot: `1000ms`
+- spawn interval: `40_000ms`
+- initial tokens: `12`
+- bucket limits: `MAX_NEW = 5`, `MAX_FINAL = 5`, `MAX_MIGRATED = 5`
 
-`registry.start()` jest wywolywany w `src/router.tsx` (AppShell `useEffect`).
+`registry.start()` is called in `src/router.tsx`.
 
-Chart aktualnie idzie callbackiem z registry (poza Zustand dla candle arrays):
-- TF: `1s`, `15s`, `30s`, `1m`
-- metric: `mcap` / `price`
-- markery eventow: `M`, `DB`, `DS`, `B`, `S`
-- price lines: avg buy, avg sell, migration
-- context menu reset chart + hotkey `Alt+R`
+`registry` is responsible for:
+- spawning and ticking all `TokenSim` instances
+- publishing runtime state to `tokenStore`
+- publishing market snapshots: `recentTrades`, `topHolders`, `holdersCount`
+- market session bucket (`EU`, `NA`, `OVERLAP`, `OFF`)
+- narrative/posts via `postStore`
+- user trade orders / executions
 
-## 5) Trading - realny stan
-Plik: `src/store/tradingStore.ts`
+In practice there are now 3 data layers:
+1. `tokensById` and runtime feed in `src/store/tokenStore.ts`
+2. market micro snapshots in `src/store/tokenStore.ts`
+3. narrative/social feed in `src/store/postStore.ts`
 
-Sa dwa swiaty, oba nadal istnieja:
+## 5) Stores and their roles
+- `src/store/tokenStore.ts`
+  - `tokensById`
+  - `eventsByTokenId`
+  - `marketByTokenId`
+  - `tradeFlowByTokenId` (buys/sells/tx over a 60s window)
+  - `activeTokenId`
+  - `marketSessionBucket` and debug `marketSessionBucketOverride`
+- `src/store/tradingStore.ts`
+  - quick token-centric trading used by the UI
+  - still also contains legacy symbol-centric flow (`orders`, `positions`, `trades`, `symbol`, `mode`)
+- `src/store/walletStore.ts`
+  - SOL balance and realized PnL
+- `src/store/postStore.ts`
+  - posts per token, system + user
+- `src/store/favoritesStore.ts`
+  - watchlist/favorites per token, persisted
 
-1. Quick token-centric flow (aktywnie uzywany przez UI):
+Architecture takeaway:
+- `tokenStore` is now more than a pure runtime token store
+- `tradingStore` is still the main source of technical debt
+
+## 6) Trading - current state
+The active trading path is quick token-centric trading:
 - `quickBuy(tokenId, amountSol)`
 - `quickSell(tokenId, amountSol)`
 - `quickPositionsByTokenId`
 - `quickTradesByTokenId`
-- wykonanie przez `registry.executeTrade(...)`
+- `pendingQuickOrdersById`
+- `quickExecutionHistoryByTokenId`
 
-2. Legacy symbol-centric flow (wciaz w store, mniej uzywany):
+Current execution path:
+- quote/submit/order status flows through `registry` and `TokenSim`
+- `registry` emits execution notices
+- UI and post feed receive fill information
+
+Legacy still exists in the same store:
+- `placeOrder`
+- `cancelOrder`
+- `onPriceTick`
 - `orders`, `positions`, `trades`, `symbol`, `mode`
-- `placeOrder`, `cancelOrder`, `onPriceTick`, `applyPreset`
-- persist snapshotow przez `src/sim/journal.ts`
 
-Wniosek: trading core jest czesciowo zduplikowany i architektonicznie niespojny.
+This is still the main architectural issue: quick flow and legacy flow coexist in the same store.
 
-## 6) UI status
-Dziala:
-- `src/pages/PulsePage.tsx` (3 kolumny: New Pairs, Final Stretch, Migrated)
-- `src/components/pulse/TokenCard.tsx` z quick `Buy 0.1`/`Sell 0.1`
-- `src/pages/TokenPage.tsx` (header, chart, sidebar, quick trade status)
-- `src/components/token/TradeSidebar.tsx` z market buy/sell (limit ma komunikat "queued")
-- `src/components/floating/InstantTradePanel.tsx` (draggable, presety, localStorage)
+## 7) UI - what actually works
+### Pulse
+Files:
+- `src/pages/PulsePage.tsx`
+- `src/components/pulse/TokenColumn.tsx`
+- `src/components/pulse/TokenCard.tsx`
+- `src/components/pulse/PulseFiltersModal.tsx`
+- `src/components/pulse/pulseFilters.ts`
+- `src/components/pulse/pulseSorts.ts`
 
-WIP / placeholder:
-- `src/components/token/BottomTabs.tsx` (taby sa, content "queued in next slice")
-- `src/hooks/usePriceFeed.ts` jest deprecated stub
-- `src/app/App.tsx` jest deprecated stub
+Working:
+- 3 bucket columns
+- display mode: `comfortable` / `dense`
+- per-bucket filters and sort
+- trade-flow-aware filtering (`tx60s`, `buys60s`, `sells60s`)
+- dead/rugged tokens still show in buckets
+- quick actions on token cards
+- card also shows latest news/post
 
-## 7) Najwazniejsze ryzyka techniczne
-1. Rozjazd miedzy quick token-centric trading i legacy symbol-centric trading w jednym store.
-2. Lifecycle i trading coupling przez `registry` (dziala, ale utrudnia przyszly provider abstraction).
-3. Brak warstwy providerow (`src/providers/*` nie istnieje) blokuje clean wejscie w Replay/Live.
-4. Brak testow automatycznych i brak `npm run test`.
+### TokenPage
+Files:
+- `src/pages/TokenPage.tsx`
+- `src/components/chart/Chart.tsx`
+- `src/components/token/TradeSidebar.tsx`
+- `src/components/token/BottomTabs.tsx`
+- `src/components/token/TradesTablePanel.tsx`
+- `src/components/token/TokenFeed.tsx`
+- `src/components/floating/InstantTradePanel.tsx`
+- `src/components/token/PositionsTab.tsx`
+- `src/components/token/OrdersTab.tsx`
 
-## 8) Priorytety na teraz (kolejnosc)
-1. Ujednolicic trading store pod `tokenId` i usunac/odizolowac legacy sciezki.
-2. Domknac taby dolne (Trades/Positions/Orders) na realnych danych quick flow.
-3. Rozdzielic kontrakt danych marketowych (`MarketDataProvider`) od implementacji SIM.
-4. Dopiero potem wchodzic w Replay mode.
+Working:
+- chart `mcap/price`
+- TF: `1s`, `15s`, `30s`, `1m`
+- event markers: `M`, `DB`, `DS`, `B`, `S`
+- price lines: avg buy, avg sell, migration
+- trade sidebar with market buy/sell
+- floating instant trade panel
+- right-side live trades table
+- bottom tabs: `Trades`, `Feed`, `Positions`, `Orders`, `Holders`, `Top Traders`
+- watchlist toggle
+- session bucket badge
+- dev overlays: curve debug + session override
 
-## 9) Minimalny pakiet plikow do analizy przez drugie AI
+Still incomplete:
+- `Dev Tokens` tab
+- limit mode in `TradeSidebar` is still queued/stub
+- quick-flow selector/helper layer is cleaner now, but `TradeSidebar` and `InstantTradePanel` still carry duplicated summary logic
+
+## 8) Narrative and social layer
+This is a newer area compared with older project descriptions.
+
+Files:
+- `src/store/postStore.ts`
+- `src/narrative/tokenNarrative.ts`
+- `src/narrative/newsTemplateEngine.ts`
+- `src/narrative/authorCatalog.ts`
+- `src/components/token/TokenFeed.tsx`
+- `src/components/news/TweetHoverCard.tsx`
+
+How it works:
+- `registry` emits narrative events on launch, migration, rug and big trades
+- the narrative layer maps that into pseudo-posts/news
+- posts go into `postStore`
+- the user can also add manual posts in `Feed`
+
+This is not a separate domain layer yet, but it is already wired into runtime.
+
+## 9) Main technical risks
+1. `src/store/tradingStore.ts` still mixes new token-centric trading with legacy symbol-centric mode.
+2. `src/tokens/registry.ts` keeps growing toward an orchestration god-object: runtime, executions, narrative, session bucket, posting.
+3. There is still no provider abstraction (`Sim/Replay/Live`) in code, even though the broader project plan assumes it.
+4. `Plan.md` is partially outdated relative to the actual repo.
+5. There is no real test suite yet; only focused QA scripts and build/type gates.
+
+## 10) What to do next
+Most sensible order:
+1. Keep shrinking legacy symbol flow inside `tradingStore`.
+2. Clean duplicated quick-position summary logic in `TradeSidebar` and `InstantTradePanel`.
+3. Extract a market provider contract from `registry` if the project is meant to move toward Replay/Live.
+4. Consider splitting `registry` into smaller responsibilities: runtime, market snapshots, narrative bridge, order execution bridge.
+5. Add tests for lifecycle, fill logic and market snapshots.
+
+## 11) Minimum file set for a second AI to read
 - `Plan.md`
 - `package.json`
 - `src/router.tsx`
 - `src/pages/PulsePage.tsx`
 - `src/pages/TokenPage.tsx`
-- `src/components/chart/Chart.tsx`
-- `src/components/token/TradeSidebar.tsx`
-- `src/components/token/BottomTabs.tsx`
-- `src/components/floating/InstantTradePanel.tsx`
 - `src/store/tokenStore.ts`
 - `src/store/tradingStore.ts`
 - `src/store/walletStore.ts`
+- `src/store/postStore.ts`
+- `src/store/favoritesStore.ts`
 - `src/tokens/types.ts`
 - `src/tokens/generator.ts`
 - `src/tokens/tokenSim.ts`
 - `src/tokens/registry.ts`
-- `src/chart/tokenChartEvents.ts`
+- `src/components/chart/Chart.tsx`
+- `src/components/token/TradeSidebar.tsx`
+- `src/components/token/BottomTabs.tsx`
+- `src/components/token/TradesTablePanel.tsx`
+- `src/components/token/TokenFeed.tsx`
+- `src/components/token/PositionsTab.tsx`
+- `src/components/token/OrdersTab.tsx`
+- `src/components/floating/InstantTradePanel.tsx`
+- `src/components/pulse/TokenCard.tsx`
+- `src/components/pulse/PulseFiltersModal.tsx`
+- `src/components/pulse/pulseFilters.ts`
+- `src/components/pulse/pulseSorts.ts`
 
-## 10) Prompt roboczy dla drugiego AI
-Uzyj tego jako stylu pracy:
+## 12) Working prompt for a second AI
+Use this style:
 
-"Dzialaj jako technical copilot dla `memex-sim`. Priorytet: male, pionowe kroki i dzialajacy kod po kazdej zmianie. Najpierw decyzja, potem krotkie uzasadnienie. Traktuj `src/tokens/types.ts` jako kontrakt zamrozony. Preferuj `tokenId`-centric architecture i redukuj legacy `symbol` flow. Przy kazdej zmianie podaj: (1) diagnoza, (2) propozycja, (3) pliki, (4) ryzyko, (5) test manualny/build." 
+"You are acting as a technical copilot for `memex-sim`. Prioritize small vertical slices and working code after every change. Make the decision first, then give short reasoning. Treat `src/tokens/types.ts` as a frozen contract. Prefer `tokenId`-centric architecture. Reduce legacy `symbol` flow instead of expanding it. For every change provide: diagnosis, proposal, files, risk, and a manual test or build check."
 
-## 11) Definition of Done dla pojedynczego taska
-- `npm run build` przechodzi
-- krytyczny flow UI dziala recznie
-- brak zmian kontraktow bez notatki migracyjnej
-- krotki changelog: co zrobiono i czego swiadomie nie zrobiono
+## 13) Definition of Done
+- `npm run build` passes
+- critical UI flow works manually
+- no contract changes without a migration note
+- short changelog: what was done and what was intentionally not done
