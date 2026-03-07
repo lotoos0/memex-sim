@@ -189,7 +189,7 @@ This is not a separate domain layer yet, but it is already wired into runtime.
 2. `src/tokens/registry.ts` keeps growing toward an orchestration god-object: runtime, executions, narrative, session bucket, posting.
 3. There is still no provider abstraction (`Sim/Replay/Live`) in code, even though the broader project plan assumes it.
 4. `Plan.md` is partially outdated relative to the actual repo.
-5. There is no real test suite yet; only focused QA scripts and build/type gates.
+5. There is still no broad unit/integration test suite; correctness is currently guarded by focused deterministic QA scripts and build/type gates.
 
 ## 10) What to do next
 Most sensible order:
@@ -199,7 +199,22 @@ Most sensible order:
 4. Extract a market provider contract from `registry` if the project is meant to move toward Replay/Live.
 5. Add tests for lifecycle, fill logic, limit triggers and market snapshots.
 
-## 11) Minimum file set for a second AI to read
+## 11) Deterministic QA gates
+The repo currently has 2 deterministic sim QA checks:
+- `npm run qa:sim:dead-floor`
+  - guarantees DEAD is only reached at the floor
+  - guarantees sparse candles (no candles without trades)
+  - guarantees BUY still works after DEAD/floor
+- `npm run qa:sim:quick-limit`
+  - guarantees BUY limit trigger at `currentPriceUsd <= limitPriceUsd`
+  - guarantees SELL limit trigger at `currentPriceUsd >= limitPriceUsd`
+  - guarantees cancel refund for open limit orders
+  - guarantees cancelled orders do not trigger later
+  - guarantees single-fill behavior and position/execution updates
+
+These checks are part of CI and should be run locally before touching trading execution or token lifecycle logic.
+
+## 12) Minimum file set for a second AI to read
 - `Plan.md`
 - `package.json`
 - `src/router.tsx`
@@ -227,12 +242,12 @@ Most sensible order:
 - `src/components/pulse/pulseFilters.ts`
 - `src/components/pulse/pulseSorts.ts`
 
-## 12) Working prompt for a second AI
+## 13) Working prompt for a second AI
 Use this style:
 
 "You are acting as a technical copilot for `memex-sim`. Prioritize small vertical slices and working code after every change. Make the decision first, then give short reasoning. Treat `src/tokens/types.ts` as a frozen contract. Prefer `tokenId`-centric architecture. Reduce legacy `symbol` flow instead of expanding it. For every change provide: diagnosis, proposal, files, risk, and a manual test or build check."
 
-## 13) Definition of Done
+## 14) Definition of Done
 - `npm run build` passes
 - critical UI flow works manually
 - no contract changes without a migration note
