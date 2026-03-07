@@ -25,6 +25,8 @@ dist-ssr/
 # testing
 coverage/
 .vitest/
+.playwright/
+.playwright-cli/
 
 #cache
 .eslintcache
