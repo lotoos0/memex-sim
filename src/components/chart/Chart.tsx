@@ -24,7 +24,7 @@ import {
 } from '../../store/tradingStore';
 import type { TokenChartEvent } from '../../chart/tokenChartEvents';
 import { toSeriesMarkers, type DisplayOptions } from '../../chart/tokenChartEvents';
-import { SESSION_BUCKET_LABEL, type SessionBucket } from '../../market/session';
+import HoverTooltip from '../ui/HoverTooltip';
 
 const TF_OPTIONS = [
   { label: '1s', sec: 1 },
@@ -36,26 +36,49 @@ const EMPTY_EVENTS: TokenChartEvent[] = [];
 type PriceLineKey = 'avgBuy' | 'avgSell' | 'migration';
 type PriceLineMap = Record<PriceLineKey, IPriceLine | null>;
 type PriceLineValueMap = Record<PriceLineKey, number | null>;
-const AVG_COST_BASIS_LINE = {
-  title: 'Current Average Cost Basis',
-  color: '#67c23a',
+type Metric = 'mcap' | 'price';
+type LineVisual = {
+  title: string;
+  color: string;
+  lineStyle: LineStyle;
+  lineWidth: 1 | 2 | 3 | 4;
 };
-const AVG_EXIT_PRICE_LINE = {
-  title: 'Current Average Exit Price',
-  color: '#d67b43',
-};
-const MIGRATION_LINE = {
-  title: 'Migration Price',
-  color: '#4c7dffdd',
-};
-const SESSION_BUCKET_CLASS: Record<SessionBucket, string> = {
-  EU: 'text-[#4fa7ff] bg-[#4fa7ff1c] border-[#4fa7ff55]',
-  NA: 'text-[#ff8a3d] bg-[#ff8a3d1a] border-[#ff8a3d55]',
-  OVERLAP: 'text-ax-green bg-[#00d4a118] border-[#00d4a155]',
-  OFF: 'text-ax-text-dim bg-ax-bg border-ax-border',
+type HoverSnapshot = {
+  timeLabel: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
 };
 
-type Metric = 'mcap' | 'price';
+const AVG_COST_BASIS_LINE: LineVisual = {
+  title: 'Avg Buy',
+  color: '#67c23acc',
+  lineStyle: LineStyle.Dotted,
+  lineWidth: 1,
+};
+const AVG_EXIT_PRICE_LINE: LineVisual = {
+  title: 'Avg Sell',
+  color: '#d67b43cc',
+  lineStyle: LineStyle.Dotted,
+  lineWidth: 1,
+};
+const MIGRATION_LINE: LineVisual = {
+  title: 'Migration',
+  color: '#4c7dffdd',
+  lineStyle: LineStyle.Dashed,
+  lineWidth: 2,
+};
+const DISPLAY_OPTION_META: Array<{
+  key: keyof DisplayOptions;
+  label: string;
+  accentClass: string;
+}> = [
+  { key: 'migration', label: 'Migration', accentClass: 'text-[#7ea2ff]' },
+  { key: 'devTrades', label: 'Dev Trades', accentClass: 'text-[#00d4a1]' },
+  { key: 'myTrades', label: 'My Trades', accentClass: 'text-[#f5c542]' },
+];
 
 function fmtPrice(v: number): string {
   if (!Number.isFinite(v)) return '0.0000';
@@ -74,6 +97,29 @@ function fmtCompact(v: number): string {
   return v.toFixed(0);
 }
 
+function fmtMetricValue(metric: Metric, value: number | null | undefined): string {
+  const safeValue = Number.isFinite(value) ? (value as number) : 0;
+  return metric === 'mcap' ? `$${fmtCompact(safeValue)}` : `$${fmtPrice(safeValue)}`;
+}
+
+function fmtCrosshairTime(time: Time | undefined): string {
+  if (time == null) return '-';
+  if (typeof time === 'number') {
+    return new Date(time * 1000).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }
+  if (typeof time === 'string') return time;
+  if (typeof time === 'object' && 'year' in time && 'month' in time && 'day' in time) {
+    const month = String(time.month).padStart(2, '0');
+    const day = String(time.day).padStart(2, '0');
+    return `${time.year}-${month}-${day}`;
+  }
+  return '-';
+}
+
 interface Props {
   tokenId: string;
 }
@@ -82,6 +128,7 @@ export default function Chart({ tokenId }: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const displayMenuRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
@@ -126,6 +173,7 @@ export default function Chart({ tokenId }: Props) {
   const [tfSec, setTfSec] = useState(1);
   const [metric, setMetric] = useState<Metric>('mcap');
   const [lastMetricValue, setLastMetricValue] = useState<number | null>(null);
+  const [hoverSnapshot, setHoverSnapshot] = useState<HoverSnapshot | null>(null);
   const [showDisplayOptions, setShowDisplayOptions] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [displayOptions, setDisplayOptions] = useState<DisplayOptions>({
@@ -134,10 +182,24 @@ export default function Chart({ tokenId }: Props) {
     myTrades: true,
   });
 
-  const priceFormatter = useMemo(
-    () => (metric === 'mcap' ? fmtCompact : fmtPrice),
-    [metric]
+  const priceFormatter = useMemo(() => (metric === 'mcap' ? fmtCompact : fmtPrice), [metric]);
+  const enabledDisplayOptionCount = useMemo(
+    () => DISPLAY_OPTION_META.reduce((count, option) => count + (displayOptions[option.key] ? 1 : 0), 0),
+    [displayOptions]
   );
+  const linePills = useMemo(() => {
+    const values = {
+      avgBuy: metric === 'mcap' ? avgEntryMcap : avgEntryPrice,
+      avgSell: metric === 'mcap' ? avgSellMcap : avgSellPrice,
+      migration: metric === 'mcap' ? migrationMcap : migrationPrice,
+    };
+
+    return [
+      { key: 'avgBuy', label: 'Avg Buy', color: AVG_COST_BASIS_LINE.color, value: values.avgBuy },
+      { key: 'avgSell', label: 'Avg Sell', color: AVG_EXIT_PRICE_LINE.color, value: values.avgSell },
+      { key: 'migration', label: 'Migration', color: MIGRATION_LINE.color, value: values.migration },
+    ].filter((item) => Number.isFinite(item.value) && (item.value ?? 0) > 0);
+  }, [metric, avgEntryMcap, avgEntryPrice, avgSellMcap, avgSellPrice, migrationMcap, migrationPrice]);
 
   const clearAllPriceLines = useCallback(() => {
     const series = candleSeriesRef.current;
@@ -163,15 +225,10 @@ export default function Chart({ tokenId }: Props) {
   }, []);
 
   const upsertPriceLine = useCallback(
-    (
-      key: PriceLineKey,
-      nextPrice: number | null | undefined,
-      options: { title: string; color: string }
-    ) => {
+    (key: PriceLineKey, nextPrice: number | null | undefined, options: LineVisual) => {
       const series = candleSeriesRef.current;
       if (!series) return;
-      const safePrice =
-        Number.isFinite(nextPrice) && (nextPrice ?? 0) > 0 ? (nextPrice as number) : null;
+      const safePrice = Number.isFinite(nextPrice) && (nextPrice ?? 0) > 0 ? (nextPrice as number) : null;
       const prevPrice = priceLineValuesRef.current[key];
       if (
         (safePrice == null && prevPrice == null) ||
@@ -194,28 +251,35 @@ export default function Chart({ tokenId }: Props) {
         color: options.color,
         axisLabelVisible: true,
         lineVisible: true,
-        lineStyle: LineStyle.LargeDashed,
-        lineWidth: 2,
+        lineStyle: options.lineStyle,
+        lineWidth: options.lineWidth,
       });
     },
     []
   );
-  const resetChartView = useCallback(() => {
+
+  const applyDefaultViewport = useCallback((totalBars: number) => {
     const chart = chartRef.current;
     if (!chart) return;
 
-    const total = lastCandleCountRef.current;
-    if (total > 0) {
-      const visibleBars = 200;
-      chart.timeScale().setVisibleLogicalRange({
-        from: Math.max(-20, total - visibleBars),
-        to: total + 8,
-      });
-    } else {
+    if (totalBars <= 0) {
       chart.timeScale().fitContent();
+      chart.priceScale('right').applyOptions({ autoScale: true });
+      return;
     }
+
+    const visibleBars = totalBars <= 24 ? Math.max(14, totalBars + 4) : totalBars <= 90 ? Math.min(72, totalBars + 8) : 140;
+    const rightPad = totalBars <= 24 ? 3 : 6;
+    chart.timeScale().setVisibleLogicalRange({
+      from: Math.max(-6, totalBars - visibleBars),
+      to: totalBars + rightPad,
+    });
     chart.priceScale('right').applyOptions({ autoScale: true });
   }, []);
+
+  const resetChartView = useCallback(() => {
+    applyDefaultViewport(lastCandleCountRef.current);
+  }, [applyDefaultViewport]);
 
   const openContextMenuAt = useCallback((clientX: number, clientY: number) => {
     const wrapper = wrapperRef.current;
@@ -240,7 +304,6 @@ export default function Chart({ tokenId }: Props) {
       openContextMenuAt(e.clientX, e.clientY);
     };
 
-    // Capture makes this robust when chart internals stop event propagation.
     el.addEventListener('contextmenu', onContextMenu, true);
     return () => {
       el.removeEventListener('contextmenu', onContextMenu, true);
@@ -269,6 +332,24 @@ export default function Chart({ tokenId }: Props) {
   }, [contextMenu]);
 
   useEffect(() => {
+    if (!showDisplayOptions) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (target && displayMenuRef.current?.contains(target)) return;
+      setShowDisplayOptions(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowDisplayOptions(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showDisplayOptions]);
+
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!e.altKey || e.key.toLowerCase() !== 'r') return;
       e.preventDefault();
@@ -293,24 +374,25 @@ export default function Chart({ tokenId }: Props) {
         priceFormatter,
       },
       grid: {
-        vertLines: { color: '#1e1e2e' },
-        horzLines: { color: '#1e1e2e' },
+        vertLines: { color: '#171a24' },
+        horzLines: { color: '#171a24' },
       },
       crosshair: {
-        vertLine: { color: '#4b5563', width: 1, style: 3 },
-        horzLine: { color: '#4b5563', width: 1, style: 3 },
+        mode: 0,
+        vertLine: { color: '#616b7f', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#131722' },
+        horzLine: { color: '#616b7f', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#131722' },
       },
       rightPriceScale: {
         borderColor: '#1e1e2e',
         textColor: '#6b7280',
-        scaleMargins: { top: 0.06, bottom: 0.2 },
+        scaleMargins: { top: 0.08, bottom: 0.22 },
       },
       timeScale: {
         borderColor: '#1e1e2e',
         timeVisible: true,
         secondsVisible: true,
-        rightOffset: 8,
-        barSpacing: 8,
+        rightOffset: 6,
+        barSpacing: 7,
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
       handleScale: { mouseWheel: true, pinch: true },
@@ -323,17 +405,61 @@ export default function Chart({ tokenId }: Props) {
       borderDownColor: '#ff4d6a',
       wickUpColor: '#00d4a1',
       wickDownColor: '#ff4d6a',
+      priceLineVisible: false,
+      lastValueVisible: true,
     });
 
     const volSeries = chart.addSeries(HistogramSeries, {
-      color: '#00d4a144',
+      color: '#00d4a136',
       priceFormat: { type: 'volume' },
       priceScaleId: 'vol',
+      priceLineVisible: false,
+      lastValueVisible: false,
     });
     chart.priceScale('vol').applyOptions({
       scaleMargins: { top: 0.84, bottom: 0 },
       borderColor: '#1e1e2e',
     });
+
+    const handleCrosshairMove = (param: {
+      time?: Time;
+      point?: { x: number; y: number };
+      seriesData: Map<unknown, unknown>;
+    }) => {
+      const container = containerRef.current;
+      const point = param.point;
+      if (
+        !container ||
+        !point ||
+        point.x < 0 ||
+        point.y < 0 ||
+        point.x > container.clientWidth ||
+        point.y > container.clientHeight ||
+        param.time == null
+      ) {
+        setHoverSnapshot(null);
+        return;
+      }
+
+      const candleData = param.seriesData.get(candleSeries) as
+        | { open?: number; high?: number; low?: number; close?: number }
+        | undefined;
+      if (!candleData) {
+        setHoverSnapshot(null);
+        return;
+      }
+      const volumeData = param.seriesData.get(volSeries) as { value?: number } | undefined;
+      setHoverSnapshot({
+        timeLabel: fmtCrosshairTime(param.time),
+        open: Number(candleData.open ?? 0),
+        high: Number(candleData.high ?? 0),
+        low: Number(candleData.low ?? 0),
+        close: Number(candleData.close ?? 0),
+        volume: Number.isFinite(volumeData?.value) ? Number(volumeData?.value) : null,
+      });
+    };
+
+    chart.subscribeCrosshairMove(handleCrosshairMove);
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
@@ -350,11 +476,13 @@ export default function Chart({ tokenId }: Props) {
     return () => {
       clearAllPriceLines();
       ro.disconnect();
+      chart.unsubscribeCrosshairMove(handleCrosshairMove);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
       volSeriesRef.current = null;
       markerApiRef.current = null;
+      setHoverSnapshot(null);
     };
   }, [clearAllPriceLines]);
 
@@ -386,7 +514,7 @@ export default function Chart({ tokenId }: Props) {
 
       const safeMetricValue = Number.isFinite(metricValue) ? metricValue : 0;
       setLastMetricValue(safeMetricValue);
-      const candleData = candles.map(c => ({
+      const candleData = candles.map((c) => ({
         time: c.time as UTCTimestamp,
         open: c.open,
         high: c.high,
@@ -394,26 +522,19 @@ export default function Chart({ tokenId }: Props) {
         close: c.close,
       }));
 
-      const volData = candles.map(c => ({
+      const volData = candles.map((c) => ({
         time: c.time as UTCTimestamp,
         value: c.volume,
-        color: c.close >= c.open ? '#00d4a144' : '#ff4d6a44',
+        color: c.close >= c.open ? '#00d4a136' : '#ff4d6a36',
       }));
 
       if (candleData.length > 0) {
         lastCandleCountRef.current = candleData.length;
-        // Always apply full snapshot: robust against skipped intervals/tab throttling.
         cs.setData(candleData);
         vs.setData(volData);
 
         if (!initialized) {
-          // Stable default viewport: avoid giant candles on fresh token open.
-          const total = candleData.length;
-          const visibleBars = 200;
-          chart.timeScale().setVisibleLogicalRange({
-            from: Math.max(-20, total - visibleBars),
-            to: total + 8,
-          });
+          applyDefaultViewport(candleData.length);
           initialized = true;
         }
       }
@@ -422,7 +543,7 @@ export default function Chart({ tokenId }: Props) {
     return () => {
       registry.setChartCallback(null);
     };
-  }, [tokenId, tfSec, metric]);
+  }, [tokenId, tfSec, metric, applyDefaultViewport]);
 
   useEffect(() => {
     const markerApi = markerApiRef.current;
@@ -458,15 +579,16 @@ export default function Chart({ tokenId }: Props) {
   const lastDisplay = lastMetricValue ?? 0;
 
   return (
-    <div ref={wrapperRef} className="relative flex flex-col h-full min-h-0 bg-ax-bg">
-      <div className="flex items-center gap-3 px-3 py-1.5 border-b border-ax-border bg-ax-surface shrink-0">
-        <div className="flex items-center gap-0.5">
-          {TF_OPTIONS.map(tf => (
+    <div ref={wrapperRef} className="relative flex h-full min-h-0 flex-col bg-ax-bg">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-ax-border bg-ax-surface px-3 py-1.5">
+        <div className="flex items-center gap-1 rounded-md border border-ax-border bg-ax-surface2 px-1 py-1">
+          <span className="px-1 text-[10px] font-semibold uppercase tracking-wide text-ax-text-dim">TF</span>
+          {TF_OPTIONS.map((tf) => (
             <button
               key={tf.sec}
               onClick={() => setTfSec(tf.sec)}
               className={[
-                'px-2 py-0.5 rounded text-[11px] transition-colors',
+                'rounded px-2 py-0.5 text-[11px] transition-colors',
                 tfSec === tf.sec
                   ? 'bg-ax-green text-ax-bg font-bold'
                   : 'text-ax-text-dim hover:text-ax-text',
@@ -477,90 +599,93 @@ export default function Chart({ tokenId }: Props) {
           ))}
         </div>
 
-        <div className="h-3 w-px bg-ax-border" />
-
-        <div className="relative">
-          <button
-            onClick={() => setShowDisplayOptions(v => !v)}
-            className="text-[11px] text-ax-text-dim hover:text-ax-text"
+        <div className="relative" ref={displayMenuRef}>
+          <HoverTooltip
+            label="Toggle visible marker categories. Markers are auto-condensed when events collide."
           >
-            Display Options
-          </button>
+            <button
+              onClick={() => setShowDisplayOptions((v) => !v)}
+              className={[
+                'inline-flex items-center gap-2 rounded-md border px-2 py-1 text-[11px] transition-colors',
+                showDisplayOptions || enabledDisplayOptionCount < DISPLAY_OPTION_META.length
+                  ? 'border-[#7ea2ff55] bg-[#7ea2ff14] text-ax-text'
+                  : 'border-ax-border bg-ax-surface2 text-ax-text-dim hover:text-ax-text',
+              ].join(' ')}
+            >
+              <span className="font-semibold">Events</span>
+              <span className="rounded bg-ax-surface px-1.5 py-0.5 text-[10px] text-ax-text-dim">
+                {enabledDisplayOptionCount}/{DISPLAY_OPTION_META.length}
+              </span>
+            </button>
+          </HoverTooltip>
           {showDisplayOptions && (
-            <div className="absolute top-6 left-0 z-20 min-w-[170px] rounded border border-ax-border bg-ax-surface2 p-2 text-[11px] shadow-lg">
-              <label className="flex items-center gap-2 py-1 text-ax-text-dim">
-                <input
-                  type="checkbox"
-                  checked={displayOptions.migration && displayOptions.devTrades && displayOptions.myTrades}
-                  onChange={(e) => setDisplayOptions({
-                    migration: e.target.checked,
-                    devTrades: e.target.checked,
-                    myTrades: e.target.checked,
-                  })}
-                />
-                Show All Bubbles
-              </label>
-              <label className="flex items-center gap-2 py-1 text-ax-text-dim">
-                <input
-                  type="checkbox"
-                  checked={displayOptions.migration}
-                  onChange={(e) => setDisplayOptions((s) => ({ ...s, migration: e.target.checked }))}
-                />
-                Migration
-              </label>
-              <label className="flex items-center gap-2 py-1 text-ax-text-dim">
-                <input
-                  type="checkbox"
-                  checked={displayOptions.devTrades}
-                  onChange={(e) => setDisplayOptions((s) => ({ ...s, devTrades: e.target.checked }))}
-                />
-                Dev Trades
-              </label>
-              <label className="flex items-center gap-2 py-1 text-ax-text-dim">
-                <input
-                  type="checkbox"
-                  checked={displayOptions.myTrades}
-                  onChange={(e) => setDisplayOptions((s) => ({ ...s, myTrades: e.target.checked }))}
-                />
-                My Trades
-              </label>
+            <div className="absolute left-0 top-9 z-20 min-w-[220px] rounded border border-ax-border bg-ax-surface2 p-2 text-[11px] shadow-lg">
+              <div className="mb-2 text-[10px] uppercase tracking-wide text-ax-text-dim">Marker categories</div>
+              <div className="space-y-1">
+                {DISPLAY_OPTION_META.map((option) => (
+                  <label key={option.key} className="flex items-center justify-between gap-3 rounded px-2 py-1 hover:bg-ax-surface">
+                    <span className={`font-medium ${option.accentClass}`}>{option.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={displayOptions[option.key]}
+                      onChange={(e) => setDisplayOptions((state) => ({ ...state, [option.key]: e.target.checked }))}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="mt-2 border-t border-ax-border pt-2 text-[10px] text-ax-text-dim">
+                Event markers are condensed by timestamp lane to reduce overlap.
+              </div>
             </div>
           )}
         </div>
 
-        <div className="h-3 w-px bg-ax-border" />
-
-        <div className="flex items-center gap-1 text-[11px]">
+        <div className="flex items-center gap-1 rounded-md border border-ax-border bg-ax-surface2 px-1 py-1 text-[11px]">
+          <span className="px-1 text-[10px] font-semibold uppercase tracking-wide text-ax-text-dim">Metric</span>
           <button
             onClick={() => setMetric('mcap')}
-            className={metric === 'mcap' ? 'text-ax-text font-semibold' : 'text-ax-text-dim hover:text-ax-text'}
+            className={metric === 'mcap' ? 'rounded bg-ax-surface px-2 py-0.5 font-semibold text-ax-text' : 'px-2 py-0.5 text-ax-text-dim hover:text-ax-text'}
           >
             MCAP
           </button>
-          <span className="text-ax-text-dim">/</span>
           <button
             onClick={() => setMetric('price')}
-            className={metric === 'price' ? 'text-ax-text font-semibold' : 'text-ax-text-dim hover:text-ax-text'}
+            className={metric === 'price' ? 'rounded bg-ax-surface px-2 py-0.5 font-semibold text-ax-text' : 'px-2 py-0.5 text-ax-text-dim hover:text-ax-text'}
           >
             PRICE
           </button>
         </div>
 
-        <div className="h-3 w-px bg-ax-border" />
-
-        {lastMetricValue !== null && (
-          <span className="text-xs text-ax-text font-medium font-mono">
-            {metric === 'mcap' ? '$' + fmtCompact(lastDisplay) : '$' + fmtPrice(lastDisplay)}
-          </span>
-        )}
-        <span
-          className={[
-            'ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded border',
-            SESSION_BUCKET_CLASS[marketSessionBucket],
-          ].join(' ')}
+        <button
+          type="button"
+          onClick={resetChartView}
+          className="rounded-md border border-ax-border bg-ax-surface2 px-2 py-1 text-[11px] text-ax-text-dim transition-colors hover:text-ax-text"
         >
-          {SESSION_BUCKET_LABEL[marketSessionBucket]}
-        </span>
+          Reset View
+        </button>
+
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {linePills.map((line) => (
+            <div key={line.key} className="inline-flex items-center gap-1 rounded-md border border-ax-border bg-ax-surface2 px-2 py-1 text-[10px] text-ax-text-dim">
+              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: line.color }} />
+              <span>{line.label}</span>
+              <span className="font-medium text-ax-text">{fmtMetricValue(metric, line.value)}</span>
+            </div>
+          ))}
+          <div className="rounded-md border border-ax-border bg-ax-surface2 px-2 py-1 text-right">
+            <div className="text-[10px] uppercase tracking-wide text-ax-text-dim">Live {metric === 'mcap' ? 'MCAP' : 'Price'}</div>
+            <div className="font-mono text-xs font-semibold text-ax-text">{fmtMetricValue(metric, lastDisplay)}</div>
+          </div>
+          {hoverSnapshot && (
+            <div className="rounded-md border border-ax-border bg-ax-surface2 px-2 py-1 text-right">
+              <div className="text-[10px] uppercase tracking-wide text-ax-text-dim">Hover {hoverSnapshot.timeLabel}</div>
+              <div className="font-mono text-[11px] text-ax-text">
+                O {priceFormatter(hoverSnapshot.open)} H {priceFormatter(hoverSnapshot.high)} L {priceFormatter(hoverSnapshot.low)} C {priceFormatter(hoverSnapshot.close)}
+              </div>
+              <div className="text-[10px] text-ax-text-dim">Vol {fmtCompact(hoverSnapshot.volume ?? 0)}</div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div ref={containerRef} className="flex-1 min-h-0" />
@@ -582,6 +707,9 @@ export default function Chart({ tokenId }: Props) {
             <span>Reset chart view</span>
             <span className="text-[10px] text-ax-text-dim">Alt + R</span>
           </button>
+          <div className="border-t border-ax-border px-3 py-2 text-[10px] text-ax-text-dim">
+            Session: {marketSessionBucket}
+          </div>
         </div>
       )}
     </div>
