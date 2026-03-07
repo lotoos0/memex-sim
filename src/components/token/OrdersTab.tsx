@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
-import { Clock3, ListOrdered } from 'lucide-react';
+import { ListOrdered } from 'lucide-react';
 import {
   selectQuickOrderPanelStateByTokenId,
   useTradingStore,
   type QuickLimitOrder,
-  type QuickPendingOrder,
+  type QuickOrderAuditRow,
 } from '../../store/tradingStore';
 import { usdToSol } from '../../store/walletStore';
 
@@ -48,16 +48,12 @@ function fmtAgo(tsMs: number): string {
   return `${Math.round(dMs / 3_600_000)}h`;
 }
 
-function fmtEta(tsMs: number): string {
-  if (!Number.isFinite(tsMs) || tsMs <= 0) return '-';
-  const dMs = Math.max(0, tsMs - Date.now());
-  if (dMs < 1_000) return `${Math.round(dMs)}ms`;
-  return `${Math.round(dMs / 1_000)}s`;
-}
-
-function statusClass(status: 'pending' | 'filled' | 'failed'): string {
+function statusClass(status: 'pending' | 'filled' | 'failed' | 'open' | 'cancelled' | 'triggered'): string {
   if (status === 'filled') return 'text-ax-green';
   if (status === 'failed') return 'text-ax-red';
+  if (status === 'cancelled') return 'text-[#f6c453]';
+  if (status === 'triggered') return 'text-[#7ea2ff]';
+  if (status === 'open') return 'text-[#8ea0bf]';
   return 'text-[#7ea2ff]';
 }
 
@@ -78,7 +74,7 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
           </div>
           <div className="text-sm font-semibold text-ax-text">No active quick orders</div>
           <div className="mt-1 text-[11px] text-ax-text-dim">
-            Open quick limit orders, market submits and execution attempts for this token will show up here.
+            Quick-native limit lifecycle and execution history for this token will show up here.
           </div>
         </div>
       </div>
@@ -91,8 +87,39 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
         <div className="rounded-xl border border-ax-border bg-ax-surface2">
           <div className="flex items-center justify-between border-b border-ax-border px-3 py-2">
             <div>
+              <div className="text-[12px] font-semibold text-ax-text">Order Audit Trail</div>
+              <div className="text-[10px] text-ax-text-dim">Quick-native limit lifecycle, latest first</div>
+            </div>
+            <div className="text-[10px] text-ax-text-dim">{panelState.auditRows.length} events</div>
+          </div>
+          {!panelState.hasAuditHistory ? (
+            <div className="px-3 py-4 text-center text-[11px] text-ax-text-dim">No limit lifecycle history yet.</div>
+          ) : (
+            <div className="space-y-1 px-3 py-2">
+              <div className="grid grid-cols-[56px_82px_110px_110px_1fr_56px] gap-2 border-b border-ax-border pb-1 text-[10px] uppercase tracking-wide text-ax-text-dim">
+                <span>Side</span>
+                <span>Status</span>
+                <span>Requested</span>
+                <span>Limit</span>
+                <span>Details</span>
+                <span>Age</span>
+              </div>
+              {panelState.auditRows.map((row) => (
+                <AuditTrailRow
+                  key={row.id}
+                  row={row}
+                  fmtMoney={fmtMoney}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-ax-border bg-ax-surface2">
+          <div className="flex items-center justify-between border-b border-ax-border px-3 py-2">
+            <div>
               <div className="text-[12px] font-semibold text-ax-text">Open Limit Orders</div>
-              <div className="text-[10px] text-ax-text-dim">Token-native sim limit orders</div>
+              <div className="text-[10px] text-ax-text-dim">Active quick-native sim limits</div>
             </div>
             <div className="text-[10px] text-ax-text-dim">{panelState.limitOrders.length} open</div>
           </div>
@@ -122,35 +149,8 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
         <div className="rounded-xl border border-ax-border bg-ax-surface2">
           <div className="flex items-center justify-between border-b border-ax-border px-3 py-2">
             <div>
-              <div className="text-[12px] font-semibold text-ax-text">Active Quick Orders</div>
-              <div className="text-[10px] text-ax-text-dim">Pending submissions only</div>
-            </div>
-            <div className="text-[10px] text-ax-text-dim">{panelState.pendingOrders.length} pending</div>
-          </div>
-          {!panelState.hasPendingOrders ? (
-            <div className="px-3 py-4 text-center text-[11px] text-ax-text-dim">No active quick orders.</div>
-          ) : (
-            <div className="space-y-1 px-3 py-2">
-              <div className="grid grid-cols-[58px_110px_110px_110px_76px_54px] gap-2 border-b border-ax-border pb-1 text-[10px] uppercase tracking-wide text-ax-text-dim">
-                <span>Side</span>
-                <span>Requested</span>
-                <span>Expected</span>
-                <span>Min Out</span>
-                <span>Status</span>
-                <span>ETA</span>
-              </div>
-              {panelState.pendingOrders.map((order) => (
-                <PendingRow key={order.orderId} order={order} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-xl border border-ax-border bg-ax-surface2">
-          <div className="flex items-center justify-between border-b border-ax-border px-3 py-2">
-            <div>
               <div className="text-[12px] font-semibold text-ax-text">Recent Executions</div>
-              <div className="text-[10px] text-ax-text-dim">Quick execution notices, latest first</div>
+              <div className="text-[10px] text-ax-text-dim">Quick execution notices, kept for raw fill detail</div>
             </div>
             <div className="text-[10px] text-ax-text-dim">{panelState.executions.length} rows</div>
           </div>
@@ -199,22 +199,49 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
   );
 }
 
-function PendingRow({ order }: { order: QuickPendingOrder }) {
+function AuditTrailRow({
+  row,
+  fmtMoney,
+}: {
+  row: QuickOrderAuditRow;
+  fmtMoney: (usd: number) => string;
+}) {
+  const requested = row.side === 'buy'
+    ? `${fmtSol(row.requestedAmountSol)} SOL`
+    : fmtQty(row.requestedTokenQty);
+  const limit = row.limitPriceUsd > 0
+    ? (row.limitPriceUsd >= 1 ? `$${row.limitPriceUsd.toFixed(4)}` : `$${row.limitPriceUsd.toExponential(4)}`)
+    : '-';
+
+  let detailPrimary = 'Limit accepted';
+  let detailSecondary = `Fee ${fmtSol(row.txCostSol)} SOL`;
+
+  if (row.status === 'triggered') {
+    detailPrimary = `Expected ${fmtQty(row.expectedOut ?? 0)} / Min ${fmtQty(row.minOut ?? 0)}`;
+    detailSecondary = row.executionOrderId ? `Exec ${row.executionOrderId}` : detailSecondary;
+  } else if (row.status === 'filled') {
+    detailPrimary = `Actual ${fmtQty(row.actualOut ?? 0)} / Expected ${fmtQty(row.expectedOut ?? 0)}`;
+    detailSecondary = `${Number.isFinite(row.avgPriceUsd) ? fmtMoney(row.avgPriceUsd as number) : '-'} · Fee ${fmtSol(row.txCostSol)} SOL`;
+  } else if (row.status === 'failed') {
+    detailPrimary = row.reason ?? 'Execution failed';
+    detailSecondary = `Expected ${fmtQty(row.expectedOut ?? 0)} / Min ${fmtQty(row.minOut ?? 0)}`;
+  } else if (row.status === 'cancelled') {
+    detailPrimary = 'Limit cancelled before trigger';
+  }
+
   return (
-    <div className="grid grid-cols-[58px_110px_110px_110px_76px_54px] gap-2 border-b border-ax-border/40 py-1 text-[11px]">
-      <span className={order.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>
-        {order.side.toUpperCase()}
+    <div className="grid grid-cols-[56px_82px_110px_110px_1fr_56px] gap-2 border-b border-ax-border/40 py-1 text-[11px]">
+      <span className={row.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>
+        {row.side.toUpperCase()}
       </span>
+      <span className={statusClass(row.status)}>{row.status.toUpperCase()}</span>
+      <span className="text-ax-text">{requested}</span>
+      <span className="text-ax-text">{limit}</span>
       <span className="text-ax-text">
-        {order.side === 'buy' ? `${fmtSol(order.reservedSol)} SOL` : fmtQty(order.reservedToken)}
+        <div>{detailPrimary}</div>
+        <div className="text-[10px] text-ax-text-dim">{detailSecondary}</div>
       </span>
-      <span className="text-ax-text">{fmtQty(order.expectedOut)}</span>
-      <span className="text-ax-text">{fmtQty(order.minOut)}</span>
-      <span className={statusClass('pending')}>PENDING</span>
-      <span className="inline-flex items-center gap-1 text-ax-text-dim">
-        <Clock3 size={11} />
-        {fmtEta(order.execMs)}
-      </span>
+      <span className="text-ax-text-dim">{fmtAgo(row.tsMs)}</span>
     </div>
   );
 }
