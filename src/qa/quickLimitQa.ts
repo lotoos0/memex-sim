@@ -91,12 +91,18 @@ export async function runQuickLimitQa() {
     return pos && pos.qty > 0 ? pos : null;
   }, 3000, 'position after buy fill');
   const buyExecCountAfter = getExecutions().length;
-  await sleep(1500);
   const buyExecCountStable = getExecutions().length;
+  const postBuyState = await waitFor(() => {
+    const price = getLastPriceUsd();
+    const pos = getPosition();
+    return Number.isFinite(price) && price > 0 && pos && pos.qty > 0
+      ? { priceUsd: price, qty: pos.qty }
+      : null;
+  }, 3000, 'post-buy state stabilization');
 
   const sellExecCountBefore = getExecutions().length;
-  const qtyBeforeSell = getPosition()?.qty ?? 0;
-  const triggerSellPrice = getLastPriceUsd() * 0.8;
+  const qtyBeforeSell = postBuyState.qty;
+  const triggerSellPrice = postBuyState.priceUsd * 0.5;
   const sellLimit = useTradingStore.getState().placeQuickLimitOrder(tokenId, 'sell', 0.03, triggerSellPrice, {
     slippagePct: 1,
     prioritySol: 0,
