@@ -82,6 +82,10 @@ export interface QuickPendingOrder {
   orderId: string;
   tokenId: string;
   side: Side;
+  sourceLimitOrderId?: string;
+  sourceLimitPriceUsd?: number;
+  sourceRequestedAmountSol?: number;
+  sourceRequestedTokenQty?: number;
   reservedSol: number;
   reservedToken: number;
   expectedOut: number;
@@ -129,6 +133,27 @@ export interface QuickExecutionSnapshot {
   tsMs: number;
 }
 
+export type QuickOrderAuditStatus = 'open' | 'cancelled' | 'triggered' | 'filled' | 'failed';
+
+export interface QuickOrderAuditRow {
+  id: string;
+  tokenId: string;
+  limitOrderId: string;
+  executionOrderId?: string;
+  side: Side;
+  status: QuickOrderAuditStatus;
+  limitPriceUsd: number;
+  requestedAmountSol: number;
+  requestedTokenQty: number;
+  expectedOut?: number;
+  minOut?: number;
+  actualOut?: number;
+  txCostSol: number;
+  avgPriceUsd?: number;
+  reason?: string;
+  tsMs: number;
+}
+
 export interface QuickPositionSummary {
   tokenId: string;
   qty: number;
@@ -150,9 +175,11 @@ export interface QuickPositionSummary {
 
 export interface QuickOrderPanelState {
   tokenId: string;
+  auditRows: QuickOrderAuditRow[];
   limitOrders: QuickLimitOrder[];
   pendingOrders: QuickPendingOrder[];
   executions: QuickExecutionSnapshot[];
+  hasAuditHistory: boolean;
   hasOpenLimitOrders: boolean;
   hasPendingOrders: boolean;
   hasExecutionHistory: boolean;
@@ -164,6 +191,7 @@ const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 const EMPTY_QUICK_EXECUTIONS: QuickExecutionSnapshot[] = [];
 const EMPTY_PENDING_QUICK_ORDERS: QuickPendingOrder[] = [];
 const EMPTY_QUICK_LIMIT_ORDERS: QuickLimitOrder[] = [];
+const EMPTY_QUICK_ORDER_AUDIT: QuickOrderAuditRow[] = [];
 
 type PosAcc = { side: Side; openTs: number; lots: { qty:number; price:number; ts:number }[]; fees:number };
 export interface PositionHistory {
@@ -174,9 +202,14 @@ export interface PositionHistory {
 }
 
 const QUICK_BASE_TX_FEE_SOL = 0.000005;
+const QUICK_ORDER_AUDIT_MAX_ROWS = 80;
 
 function makeId(): string {
   return 'O' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+}
+
+function makeQuickOrderAuditId(limitOrderId: string, status: QuickOrderAuditStatus, tsMs: number): string {
+  return `${limitOrderId}:${status}:${tsMs}`;
 }
 
 /* --- store --- */
@@ -208,6 +241,7 @@ type Store = {
   pendingQuickOrdersById: Record<string, QuickPendingOrder>;
   lastQuickExecutionByTokenId: Record<string, QuickExecutionSnapshot>;
   quickExecutionHistoryByTokenId: Record<string, QuickExecutionSnapshot[]>;
+  quickOrderAuditByTokenId: Record<string, QuickOrderAuditRow[]>;
   presets: Preset[];
   risk: RiskLimits;
   feeBps: number;
@@ -271,6 +305,7 @@ export const useTradingStore = create<Store>((set, get) => ({
   pendingQuickOrdersById: {},
   lastQuickExecutionByTokenId: {},
   quickExecutionHistoryByTokenId: {},
+  quickOrderAuditByTokenId: {},
   presets: [
     { id: 'p1', label: '0.10', qtyPct: 0.10, slPct: 0.01, tpPct: 0.02 },
     { id: 'p2', label: '0.20', qtyPct: 0.20, slPct: 0.015, tpPct: 0.03 },
@@ -363,6 +398,18 @@ export const useTradingStore = create<Store>((set, get) => ({
           ...state.quickLimitOrdersById,
           [orderId]: order,
         },
+        quickOrderAuditByTokenId: appendQuickOrderAuditRow(state.quickOrderAuditByTokenId, {
+          id: makeQuickOrderAuditId(orderId, 'open', createdAtMs),
+          tokenId,
+          limitOrderId: orderId,
+          side,
+          status: 'open',
+          limitPriceUsd,
+          requestedAmountSol: amountSol,
+          requestedTokenQty: 0,
+          txCostSol,
+          tsMs: createdAtMs,
+        }),
       }));
       maybeTriggerQuickLimitOrders();
       return { ok: true, orderId };
@@ -410,6 +457,18 @@ export const useTradingStore = create<Store>((set, get) => ({
         ...state.quickLimitOrdersById,
         [orderId]: order,
       },
+      quickOrderAuditByTokenId: appendQuickOrderAuditRow(state.quickOrderAuditByTokenId, {
+        id: makeQuickOrderAuditId(orderId, 'open', createdAtMs),
+        tokenId,
+        limitOrderId: orderId,
+        side,
+        status: 'open',
+        limitPriceUsd,
+        requestedAmountSol: amountSol,
+        requestedTokenQty: qtyToSell,
+        txCostSol,
+        tsMs: createdAtMs,
+      }),
     }));
     maybeTriggerQuickLimitOrders();
     return { ok: true, orderId };
@@ -418,6 +477,7 @@ export const useTradingStore = create<Store>((set, get) => ({
   cancelQuickLimitOrder: (orderId) => {
     const order = get().quickLimitOrdersById[orderId];
     if (!order) return false;
+    const cancelledAtMs = Date.now();
 
     const refundSol = order.reservedSol + order.txCostSol;
     if (refundSol > 0) {
@@ -428,7 +488,21 @@ export const useTradingStore = create<Store>((set, get) => ({
       if (!state.quickLimitOrdersById[orderId]) return state;
       const next = { ...state.quickLimitOrdersById };
       delete next[orderId];
-      return { quickLimitOrdersById: next };
+      return {
+        quickLimitOrdersById: next,
+        quickOrderAuditByTokenId: appendQuickOrderAuditRow(state.quickOrderAuditByTokenId, {
+          id: makeQuickOrderAuditId(order.id, 'cancelled', cancelledAtMs),
+          tokenId: order.tokenId,
+          limitOrderId: order.id,
+          side: order.side,
+          status: 'cancelled',
+          limitPriceUsd: order.limitPriceUsd,
+          requestedAmountSol: order.amountSol,
+          requestedTokenQty: order.tokenQty,
+          txCostSol: order.txCostSol,
+          tsMs: cancelledAtMs,
+        }),
+      };
     });
     return true;
   },
@@ -965,6 +1039,10 @@ function triggerQuickLimitOrder(orderId: string): void {
     orderId: submit.orderId,
     tokenId: order.tokenId,
     side: order.side,
+    sourceLimitOrderId: order.id,
+    sourceLimitPriceUsd: order.limitPriceUsd,
+    sourceRequestedAmountSol: order.amountSol,
+    sourceRequestedTokenQty: order.tokenQty,
     reservedSol: order.side === 'buy' ? order.reservedSol : 0,
     reservedToken: order.side === 'sell' ? order.tokenQty : 0,
     expectedOut: submit.expectedOut,
@@ -986,6 +1064,21 @@ function triggerQuickLimitOrder(orderId: string): void {
         ...state.pendingQuickOrdersById,
         [submit.orderId]: pending,
       },
+      quickOrderAuditByTokenId: appendQuickOrderAuditRow(state.quickOrderAuditByTokenId, {
+        id: makeQuickOrderAuditId(order.id, 'triggered', submit.submitMs),
+        tokenId: order.tokenId,
+        limitOrderId: order.id,
+        executionOrderId: submit.orderId,
+        side: order.side,
+        status: 'triggered',
+        limitPriceUsd: order.limitPriceUsd,
+        requestedAmountSol: order.amountSol,
+        requestedTokenQty: order.tokenQty,
+        expectedOut: submit.expectedOut,
+        minOut: submit.minOut,
+        txCostSol: order.txCostSol,
+        tsMs: submit.submitMs,
+      }),
     };
   });
 }
@@ -1057,6 +1150,30 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
     ...st.quickExecutionHistoryByTokenId,
     [execution.tokenId]: prevExecHistory.concat([nextLastExec]).slice(-20),
   };
+  const nextAuditByToken = pending.sourceLimitOrderId
+    ? appendQuickOrderAuditRow(st.quickOrderAuditByTokenId, {
+      id: makeQuickOrderAuditId(
+        pending.sourceLimitOrderId,
+        execution.status === 'FILLED' ? 'filled' : 'failed',
+        nextLastExec.tsMs
+      ),
+      tokenId: execution.tokenId,
+      limitOrderId: pending.sourceLimitOrderId,
+      executionOrderId: execution.orderId,
+      side,
+      status: execution.status === 'FILLED' ? 'filled' : 'failed',
+      limitPriceUsd: pending.sourceLimitPriceUsd ?? 0,
+      requestedAmountSol: pending.sourceRequestedAmountSol ?? 0,
+      requestedTokenQty: pending.sourceRequestedTokenQty ?? 0,
+      expectedOut: execution.expectedOut,
+      minOut: execution.minOut,
+      actualOut: execution.actualOut,
+      txCostSol: execution.txCostSol,
+      avgPriceUsd: execution.status === 'FILLED' ? execution.fill.avgPriceUsd : undefined,
+      reason: execution.status === 'FAILED' ? execution.reason : undefined,
+      tsMs: nextLastExec.tsMs,
+    })
+    : st.quickOrderAuditByTokenId;
 
   if (execution.status === 'FAILED') {
     if (pending.reservedSol > 0) {
@@ -1066,6 +1183,7 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
       pendingQuickOrdersById: nextPending,
       lastQuickExecutionByTokenId: nextLastByToken,
       quickExecutionHistoryByTokenId: nextExecHistoryByToken,
+      quickOrderAuditByTokenId: nextAuditByToken,
     });
     return;
   }
@@ -1112,6 +1230,7 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
       pendingQuickOrdersById: nextPending,
       lastQuickExecutionByTokenId: nextLastByToken,
       quickExecutionHistoryByTokenId: nextExecHistoryByToken,
+      quickOrderAuditByTokenId: nextAuditByToken,
       quickPositionsByTokenId: {
         ...st.quickPositionsByTokenId,
         [execution.tokenId]: nextPos,
@@ -1162,6 +1281,7 @@ function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
     pendingQuickOrdersById: nextPending,
     lastQuickExecutionByTokenId: nextLastByToken,
     quickExecutionHistoryByTokenId: nextExecHistoryByToken,
+    quickOrderAuditByTokenId: nextAuditByToken,
     quickPositionsByTokenId: {
       ...st.quickPositionsByTokenId,
       [execution.tokenId]: nextPos,
@@ -1228,6 +1348,18 @@ export const selectQuickExecutionHistoryByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickExecutionSnapshot[] =>
     getQuickExecutionHistoryForToken(s, tokenId);
 
+export const selectQuickOrderAuditRowsByTokenId = (tokenId: string) =>
+  {
+    let prevAuditMap: ReturnType<typeof useTradingStore.getState>['quickOrderAuditByTokenId'] | null = null;
+    let prevRows: QuickOrderAuditRow[] = EMPTY_QUICK_ORDER_AUDIT;
+    return (s: ReturnType<typeof useTradingStore.getState>): QuickOrderAuditRow[] => {
+      if (s.quickOrderAuditByTokenId === prevAuditMap) return prevRows;
+      prevAuditMap = s.quickOrderAuditByTokenId;
+      prevRows = getQuickOrderAuditRowsForToken(s, tokenId);
+      return prevRows;
+    };
+  };
+
 export const selectQuickPositionSummaryByTokenId = (tokenId: string, currentPriceUsd: number) =>
   {
     let prevPosition: QuickPosition | null | undefined = undefined;
@@ -1255,6 +1387,7 @@ export const selectQuickPositionSummaryByTokenId = (tokenId: string, currentPric
 
 export const selectQuickOrderPanelStateByTokenId = (tokenId: string) =>
   {
+    let prevAuditMap: ReturnType<typeof useTradingStore.getState>['quickOrderAuditByTokenId'] | null = null;
     let prevLimitMap: ReturnType<typeof useTradingStore.getState>['quickLimitOrdersById'] | null = null;
     let prevPendingMap: ReturnType<typeof useTradingStore.getState>['pendingQuickOrdersById'] | null = null;
     let prevExecutionHistory: QuickExecutionSnapshot[] | undefined = undefined;
@@ -1263,27 +1396,32 @@ export const selectQuickOrderPanelStateByTokenId = (tokenId: string) =>
       const executionHistory = getQuickExecutionHistoryForToken(s, tokenId);
       if (
         prevState &&
+        s.quickOrderAuditByTokenId === prevAuditMap &&
         s.quickLimitOrdersById === prevLimitMap &&
         s.pendingQuickOrdersById === prevPendingMap &&
         executionHistory === prevExecutionHistory
       ) {
         return prevState;
       }
+      const auditRows = getQuickOrderAuditRowsForToken(s, tokenId);
       const limitOrders = getQuickOpenLimitOrdersForToken(s, tokenId);
       const pendingOrders = getQuickPendingOrdersForToken(s, tokenId);
       const executions = executionHistory.length > 0 ? executionHistory.slice().reverse() : EMPTY_QUICK_EXECUTIONS;
+      prevAuditMap = s.quickOrderAuditByTokenId;
       prevLimitMap = s.quickLimitOrdersById;
       prevPendingMap = s.pendingQuickOrdersById;
       prevExecutionHistory = executionHistory;
       prevState = {
         tokenId,
+        auditRows,
         limitOrders,
         pendingOrders,
         executions,
+        hasAuditHistory: auditRows.length > 0,
         hasOpenLimitOrders: limitOrders.length > 0,
         hasPendingOrders: pendingOrders.length > 0,
         hasExecutionHistory: executions.length > 0,
-        isEmpty: limitOrders.length === 0 && pendingOrders.length === 0 && executions.length === 0,
+        isEmpty: auditRows.length === 0 && limitOrders.length === 0 && pendingOrders.length === 0 && executions.length === 0,
       };
       return prevState;
     };
@@ -1351,11 +1489,29 @@ function getQuickTradesForToken(
   return s.quickTradesByTokenId[tokenId] ?? EMPTY_QUICK_TRADES;
 }
 
+function appendQuickOrderAuditRow(
+  rowsByToken: Record<string, QuickOrderAuditRow[]>,
+  row: QuickOrderAuditRow
+): Record<string, QuickOrderAuditRow[]> {
+  const prevRows = rowsByToken[row.tokenId] ?? EMPTY_QUICK_ORDER_AUDIT;
+  return {
+    ...rowsByToken,
+    [row.tokenId]: [row, ...prevRows].slice(0, QUICK_ORDER_AUDIT_MAX_ROWS),
+  };
+}
+
 function getQuickExecutionHistoryForToken(
   s: ReturnType<typeof useTradingStore.getState>,
   tokenId: string
 ): QuickExecutionSnapshot[] {
   return s.quickExecutionHistoryByTokenId[tokenId] ?? EMPTY_QUICK_EXECUTIONS;
+}
+
+function getQuickOrderAuditRowsForToken(
+  s: ReturnType<typeof useTradingStore.getState>,
+  tokenId: string
+): QuickOrderAuditRow[] {
+  return s.quickOrderAuditByTokenId[tokenId] ?? EMPTY_QUICK_ORDER_AUDIT;
 }
 
 function getQuickOpenLimitOrdersForToken(
