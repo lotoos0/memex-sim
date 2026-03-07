@@ -28,3 +28,6 @@ jobs:
 
       - name: QA sim dead floor
         run: npm run qa:sim:dead-floor
+
+      - name: QA sim quick limit
+        run: npm run qa:sim:quick-limit
