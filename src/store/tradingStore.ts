@@ -1,7 +1,7 @@
 // src/store/tradingStore.ts
 import { create } from 'zustand';
 import type { Candle, Tick } from '../engine/types';
-import { persistOrder, persistTrade, saveOrdersSnapshot, saveTradesSnapshot, savePositionHistorySnapshot, loadSnapshots } from '../sim/journal';
+import { persistOrder, persistTrade, saveOrdersSnapshot, saveTradesSnapshot, savePositionHistorySnapshot } from '../sim/journal';
 import { useTokenStore } from './tokenStore';
 import { useWalletStore, solToUsd, usdToSol } from './walletStore';
 import { registry } from '../tokens/registry';
@@ -11,7 +11,6 @@ import type { UserTradeExecutionNotice } from '../tokens/tokenSim';
 /* --- podstawowe typy --- */
 export type Side = 'buy' | 'sell';
 export type OrdType = 'market' | 'limit' | 'ioc';
-export type Mode = 'SIM' | 'LIVE';
 
 /* --- preferencje wykresu --- */
 export type ChartType = 'candles' | 'bars' | 'line' | 'area' | 'baseline';
@@ -166,7 +165,7 @@ type Store = {
   realizedBySymbol: Record<string, number>;
   positionHistory: PositionHistory[];
   posAcc: Record<string, PosAcc>;
-  mode: Mode;
+  // Legacy symbol-centric engine retained only for internal isolation and `legacy/`.
   symbol: string;
   lastPrice: number;
   tfSec: number;
@@ -177,14 +176,13 @@ type Store = {
   setOrderTypeUI: (t: OrdType) => void;
   setLimitTarget: (p: number | null) => void;
 
-  hydrateFromDB: () => Promise<void>;
-
   ticks: Tick[];
   candles: Candle[];
 
   orders: Order[];
   positions: Position[];
   trades: Trade[];
+  // Quick token-centric trading used by the active UI.
   quickPositionsByTokenId: Record<string, QuickPosition>;
   quickTradesByTokenId: Record<string, QuickTrade[]>;
   pendingQuickOrdersById: Record<string, QuickPendingOrder>;
@@ -206,7 +204,6 @@ type Store = {
   showSMA50: boolean;
   supply: number;
 
-  setMode: (m: Mode) => void;
   setTfSec: (s: number) => void;
   setTfLeft: (s: number) => void;
   setGhost: (p: number | null) => void;
@@ -221,7 +218,6 @@ type Store = {
   cancelOrder: (id: string) => void;
   closePct: (pct: number) => void;
   setSLTP: (levels: { sl?: number; tp?: number }) => void;
-  applyPreset: (id: string) => void;
   quickBuy: (tokenId: string, amountSol: number, options?: QuickTradeOptions) => QuickTradeResult;
   quickSell: (tokenId: string, amountSol: number, options?: QuickTradeOptions) => QuickTradeResult;
 
@@ -229,7 +225,6 @@ type Store = {
 };
 
 export const useTradingStore = create<Store>((set, get) => ({
-  mode: 'SIM',
   symbol: 'MEME/USDC',
   lastPrice: 0,
   tfSec: 1,
@@ -272,19 +267,6 @@ export const useTradingStore = create<Store>((set, get) => ({
   showSMA20: true,
   showSMA50: false,
   supply: 1_000_000_000, // stała do MCAP (price * supply)
-
-    hydrateFromDB: async () => {
-      const snap = await loadSnapshots();
-      // posortuj malejąco po czasie
-      const ord = [...snap.orders].sort((a,b)=>b.ts-a.ts).slice(0,2000);
-      const trd = [...snap.trades].sort((a,b)=>b.ts-a.ts).slice(0,2000);
-      const ph  = [...snap.positionHistory].sort((a,b)=>b.closeTs-a.closeTs).slice(0,2000);
-      useTradingStore.setState({
-        orders: ord, trades: trd, positionHistory: ph,
-      });
-    },
-
-  setMode: (m) => set({ mode: m }),
   setTfSec: (s) => set({ tfSec: Math.max(1, Math.floor(s)) }),
   setTfLeft: (s) => set({ tfLeft: Math.max(0, Math.ceil(s)) }),
   setGhost: (p) => set({ ghost: p == null ? null : { price: p } }),
@@ -306,9 +288,6 @@ export const useTradingStore = create<Store>((set, get) => ({
   }),
 
   setLimitTarget: (p) => set({ limitTarget: p }),
-
-
-  applyPreset: () => ({}),
 
   quickBuy: (tokenId, amountSol, options) => {
     const st = get();
@@ -1188,5 +1167,3 @@ function buildQuickPositionSummary(
     recentFills: trades.slice(-8).reverse(),
   };
 }
-
-
