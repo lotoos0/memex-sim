@@ -108,6 +108,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
   } | null>(null);
   const quickBuy = useTradingStore(s => s.quickBuy);
   const quickSell = useTradingStore(s => s.quickSell);
+  const placeQuickLimitOrder = useTradingStore(s => s.placeQuickLimitOrder);
   const quickPositionSummarySelector = useMemo(
     () => selectQuickPositionSummaryByTokenId(token.id, safePrice),
     [safePrice, token.id]
@@ -131,8 +132,11 @@ export default function TradeSidebar({ token, floating = false }: Props) {
 
   const ctaLabel = useMemo(() => {
     const ticker = token.ticker || 'TOKEN';
+    if (orderType === 'limit') {
+      return side === 'buy' ? `Place Buy Limit` : `Place Sell Limit`;
+    }
     return side === 'buy' ? `Buy ${ticker}` : `Sell ${ticker}`;
-  }, [side, token.ticker]);
+  }, [orderType, side, token.ticker]);
 
   const holdingUsd = quickPositionSummary.holdingUsd;
   const unrealizedUsd = quickPositionSummary.unrealizedUsd;
@@ -176,8 +180,24 @@ export default function TradeSidebar({ token, floating = false }: Props) {
       return;
     }
     if (orderType === 'limit') {
+      const parsedLimitPrice = Number(limitPrice);
+      if (!Number.isFinite(parsedLimitPrice) || parsedLimitPrice <= 0) {
+        setLastQuote(null);
+        setStatusText('Invalid limit price');
+        return;
+      }
+      const limitResult = placeQuickLimitOrder(token.id, side, parsedAmount, parsedLimitPrice, {
+        slippagePct: parsedSlippage,
+        prioritySol: parsedPriority,
+        bribeSol: parsedBribe,
+      });
+      if (!limitResult.ok) {
+        setLastQuote(null);
+        setStatusText(limitResult.reason ?? 'Limit rejected');
+        return;
+      }
       setLastQuote(null);
-      setStatusText('Limit mode is queued. Use Market for now.');
+      setStatusText(`Limit order placed @ ${fmtPriceUsd(parsedLimitPrice)}`);
       return;
     }
     const result = side === 'buy'

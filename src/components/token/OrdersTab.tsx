@@ -3,6 +3,7 @@ import { Clock3, ListOrdered } from 'lucide-react';
 import {
   selectQuickOrderPanelStateByTokenId,
   useTradingStore,
+  type QuickLimitOrder,
   type QuickPendingOrder,
 } from '../../store/tradingStore';
 import { usdToSol } from '../../store/walletStore';
@@ -63,6 +64,7 @@ function statusClass(status: 'pending' | 'filled' | 'failed'): string {
 export default function OrdersTab({ tokenId, displayUnit }: Props) {
   const panelStateSelector = useMemo(() => selectQuickOrderPanelStateByTokenId(tokenId), [tokenId]);
   const panelState = useTradingStore(panelStateSelector);
+  const cancelQuickLimitOrder = useTradingStore((s) => s.cancelQuickLimitOrder);
 
   const fmtMoney = (usd: number): string =>
     displayUnit === 'usd' ? fmtUsd(usd) : `${fmtSol(usdToSol(usd))} SOL`;
@@ -76,7 +78,7 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
           </div>
           <div className="text-sm font-semibold text-ax-text">No active quick orders</div>
           <div className="mt-1 text-[11px] text-ax-text-dim">
-            Quick market submits and execution attempts for this token will show up here.
+            Open quick limit orders, market submits and execution attempts for this token will show up here.
           </div>
         </div>
       </div>
@@ -86,6 +88,37 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
   return (
     <div className="h-full overflow-auto pr-1">
       <div className="space-y-3">
+        <div className="rounded-xl border border-ax-border bg-ax-surface2">
+          <div className="flex items-center justify-between border-b border-ax-border px-3 py-2">
+            <div>
+              <div className="text-[12px] font-semibold text-ax-text">Open Limit Orders</div>
+              <div className="text-[10px] text-ax-text-dim">Token-native sim limit orders</div>
+            </div>
+            <div className="text-[10px] text-ax-text-dim">{panelState.limitOrders.length} open</div>
+          </div>
+          {!panelState.hasOpenLimitOrders ? (
+            <div className="px-3 py-4 text-center text-[11px] text-ax-text-dim">No open limit orders.</div>
+          ) : (
+            <div className="space-y-1 px-3 py-2">
+              <div className="grid grid-cols-[58px_110px_110px_82px_56px_72px] gap-2 border-b border-ax-border pb-1 text-[10px] uppercase tracking-wide text-ax-text-dim">
+                <span>Side</span>
+                <span>Requested</span>
+                <span>Limit</span>
+                <span>Status</span>
+                <span>Age</span>
+                <span></span>
+              </div>
+              {panelState.limitOrders.map((order) => (
+                <LimitOrderRow
+                  key={order.id}
+                  order={order}
+                  onCancel={() => cancelQuickLimitOrder(order.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="rounded-xl border border-ax-border bg-ax-surface2">
           <div className="flex items-center justify-between border-b border-ax-border px-3 py-2">
             <div>
@@ -182,6 +215,33 @@ function PendingRow({ order }: { order: QuickPendingOrder }) {
         <Clock3 size={11} />
         {fmtEta(order.execMs)}
       </span>
+    </div>
+  );
+}
+
+function LimitOrderRow({ order, onCancel }: { order: QuickLimitOrder; onCancel: () => void }) {
+  return (
+    <div className="grid grid-cols-[58px_110px_110px_82px_56px_72px] gap-2 border-b border-ax-border/40 py-1 text-[11px]">
+      <span className={order.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>
+        {order.side.toUpperCase()}
+      </span>
+      <span className="text-ax-text">
+        {order.side === 'buy' ? `${fmtSol(order.amountSol)} SOL` : fmtQty(order.tokenQty)}
+      </span>
+      <span className="text-ax-text">
+        {order.limitPriceUsd >= 1 ? `$${order.limitPriceUsd.toFixed(4)}` : `$${order.limitPriceUsd.toExponential(4)}`}
+      </span>
+      <span className={statusClass('pending')}>OPEN</span>
+      <span className="text-ax-text-dim">{fmtAgo(order.createdAtMs)}</span>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded border border-ax-border px-2 py-0.5 text-[10px] text-ax-text-dim transition-colors hover:text-ax-text"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

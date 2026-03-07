@@ -93,6 +93,22 @@ export interface QuickPendingOrder {
   execMs: number;
 }
 
+export interface QuickLimitOrder {
+  id: string;
+  tokenId: string;
+  side: Side;
+  limitPriceUsd: number;
+  amountSol: number;
+  tokenQty: number;
+  reservedSol: number;
+  txCostSol: number;
+  slippageBps: number;
+  prioritySol: number;
+  bribeSol: number;
+  status: 'open';
+  createdAtMs: number;
+}
+
 export interface QuickExecutionSnapshot {
   tokenId: string;
   orderId: string;
@@ -134,8 +150,10 @@ export interface QuickPositionSummary {
 
 export interface QuickOrderPanelState {
   tokenId: string;
+  limitOrders: QuickLimitOrder[];
   pendingOrders: QuickPendingOrder[];
   executions: QuickExecutionSnapshot[];
+  hasOpenLimitOrders: boolean;
   hasPendingOrders: boolean;
   hasExecutionHistory: boolean;
   isEmpty: boolean;
@@ -145,6 +163,7 @@ type Ghost = { price: number } | null;
 const EMPTY_QUICK_TRADES: QuickTrade[] = [];
 const EMPTY_QUICK_EXECUTIONS: QuickExecutionSnapshot[] = [];
 const EMPTY_PENDING_QUICK_ORDERS: QuickPendingOrder[] = [];
+const EMPTY_QUICK_LIMIT_ORDERS: QuickLimitOrder[] = [];
 
 type PosAcc = { side: Side; openTs: number; lots: { qty:number; price:number; ts:number }[]; fees:number };
 export interface PositionHistory {
@@ -185,6 +204,7 @@ type Store = {
   // Quick token-centric trading used by the active UI.
   quickPositionsByTokenId: Record<string, QuickPosition>;
   quickTradesByTokenId: Record<string, QuickTrade[]>;
+  quickLimitOrdersById: Record<string, QuickLimitOrder>;
   pendingQuickOrdersById: Record<string, QuickPendingOrder>;
   lastQuickExecutionByTokenId: Record<string, QuickExecutionSnapshot>;
   quickExecutionHistoryByTokenId: Record<string, QuickExecutionSnapshot[]>;
@@ -218,6 +238,8 @@ type Store = {
   cancelOrder: (id: string) => void;
   closePct: (pct: number) => void;
   setSLTP: (levels: { sl?: number; tp?: number }) => void;
+  placeQuickLimitOrder: (tokenId: string, side: Side, amountSol: number, limitPriceUsd: number, options?: QuickTradeOptions) => QuickTradeResult;
+  cancelQuickLimitOrder: (orderId: string) => boolean;
   quickBuy: (tokenId: string, amountSol: number, options?: QuickTradeOptions) => QuickTradeResult;
   quickSell: (tokenId: string, amountSol: number, options?: QuickTradeOptions) => QuickTradeResult;
 
@@ -245,6 +267,7 @@ export const useTradingStore = create<Store>((set, get) => ({
   trades: [],
   quickPositionsByTokenId: {},
   quickTradesByTokenId: {},
+  quickLimitOrdersById: {},
   pendingQuickOrdersById: {},
   lastQuickExecutionByTokenId: {},
   quickExecutionHistoryByTokenId: {},
@@ -288,6 +311,127 @@ export const useTradingStore = create<Store>((set, get) => ({
   }),
 
   setLimitTarget: (p) => set({ limitTarget: p }),
+
+  placeQuickLimitOrder: (tokenId, side, amountSol, limitPriceUsd, options) => {
+    const st = get();
+    if (!Number.isFinite(amountSol) || amountSol <= 0) {
+      return { ok: false, reason: 'Invalid amount' };
+    }
+    if (!Number.isFinite(limitPriceUsd) || limitPriceUsd <= 0) {
+      return { ok: false, reason: 'Invalid limit price' };
+    }
+
+    const token = useTokenStore.getState().tokensById[tokenId];
+    if (!token) {
+      return { ok: false, reason: 'Token unavailable' };
+    }
+
+    const slippagePct = Number.isFinite(options?.slippagePct)
+      ? (options?.slippagePct as number)
+      : st.slippagePct;
+    const slippageBps = slippagePctToBps(slippagePct);
+    const prioritySol = Math.max(0, Number(options?.prioritySol ?? 0));
+    const bribeSol = Math.max(0, Number(options?.bribeSol ?? 0));
+    const txCostSol = QUICK_BASE_TX_FEE_SOL + prioritySol + bribeSol;
+    const createdAtMs = Date.now();
+
+    if (side === 'buy') {
+      const totalSolNeeded = amountSol + txCostSol;
+      if (!useWalletStore.getState().deductSol(totalSolNeeded)) {
+        return { ok: false, reason: 'Insufficient SOL' };
+      }
+
+      const orderId = makeId();
+      const order: QuickLimitOrder = {
+        id: orderId,
+        tokenId,
+        side,
+        limitPriceUsd,
+        amountSol,
+        tokenQty: 0,
+        reservedSol: amountSol,
+        txCostSol,
+        slippageBps,
+        prioritySol,
+        bribeSol,
+        status: 'open',
+        createdAtMs,
+      };
+
+      set((state) => ({
+        quickLimitOrdersById: {
+          ...state.quickLimitOrdersById,
+          [orderId]: order,
+        },
+      }));
+      maybeTriggerQuickLimitOrders();
+      return { ok: true, orderId };
+    }
+
+    const priceUsd = token.lastPriceUsd;
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return { ok: false, reason: 'Price unavailable' };
+
+    const prevPos = st.quickPositionsByTokenId[tokenId];
+    if (!prevPos || prevPos.qty <= 0) return { ok: false, reason: 'No position' };
+
+    const availableQty = Math.max(
+      0,
+      prevPos.qty - getReservedSellQty(st.pendingQuickOrdersById, st.quickLimitOrdersById, tokenId)
+    );
+    if (availableQty <= 0) return { ok: false, reason: 'Position locked by open sells' };
+
+    const targetUsd = solToUsd(amountSol);
+    const qtyToSell = Math.min(availableQty, targetUsd / priceUsd);
+    if (!Number.isFinite(qtyToSell) || qtyToSell <= 0) return { ok: false, reason: 'Nothing to sell' };
+
+    if (!useWalletStore.getState().deductSol(txCostSol)) {
+      return { ok: false, reason: 'Insufficient SOL for tx fee' };
+    }
+
+    const orderId = makeId();
+    const order: QuickLimitOrder = {
+      id: orderId,
+      tokenId,
+      side,
+      limitPriceUsd,
+      amountSol,
+      tokenQty: qtyToSell,
+      reservedSol: 0,
+      txCostSol,
+      slippageBps,
+      prioritySol,
+      bribeSol,
+      status: 'open',
+      createdAtMs,
+    };
+
+    set((state) => ({
+      quickLimitOrdersById: {
+        ...state.quickLimitOrdersById,
+        [orderId]: order,
+      },
+    }));
+    maybeTriggerQuickLimitOrders();
+    return { ok: true, orderId };
+  },
+
+  cancelQuickLimitOrder: (orderId) => {
+    const order = get().quickLimitOrdersById[orderId];
+    if (!order) return false;
+
+    const refundSol = order.reservedSol + order.txCostSol;
+    if (refundSol > 0) {
+      useWalletStore.getState().addSol(refundSol);
+    }
+
+    set((state) => {
+      if (!state.quickLimitOrdersById[orderId]) return state;
+      const next = { ...state.quickLimitOrdersById };
+      delete next[orderId];
+      return { quickLimitOrdersById: next };
+    });
+    return true;
+  },
 
   quickBuy: (tokenId, amountSol, options) => {
     const st = get();
@@ -386,7 +530,7 @@ export const useTradingStore = create<Store>((set, get) => ({
     const prevPos = st.quickPositionsByTokenId[tokenId];
     if (!prevPos || prevPos.qty <= 0) return { ok: false, reason: 'No position' };
 
-    const alreadyReservedQty = sumReservedSellQty(st.pendingQuickOrdersById, tokenId);
+    const alreadyReservedQty = getReservedSellQty(st.pendingQuickOrdersById, st.quickLimitOrdersById, tokenId);
     const availableQty = Math.max(0, prevPos.qty - alreadyReservedQty);
     if (availableQty <= 0) return { ok: false, reason: 'Position locked by pending sells' };
 
@@ -768,14 +912,96 @@ function slippagePctToBps(slippagePct: number): number {
   return Math.max(0, Math.min(10_000, Math.round(slippagePct * 100)));
 }
 
-function sumReservedSellQty(pending: Record<string, QuickPendingOrder>, tokenId: string): number {
+function getReservedSellQty(
+  pending: Record<string, QuickPendingOrder>,
+  limitOrders: Record<string, QuickLimitOrder>,
+  tokenId: string
+): number {
   let qty = 0;
   for (const p of Object.values(pending)) {
     if (p.tokenId !== tokenId) continue;
     if (p.side !== 'sell') continue;
     qty += p.reservedToken;
   }
+  for (const order of Object.values(limitOrders)) {
+    if (order.tokenId !== tokenId) continue;
+    if (order.side !== 'sell') continue;
+    if (order.status !== 'open') continue;
+    qty += order.tokenQty;
+  }
   return qty;
+}
+
+function shouldTriggerQuickLimitOrder(order: QuickLimitOrder, currentPriceUsd: number): boolean {
+  if (!Number.isFinite(currentPriceUsd) || currentPriceUsd <= 0) return false;
+  if (!Number.isFinite(order.limitPriceUsd) || order.limitPriceUsd <= 0) return false;
+  return order.side === 'buy'
+    ? currentPriceUsd <= order.limitPriceUsd
+    : currentPriceUsd >= order.limitPriceUsd;
+}
+
+function triggerQuickLimitOrder(orderId: string): void {
+  const st = useTradingStore.getState();
+  const order = st.quickLimitOrdersById[orderId];
+  if (!order || order.status !== 'open') return;
+
+  const side = order.side === 'buy' ? 'BUY' : 'SELL';
+  const amountIn = order.side === 'buy' ? order.amountSol : order.tokenQty;
+  if (!Number.isFinite(amountIn) || amountIn <= 0) return;
+
+  const quote = registry.quoteTrade(order.tokenId, side, amountIn, order.slippageBps);
+  if (!quote.ok) return;
+
+  const submit = registry.submitTrade(order.tokenId, {
+    side,
+    amountIn,
+    slippageBps: order.slippageBps,
+    prioritySol: order.prioritySol + order.bribeSol,
+    txCostSol: order.txCostSol,
+  });
+  if (!submit.ok) return;
+
+  const pending: QuickPendingOrder = {
+    orderId: submit.orderId,
+    tokenId: order.tokenId,
+    side: order.side,
+    reservedSol: order.side === 'buy' ? order.reservedSol : 0,
+    reservedToken: order.side === 'sell' ? order.tokenQty : 0,
+    expectedOut: submit.expectedOut,
+    minOut: submit.minOut,
+    txCostSol: order.txCostSol,
+    prioritySol: order.prioritySol,
+    bribeSol: order.bribeSol,
+    submitMs: submit.submitMs,
+    execMs: submit.execMs,
+  };
+
+  useTradingStore.setState((state) => {
+    if (!state.quickLimitOrdersById[orderId]) return state;
+    const nextLimitOrders = { ...state.quickLimitOrdersById };
+    delete nextLimitOrders[orderId];
+    return {
+      quickLimitOrdersById: nextLimitOrders,
+      pendingQuickOrdersById: {
+        ...state.pendingQuickOrdersById,
+        [submit.orderId]: pending,
+      },
+    };
+  });
+}
+
+function maybeTriggerQuickLimitOrders(): void {
+  const st = useTradingStore.getState();
+  const openOrders = Object.values(st.quickLimitOrdersById);
+  if (openOrders.length === 0) return;
+
+  const tokenState = useTokenStore.getState();
+  for (const order of openOrders) {
+    if (order.status !== 'open') continue;
+    const priceUsd = tokenState.tokensById[order.tokenId]?.lastPriceUsd ?? 0;
+    if (!shouldTriggerQuickLimitOrder(order, priceUsd)) continue;
+    triggerQuickLimitOrder(order.id);
+  }
 }
 
 function applyQuickTradeExecution(execution: UserTradeExecutionNotice): void {
@@ -953,6 +1179,15 @@ if (!bridgeGlobal[tradeBridgeKey]) {
   });
 }
 
+const limitBridgeKey = '__dex_quick_limit_bridge_installed__';
+if (!bridgeGlobal[limitBridgeKey]) {
+  bridgeGlobal[limitBridgeKey] = true;
+  useTokenStore.subscribe((state, prevState) => {
+    if (state.marketByTokenId === prevState.marketByTokenId) return;
+    maybeTriggerQuickLimitOrders();
+  });
+}
+
 export const selectQuickPositionByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickPosition | null =>
     s.quickPositionsByTokenId[tokenId] ?? null;
@@ -960,6 +1195,18 @@ export const selectQuickPositionByTokenId = (tokenId: string) =>
 export const selectQuickTradesByTokenId = (tokenId: string) =>
   (s: ReturnType<typeof useTradingStore.getState>): QuickTrade[] =>
     getQuickTradesForToken(s, tokenId);
+
+export const selectQuickOpenLimitOrdersByTokenId = (tokenId: string) =>
+  {
+    let prevLimitMap: ReturnType<typeof useTradingStore.getState>['quickLimitOrdersById'] | null = null;
+    let prevRows: QuickLimitOrder[] = EMPTY_QUICK_LIMIT_ORDERS;
+    return (s: ReturnType<typeof useTradingStore.getState>): QuickLimitOrder[] => {
+      if (s.quickLimitOrdersById === prevLimitMap) return prevRows;
+      prevLimitMap = s.quickLimitOrdersById;
+      prevRows = getQuickOpenLimitOrdersForToken(s, tokenId);
+      return prevRows;
+    };
+  };
 
 export const selectQuickPendingOrdersByTokenId = (tokenId: string) =>
   {
@@ -1008,6 +1255,7 @@ export const selectQuickPositionSummaryByTokenId = (tokenId: string, currentPric
 
 export const selectQuickOrderPanelStateByTokenId = (tokenId: string) =>
   {
+    let prevLimitMap: ReturnType<typeof useTradingStore.getState>['quickLimitOrdersById'] | null = null;
     let prevPendingMap: ReturnType<typeof useTradingStore.getState>['pendingQuickOrdersById'] | null = null;
     let prevExecutionHistory: QuickExecutionSnapshot[] | undefined = undefined;
     let prevState: QuickOrderPanelState | null = null;
@@ -1015,22 +1263,27 @@ export const selectQuickOrderPanelStateByTokenId = (tokenId: string) =>
       const executionHistory = getQuickExecutionHistoryForToken(s, tokenId);
       if (
         prevState &&
+        s.quickLimitOrdersById === prevLimitMap &&
         s.pendingQuickOrdersById === prevPendingMap &&
         executionHistory === prevExecutionHistory
       ) {
         return prevState;
       }
+      const limitOrders = getQuickOpenLimitOrdersForToken(s, tokenId);
       const pendingOrders = getQuickPendingOrdersForToken(s, tokenId);
       const executions = executionHistory.length > 0 ? executionHistory.slice().reverse() : EMPTY_QUICK_EXECUTIONS;
+      prevLimitMap = s.quickLimitOrdersById;
       prevPendingMap = s.pendingQuickOrdersById;
       prevExecutionHistory = executionHistory;
       prevState = {
         tokenId,
+        limitOrders,
         pendingOrders,
         executions,
+        hasOpenLimitOrders: limitOrders.length > 0,
         hasPendingOrders: pendingOrders.length > 0,
         hasExecutionHistory: executions.length > 0,
-        isEmpty: pendingOrders.length === 0 && executions.length === 0,
+        isEmpty: limitOrders.length === 0 && pendingOrders.length === 0 && executions.length === 0,
       };
       return prevState;
     };
@@ -1103,6 +1356,18 @@ function getQuickExecutionHistoryForToken(
   tokenId: string
 ): QuickExecutionSnapshot[] {
   return s.quickExecutionHistoryByTokenId[tokenId] ?? EMPTY_QUICK_EXECUTIONS;
+}
+
+function getQuickOpenLimitOrdersForToken(
+  s: ReturnType<typeof useTradingStore.getState>,
+  tokenId: string
+): QuickLimitOrder[] {
+  const values = Object.values(s.quickLimitOrdersById);
+  if (values.length === 0) return EMPTY_QUICK_LIMIT_ORDERS;
+  const rows = values
+    .filter((order) => order.tokenId === tokenId && order.status === 'open')
+    .sort((a, b) => b.createdAtMs - a.createdAtMs);
+  return rows.length > 0 ? rows : EMPTY_QUICK_LIMIT_ORDERS;
 }
 
 function getQuickPendingOrdersForToken(
