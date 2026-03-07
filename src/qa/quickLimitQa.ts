@@ -1,8 +1,12 @@
 import { useTokenStore } from '../store/tokenStore';
 import { useTradingStore } from '../store/tradingStore';
 import { useWalletStore } from '../store/walletStore';
+import { registry } from '../tokens/registry';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const BUY_TEST_AMOUNT_SOL = 0.1;
+const SELL_TEST_AMOUNT_SOL = 0.03;
+const TEST_SLIPPAGE_BPS = 100;
 
 async function waitFor<T>(predicate: () => T | null | false, timeoutMs: number, label: string): Promise<T> {
   const startedAt = Date.now();
@@ -17,11 +21,28 @@ async function waitFor<T>(predicate: () => T | null | false, timeoutMs: number, 
 export async function runQuickLimitQa() {
   const tokenId = await waitFor(() => {
     const rows = Object.values(useTokenStore.getState().tokensById);
-    const token = rows
+    const ranked = rows
       .filter((row) => Number.isFinite(row.lastPriceUsd) && row.lastPriceUsd > 0)
-      .filter((row) => Number.isFinite(row.mcapUsd) && row.mcapUsd >= 10_000)
-      .filter((row) => row.phase !== 'DEAD')
-      .sort((a, b) => b.mcapUsd - a.mcapUsd)[0];
+      .filter((row) => Number.isFinite(row.mcapUsd) && row.mcapUsd >= 20_000)
+      .filter((row) => Number.isFinite(row.liquidityUsd) && row.liquidityUsd >= 3_000)
+      .filter((row) => Number.isFinite(row.vol5mUsd) && row.vol5mUsd >= 1_000)
+      .filter((row) => row.phase !== 'DEAD' && row.phase !== 'RUGGED')
+      .filter((row) => registry.quoteTrade(row.id, 'BUY', BUY_TEST_AMOUNT_SOL, TEST_SLIPPAGE_BPS).ok)
+      .sort((a, b) => {
+        const phaseScore = (phase: typeof a.phase) => {
+          if (phase === 'MIGRATED') return 3;
+          if (phase === 'FINAL') return 2;
+          if (phase === 'NEW') return 1;
+          return 0;
+        };
+        return (
+          phaseScore(b.phase) - phaseScore(a.phase) ||
+          b.liquidityUsd - a.liquidityUsd ||
+          b.vol5mUsd - a.vol5mUsd ||
+          b.mcapUsd - a.mcapUsd
+        );
+      });
+    const token = ranked[0];
     return token?.id ?? null;
   }, 8000, 'token runtime');
 
@@ -65,7 +86,7 @@ export async function runQuickLimitQa() {
 
   const buyExecCountBefore = getExecutions().length;
   const triggerBuyPrice = getLastPriceUsd() * 1.2;
-  const buyLimit = useTradingStore.getState().placeQuickLimitOrder(tokenId, 'buy', 0.1, triggerBuyPrice, {
+  const buyLimit = useTradingStore.getState().placeQuickLimitOrder(tokenId, 'buy', BUY_TEST_AMOUNT_SOL, triggerBuyPrice, {
     slippagePct: 1,
     prioritySol: 0,
     bribeSol: 0,
@@ -103,7 +124,7 @@ export async function runQuickLimitQa() {
   const sellExecCountBefore = getExecutions().length;
   const qtyBeforeSell = postBuyState.qty;
   const triggerSellPrice = postBuyState.priceUsd * 0.5;
-  const sellLimit = useTradingStore.getState().placeQuickLimitOrder(tokenId, 'sell', 0.03, triggerSellPrice, {
+  const sellLimit = useTradingStore.getState().placeQuickLimitOrder(tokenId, 'sell', SELL_TEST_AMOUNT_SOL, triggerSellPrice, {
     slippagePct: 1,
     prioritySol: 0,
     bribeSol: 0,
