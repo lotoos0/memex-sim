@@ -32,6 +32,16 @@ import {
   type TokenMarketBehavior,
   type TokenMarketRegime,
 } from './tokenMarketRegimes';
+import {
+  computeActorOverlay,
+  getActorBuyReuseBias,
+  getActorSellAffinityPrefixes,
+  getActorSellReuseBias,
+  getActorWalletPrefix,
+  pickActorGroup,
+  type TokenActorGroup,
+  type TokenActorMixEntry,
+} from './tokenActors';
 
 interface StatBucket {
   simMs: number;
@@ -639,6 +649,20 @@ export class TokenSim {
       !inMigrationFreeze && !inDeadMode && !inCollapseMode,
       regimeBehavior.devSignalMul
     );
+    const actorOverlay = computeActorOverlay(this.rng, {
+      regime: this.marketRegime,
+      phase: this.phase,
+      fate: this.meta.fate,
+      simTimeMs: this.simTimeMs,
+      qualityScore: this.getDynamicQualityScore(flowStrength),
+      flowStrength,
+      changePct: this.getChangePct(),
+      progressToMigration: this.lastMcapUsd / Math.max(1, getMigrationThresholdUsd()),
+      baseTradeSizeUsd: this.baseTradeSizeUsd,
+      hasEnteredFinal: this.hasEnteredFinal,
+      hasDevBuySignal: devFlow?.eventType === 'DEV_BUY',
+      hasDevSellSignal: devFlow?.eventType === 'DEV_SELL',
+    });
     const prevPriceUsd = this.lastPriceUsd;
     const burstDirectionalUsd = this.consumeMicroburstDirectionalUsd(realDtSec);
 
@@ -671,6 +695,25 @@ export class TokenSim {
     let targetBuyUsd = market.buyUsd;
     let targetSellUsd = market.sellUsd;
     let expectedNextPriceUsd = market.nextPriceUsd;
+    const actorActivityScale = clamp(
+      (market.buyUsd + market.sellUsd) / Math.max(1, this.baseTradeSizeUsd * 1.2),
+      0,
+      1.25
+    );
+    const actorBuyBoostUsd = actorOverlay.buyBoostUsd * actorActivityScale;
+    const actorSellBoostUsd = actorOverlay.sellBoostUsd * actorActivityScale;
+    const actorDirectionalUsd = actorBuyBoostUsd - actorSellBoostUsd;
+
+    if (actorBuyBoostUsd > 0) targetBuyUsd += actorBuyBoostUsd;
+    if (actorSellBoostUsd > 0) targetSellUsd += actorSellBoostUsd;
+    if (Math.abs(actorDirectionalUsd) > 1e-6) {
+      expectedNextPriceUsd = this.adjustExpectedPriceForDirectionalUsd(
+        expectedNextPriceUsd,
+        actorDirectionalUsd,
+        liquidityUsd,
+        this.impactK * impactMul
+      );
+    }
 
     if (burstDirectionalUsd > 0) {
       targetBuyUsd += burstDirectionalUsd;
@@ -708,6 +751,8 @@ export class TokenSim {
         targetSellUsd: guardedFlow.targetSellUsd,
         expectedNextPriceUsd: guardedFlow.expectedNextPriceUsd,
         previousPriceUsd: prevPriceUsd,
+        buyMix: actorOverlay.buyMix,
+        sellMix: actorOverlay.sellMix,
       });
     } else {
       this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - realDtSec * 1000);
@@ -737,6 +782,8 @@ export class TokenSim {
     targetSellUsd: number;
     expectedNextPriceUsd: number;
     previousPriceUsd: number;
+    buyMix: TokenActorMixEntry[];
+    sellMix: TokenActorMixEntry[];
   }): void {
     const targetBuyUsd = Math.max(0, Number.isFinite(input.targetBuyUsd) ? input.targetBuyUsd : 0);
     const targetSellUsd = Math.max(0, Number.isFinite(input.targetSellUsd) ? input.targetSellUsd : 0);
@@ -785,18 +832,24 @@ export class TokenSim {
       const tsMs = startMs + Math.floor(((i + 1) * windowMs) / (sidePlan.length + 1));
       if (side === 'BUY') {
         const targetUsd = buyParts[buyIdx++] ?? 0;
-        if (this.executeSimBuyTrade(targetUsd, tsMs)) executedTrades += 1;
+        const actorGroup = pickActorGroup(this.rng, input.buyMix, 'late_retail');
+        if (this.executeSimBuyTrade(targetUsd, tsMs, actorGroup)) executedTrades += 1;
         continue;
       }
 
       const targetUsd = sellParts[sellIdx++] ?? 0;
-      const sellOk = this.executeSimSellTrade(targetUsd, tsMs);
+      const actorGroup = pickActorGroup(this.rng, input.sellMix, 'panic_sellers');
+      const sellOk = this.executeSimSellTrade(targetUsd, tsMs, actorGroup);
       if (sellOk) {
         executedTrades += 1;
         continue;
       }
       // If inventory is exhausted, keep tape alive by converting the slot to a small buy.
-      if (targetUsd > 0 && this.executeSimBuyTrade(targetUsd * (0.65 + this.rng.next() * 0.35), tsMs)) {
+      if (targetUsd > 0 && this.executeSimBuyTrade(
+        targetUsd * (0.65 + this.rng.next() * 0.35),
+        tsMs,
+        'dip_buyers'
+      )) {
         executedTrades += 1;
       }
     }
@@ -809,8 +862,8 @@ export class TokenSim {
       const steeringTs = input.candleTsMs;
       const steeringNotional = Math.max(8, totalUsd * 0.15);
       if (driftPct > 0) {
-        if (this.executeSimBuyTrade(steeringNotional, steeringTs)) executedTrades += 1;
-      } else if (this.executeSimSellTrade(steeringNotional, steeringTs)) {
+        if (this.executeSimBuyTrade(steeringNotional, steeringTs, 'momentum_chasers')) executedTrades += 1;
+      } else if (this.executeSimSellTrade(steeringNotional, steeringTs, 'panic_sellers')) {
         executedTrades += 1;
       }
     }
@@ -993,11 +1046,11 @@ export class TokenSim {
     return out;
   }
 
-  private executeSimBuyTrade(targetUsd: number, tsMs: number): boolean {
+  private executeSimBuyTrade(targetUsd: number, tsMs: number, actorGroup: TokenActorGroup = 'late_retail'): boolean {
     const grossInUsd = Math.max(0, Number.isFinite(targetUsd) ? targetUsd : 0);
     if (grossInUsd <= 0) return false;
 
-    const walletId = this.pickWalletForBuy();
+    const walletId = this.pickWalletForBuy(actorGroup);
 
     if (!this.hasMigrated && this.phase !== 'MIGRATED') {
       this.sanitizeCurveState();
@@ -1036,11 +1089,11 @@ export class TokenSim {
     return true;
   }
 
-  private executeSimSellTrade(targetUsd: number, tsMs: number): boolean {
+  private executeSimSellTrade(targetUsd: number, tsMs: number, actorGroup: TokenActorGroup = 'panic_sellers'): boolean {
     const desiredUsd = Math.max(0, Number.isFinite(targetUsd) ? targetUsd : 0);
     if (desiredUsd <= 0) return false;
 
-    const walletId = this.pickWalletForSell();
+    const walletId = this.pickWalletForSell(actorGroup);
     if (!walletId) return false;
 
     const walletBal = this.ledger.get(walletId) ?? 0;
@@ -1097,6 +1150,14 @@ export class TokenSim {
 
   private randomInitialSolBalance(walletId: string): number {
     if (walletId === 'you') return 120;
+    if (walletId.startsWith('dv_')) return 6 + this.rng.next() * 60;
+    if (walletId.startsWith('in_')) return 1.5 + this.rng.next() * 26;
+    if (walletId.startsWith('sn_')) return 0.7 + this.rng.next() * 16;
+    if (walletId.startsWith('se_')) return 0.9 + this.rng.next() * 20;
+    if (walletId.startsWith('mc_')) return 0.2 + this.rng.next() * 14;
+    if (walletId.startsWith('lr_')) return 0.05 + this.rng.next() * 8;
+    if (walletId.startsWith('db_')) return 0.2 + this.rng.next() * 12;
+    if (walletId.startsWith('ps_')) return 0.04 + this.rng.next() * 6;
     if (walletId.startsWith('g_')) return 0.05 + this.rng.next() * 45;
     if (walletId.startsWith('w_')) return 0.01 + this.rng.next() * 28;
     return 0.01 + this.rng.next() * 20;
@@ -1161,16 +1222,26 @@ export class TokenSim {
     profile.solBalance += notionalSol;
   }
 
-  private pickWalletForBuy(): string {
+  private pickWalletForBuy(actorGroup: TokenActorGroup): string {
+    const prefix = getActorWalletPrefix(actorGroup);
+    const matching = this.getHolderWalletIdsByPrefixes([prefix], true);
+    if (matching.length > 0 && this.rng.next() < getActorBuyReuseBias(actorGroup)) {
+      return matching[Math.floor(this.rng.next() * matching.length)]!;
+    }
+
     const holders = this.getHolderWalletIds(true);
-    if (holders.length > 0 && this.rng.next() < 0.74) {
+    if (holders.length > 0 && this.rng.next() < 0.38) {
       return holders[Math.floor(this.rng.next() * holders.length)]!;
     }
-    return this.createWalletId('w');
+    return this.createWalletId(prefix);
   }
 
-  private pickWalletForSell(): string | null {
-    const holders = this.getHolderWalletIds(true);
+  private pickWalletForSell(actorGroup: TokenActorGroup): string | null {
+    const affinityHolders = this.getHolderWalletIdsByPrefixes(getActorSellAffinityPrefixes(actorGroup), true);
+    const holders =
+      affinityHolders.length > 0 && this.rng.next() < getActorSellReuseBias(actorGroup)
+        ? affinityHolders
+        : this.getHolderWalletIds(true);
     if (holders.length === 0) return null;
 
     let totalWeight = 0;
@@ -1213,6 +1284,15 @@ export class TokenSim {
       out.push(walletId);
     }
     return out;
+  }
+
+  private getHolderWalletIdsByPrefixes(prefixes: string[], excludeUser = false): string[] {
+    if (prefixes.length === 0) return this.getHolderWalletIds(excludeUser);
+    const set = new Set(prefixes);
+    return this.getHolderWalletIds(excludeUser).filter((walletId) => {
+      const prefix = walletId.split('_')[0] ?? '';
+      return set.has(prefix);
+    });
   }
 
   private seedGenesisHolders(): void {
