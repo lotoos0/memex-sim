@@ -27,13 +27,17 @@ export const MIGRATION_SHOCK_CONTINUATION_PENALTY = 0.18;
 export const IMPACT_SATURATION_FLOOR_USD = 8_000;
 export const LOW_LIQUIDITY_BOOST = 1.25;
 export const HIGH_LIQUIDITY_DAMPING = 0.72;
-export const MIN_MIGRATION_AGE_SEC = 45;
-export const MIN_MIGRATION_TX_60S = 18;
-export const MIN_MIGRATION_HOLDERS = 80;
-export const MIN_MIGRATION_SUSTAIN_CANDLES = 4;
+export const MIN_MIGRATION_AGE_SEC = 90;
+export const MIN_MIGRATION_TX_60S = 30;
+export const MIN_MIGRATION_HOLDERS = 120;
+export const MIN_MIGRATION_SUSTAIN_CANDLES = 8;
 export const POST_MIGRATION_RETEST_CHANCE = 0.45;
 export const POST_MIGRATION_REJECTION_CHANCE = 0.35;
 export const POST_MIGRATION_PLATEAU_PENALTY = 0.3;
+export const POST_MIGRATION_MEAN_REVERSION_CHANCE = 0.3;
+export const POST_MIGRATION_OVEREXTENSION_PENALTY = 0.25;
+export const MIGRATION_APPROACH_FRICTION_START_PCT = 0.8;
+export const MIGRATION_APPROACH_FRICTION_MAX = 0.35;
 export const MICROBUST_CANDLES_MIN = 3;
 export const MICROBUST_CANDLES_MAX = 6;
 export const MICROBUST_RETRACE_CHANCE = 0.35;
@@ -58,6 +62,8 @@ export interface TokenMarketBehavior {
   postMigrationRetestChance: number;
   postMigrationRejectionChance: number;
   postMigrationPlateauPenalty: number;
+  postMigrationMeanReversionChance: number;
+  postMigrationOverextensionPenalty: number;
 }
 
 type MigrationOutcomeWeightSet = {
@@ -93,19 +99,19 @@ const DEFAULT_TTL_RANGE_BY_REGIME: Record<TokenMarketRegime, [number, number]> =
 
 const MIGRATION_OUTCOME_WEIGHTS: Record<'weak' | 'average' | 'strong', MigrationOutcomeWeightSet> = {
   weak: {
-    continuation: 0.1,
+    continuation: 0.05,
     chop: 0.28,
-    bleed: 0.62,
+    bleed: 0.67,
   },
   average: {
-    continuation: 0.2,
-    chop: 0.52,
-    bleed: 0.28,
+    continuation: 0.12,
+    chop: 0.58,
+    bleed: 0.3,
   },
   strong: {
-    continuation: 0.42,
-    chop: 0.38,
-    bleed: 0.2,
+    continuation: 0.3,
+    chop: 0.45,
+    bleed: 0.25,
   },
 };
 
@@ -174,6 +180,8 @@ export function getMarketBehavior(
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
         postMigrationPlateauPenalty: 0,
+        postMigrationMeanReversionChance: 0,
+        postMigrationOverextensionPenalty: 0,
       };
     case 'FIRST_PUMP':
       return {
@@ -194,6 +202,8 @@ export function getMarketBehavior(
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
         postMigrationPlateauPenalty: 0,
+        postMigrationMeanReversionChance: 0,
+        postMigrationOverextensionPenalty: 0,
       };
     case 'CHOP':
       return {
@@ -214,6 +224,8 @@ export function getMarketBehavior(
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
         postMigrationPlateauPenalty: 0,
+        postMigrationMeanReversionChance: 0,
+        postMigrationOverextensionPenalty: 0,
       };
     case 'GRIND_UP':
       return {
@@ -234,6 +246,8 @@ export function getMarketBehavior(
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
         postMigrationPlateauPenalty: 0,
+        postMigrationMeanReversionChance: 0,
+        postMigrationOverextensionPenalty: 0,
       };
     case 'BLEED_OUT':
       return {
@@ -254,6 +268,8 @@ export function getMarketBehavior(
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
         postMigrationPlateauPenalty: 0,
+        postMigrationMeanReversionChance: 0,
+        postMigrationOverextensionPenalty: 0,
       };
     case 'DEAD_BOUNCE':
       return {
@@ -274,6 +290,8 @@ export function getMarketBehavior(
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
         postMigrationPlateauPenalty: 0,
+        postMigrationMeanReversionChance: 0,
+        postMigrationOverextensionPenalty: 0,
       };
     case 'MIGRATION_SHOCK':
       return {
@@ -294,6 +312,8 @@ export function getMarketBehavior(
         postMigrationRetestChance: POST_MIGRATION_RETEST_CHANCE,
         postMigrationRejectionChance: POST_MIGRATION_REJECTION_CHANCE,
         postMigrationPlateauPenalty: POST_MIGRATION_PLATEAU_PENALTY,
+        postMigrationMeanReversionChance: POST_MIGRATION_MEAN_REVERSION_CHANCE,
+        postMigrationOverextensionPenalty: POST_MIGRATION_OVEREXTENSION_PENALTY,
       };
     case 'POST_MIGRATION_DISCOVERY':
       return {
@@ -314,6 +334,8 @@ export function getMarketBehavior(
         postMigrationRetestChance: POST_MIGRATION_RETEST_CHANCE * 0.9,
         postMigrationRejectionChance: POST_MIGRATION_REJECTION_CHANCE * 0.8,
         postMigrationPlateauPenalty: POST_MIGRATION_PLATEAU_PENALTY,
+        postMigrationMeanReversionChance: POST_MIGRATION_MEAN_REVERSION_CHANCE,
+        postMigrationOverextensionPenalty: POST_MIGRATION_OVEREXTENSION_PENALTY,
       };
   }
 }
@@ -398,9 +420,9 @@ export function decideMigrationOutcome(
   const continuationScore = Math.max(
     0.02,
     base.continuation
-    + (input.qualityScore - 0.5) * 0.12
-    + Math.max(0, input.preMigrationStrength - 0.2) * 0.18
-    + Math.max(0, input.currentFlowStrength - 0.15) * 0.1
+    + (input.qualityScore - 0.62) * 0.08
+    + Math.max(0, input.preMigrationStrength - 0.28) * 0.12
+    + Math.max(0, input.currentFlowStrength - 0.2) * 0.08
     - MIGRATION_SHOCK_CONTINUATION_PENALTY
   );
   const bleedScore = Math.max(

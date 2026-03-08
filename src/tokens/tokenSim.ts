@@ -11,6 +11,8 @@ import {
   HIGH_LIQUIDITY_DAMPING,
   IMPACT_SATURATION_FLOOR_USD,
   LOW_LIQUIDITY_BOOST,
+  MIGRATION_APPROACH_FRICTION_MAX,
+  MIGRATION_APPROACH_FRICTION_START_PCT,
   MIN_MIGRATION_AGE_SEC,
   MIN_MIGRATION_HOLDERS,
   MIN_MIGRATION_SUSTAIN_CANDLES,
@@ -503,6 +505,16 @@ export class TokenSim {
           effectiveBuyBias = clamp(effectiveBuyBias - 0.09, 0.18, 0.72);
           volMul *= 1.18;
         }
+        if (overMigration > 0.12 && this.rng.next() < regimeBehavior.postMigrationMeanReversionChance * realDtSec) {
+          driftPerSec -= regimeBehavior.postMigrationOverextensionPenalty * (0.04 + contestedBias * 0.02);
+          effectiveBuyBias = clamp(
+            effectiveBuyBias - regimeBehavior.postMigrationOverextensionPenalty * 0.12,
+            0.16,
+            0.72
+          );
+          lambdaMul *= 1.04;
+          volMul *= 1.12;
+        }
       }
     }
 
@@ -563,6 +575,24 @@ export class TokenSim {
       driftPerSec -= 0.02 * heatRatio;
       lambdaMul *= Math.max(0.35, 1 - 0.55 * heatRatio);
       volMul *= Math.max(0.45, 1 - 0.35 * heatRatio);
+    }
+
+    if (this.phase !== 'MIGRATED' && this.phase !== 'DEAD') {
+      const migrationThresholdUsd = getMigrationThresholdUsd();
+      const progressToMigration = this.lastMcapUsd / Math.max(1, migrationThresholdUsd);
+      if (progressToMigration >= MIGRATION_APPROACH_FRICTION_START_PCT) {
+        const frictionProgress = clamp(
+          (progressToMigration - MIGRATION_APPROACH_FRICTION_START_PCT)
+          / Math.max(1e-6, 1 - MIGRATION_APPROACH_FRICTION_START_PCT),
+          0,
+          1
+        );
+        const friction = MIGRATION_APPROACH_FRICTION_MAX * frictionProgress;
+        driftPerSec -= friction * 0.035;
+        effectiveBuyBias = clamp(effectiveBuyBias - friction * 0.08, 0.18, 0.82);
+        lambdaMul *= Math.max(0.55, 1 - friction * 0.28);
+        volMul *= 1 + friction * 0.18;
+      }
     }
 
     const heatRatio = mcapHeat / (1 + mcapHeat);
@@ -1433,8 +1463,8 @@ export class TokenSim {
         tokenId: this.meta.id,
         tMs: candleTsMs,
         type: 'MIGRATION',
-        price: this.lastPriceUsd,
-        mcap: this.lastMcapUsd,
+        price: migrationThresholdUsd / SUPPLY,
+        mcap: migrationThresholdUsd,
       };
     }
 
