@@ -12,6 +12,8 @@ import {
   computeFlowStrength,
   decideMigrationOutcome,
   getMarketBehavior,
+  getMigrationShockDurationMs,
+  getMigrationThresholdUsd,
   rollNextMarketRegime,
   type TokenMarketBehavior,
   type TokenMarketRegime,
@@ -257,7 +259,6 @@ export type UserTradeOrderStatus =
   | UserTradeExecutionNotice;
 
 const FINAL_PROGRESS = 0.85;
-const MIGRATE_PROGRESS = 1.0;
 const CURVE_FEE_BPS = 100;
 const CURVE_TOKEN_EPS = 1e-6;
 const MIGRATED_LIQUIDITY_FLOOR_USD = 7_500;
@@ -451,6 +452,11 @@ export class TokenSim {
     let liquidityMul = phaseModel.liquidityMul * regimeBehavior.liquidityMul;
     let driftPerSec = regimeBehavior.driftPerSec + this.archetypeProfile.driftBiasPerSec;
     let effectiveBuyBias = clamp(regimeBehavior.buyBias + sessionProfile.buyBiasShift, 0.14, 0.86);
+
+    if (inMigrationShock) {
+      driftPerSec += this.rng.normal() * 0.022;
+      effectiveBuyBias = clamp(0.5 + this.rng.normal() * 0.14 + flowStrength * 0.03, 0.24, 0.76);
+    }
 
     lambdaMul *= this.archetypeProfile.lambdaMul;
     volMul *= this.archetypeProfile.volMul;
@@ -1165,12 +1171,13 @@ export class TokenSim {
       this.hasEnteredFinal = true;
     }
 
-    if ((this.bondingProgress >= MIGRATE_PROGRESS || this.curveRealToken <= CURVE_TOKEN_EPS) && !this.hasMigrated) {
+    const migrationThresholdUsd = getMigrationThresholdUsd();
+    if ((this.lastMcapUsd >= migrationThresholdUsd || this.curveRealToken <= CURVE_TOKEN_EPS) && !this.hasMigrated) {
       this.hasMigrated = true;
       this.phase = 'MIGRATED';
       this.preMigrationFlowStrength = this.getFlowStrength();
       this.migrationFreezeLeftMs = 2_000 + this.rng.next() * 2_000;
-      this.migrationShockLeftMs = 7_000 + this.rng.next() * 18_000;
+      this.migrationShockLeftMs = getMigrationShockDurationMs(this.rng);
       // Seed post-migration liquidity from curve reserves to avoid first-tick teleport.
       const handoffLiquidity = Math.max(5_000, (this.curveVirtualBase + this.curveRealBase) * 3);
       this.baseLiquidityUsd = Math.max(this.baseLiquidityUsd, handoffLiquidity);

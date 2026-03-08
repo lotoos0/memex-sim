@@ -17,6 +17,14 @@ export type MigrationOutcome =
   | 'VIOLENT_CHOP'
   | 'SELL_THE_NEWS';
 
+export const MIGRATION_TARGET_SOL = 228;
+export const SOL_PRICE_USD_REFERENCE = 150;
+export const MIGRATION_SHOCK_CANDLES_MIN = 8;
+export const MIGRATION_SHOCK_CANDLES_MAX = 20;
+export const MIGRATION_SHOCK_VOLATILITY_MULTIPLIER = 2.45;
+export const MIGRATION_SHOCK_WICKINESS_MULTIPLIER = 1.9;
+export const MIGRATION_SHOCK_CONTINUATION_PENALTY = 0.18;
+
 export interface TokenMarketBehavior {
   driftPerSec: number;
   buyBias: number;
@@ -29,6 +37,12 @@ export interface TokenMarketBehavior {
   devSignalMul: number;
   whaleChanceMul: number;
 }
+
+type MigrationOutcomeWeightSet = {
+  continuation: number;
+  chop: number;
+  bleed: number;
+};
 
 export interface TokenMarketTransitionContext {
   currentRegime: TokenMarketRegime;
@@ -53,6 +67,24 @@ const DEFAULT_TTL_RANGE_BY_REGIME: Record<TokenMarketRegime, [number, number]> =
   DEAD_BOUNCE: [4, 10],
   MIGRATION_SHOCK: [6, 18],
   POST_MIGRATION_DISCOVERY: [7, 24],
+};
+
+const MIGRATION_OUTCOME_WEIGHTS: Record<'weak' | 'average' | 'strong', MigrationOutcomeWeightSet> = {
+  weak: {
+    continuation: 0.1,
+    chop: 0.28,
+    bleed: 0.62,
+  },
+  average: {
+    continuation: 0.2,
+    chop: 0.52,
+    bleed: 0.28,
+  },
+  strong: {
+    continuation: 0.42,
+    chop: 0.38,
+    bleed: 0.2,
+  },
 };
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -181,16 +213,16 @@ export function getMarketBehavior(
       };
     case 'MIGRATION_SHOCK':
       return {
-        driftPerSec: strength * 0.016,
-        buyBias: clamp(0.5 + strength * 0.08, 0.28, 0.72),
-        volMul: 1.95,
-        lambdaMul: 2.05 * phaseBoost,
-        liquidityMul: 0.62,
-        tradeSizeMul: 1.3,
-        impactMul: 1.22,
-        tradeSigmaMul: 1.5,
-        devSignalMul: 1.25,
-        whaleChanceMul: 1.45,
+        driftPerSec: strength * 0.009,
+        buyBias: clamp(0.5 + strength * 0.04, 0.34, 0.66),
+        volMul: MIGRATION_SHOCK_VOLATILITY_MULTIPLIER,
+        lambdaMul: 2.3 * phaseBoost,
+        liquidityMul: 0.55,
+        tradeSizeMul: 1.38,
+        impactMul: 1.34,
+        tradeSigmaMul: MIGRATION_SHOCK_WICKINESS_MULTIPLIER,
+        devSignalMul: 1.35,
+        whaleChanceMul: 1.6,
       };
     case 'POST_MIGRATION_DISCOVERY':
       return {
@@ -272,15 +304,58 @@ export function decideMigrationOutcome(
     currentFlowStrength: number;
   }
 ): MigrationOutcome {
-  const continuationScore = input.qualityScore * 0.55 + Math.max(0, input.preMigrationStrength) * 0.25 + Math.max(0, input.currentFlowStrength) * 0.2;
-  const bleedScore = (1 - input.qualityScore) * 0.45 + Math.max(0, -input.preMigrationStrength) * 0.25 + Math.max(0, -input.currentFlowStrength) * 0.3;
-  const chopScore = Math.max(0.2, 1 - Math.abs(input.currentFlowStrength) * 0.65) * 0.8;
-  const total = continuationScore + bleedScore + chopScore;
+  const combinedStrength =
+    input.qualityScore * 0.45
+    + Math.max(0, input.preMigrationStrength) * 0.32
+    + Math.max(0, input.currentFlowStrength) * 0.23
+    - Math.max(0, -input.preMigrationStrength) * 0.18
+    - Math.max(0, -input.currentFlowStrength) * 0.12;
+
+  const band =
+    combinedStrength >= 0.68 ? 'strong' :
+    combinedStrength >= 0.4 ? 'average' :
+    'weak';
+
+  const base = MIGRATION_OUTCOME_WEIGHTS[band];
+  const continuationScore = Math.max(
+    0.02,
+    base.continuation
+    + (input.qualityScore - 0.5) * 0.12
+    + Math.max(0, input.preMigrationStrength - 0.2) * 0.18
+    + Math.max(0, input.currentFlowStrength - 0.15) * 0.1
+    - MIGRATION_SHOCK_CONTINUATION_PENALTY
+  );
+  const bleedScore = Math.max(
+    0.08,
+    base.bleed
+    + Math.max(0, 0.55 - input.qualityScore) * 0.18
+    + Math.max(0, -input.preMigrationStrength) * 0.22
+    + Math.max(0, -input.currentFlowStrength) * 0.14
+  );
+  const chopScore = Math.max(
+    0.12,
+    base.chop
+    + Math.max(0, 0.18 - Math.abs(input.currentFlowStrength)) * 0.2
+    + Math.max(0, 0.12 - Math.abs(input.preMigrationStrength)) * 0.12
+  );
+
+  const total = continuationScore + chopScore + bleedScore;
   const roll = rng.next() * total;
 
   if (roll < continuationScore) return 'CONTINUATION';
   if (roll < continuationScore + chopScore) return 'VIOLENT_CHOP';
   return 'SELL_THE_NEWS';
+}
+
+export function getMigrationThresholdUsd(): number {
+  return MIGRATION_TARGET_SOL * SOL_PRICE_USD_REFERENCE;
+}
+
+export function getMigrationShockDurationMs(rng: RNG): number {
+  const candles =
+    MIGRATION_SHOCK_CANDLES_MIN
+    + Math.floor(rng.next() * (MIGRATION_SHOCK_CANDLES_MAX - MIGRATION_SHOCK_CANDLES_MIN + 1));
+  return candles * 1000;
 }
 
 function pickMigratedRegime(rng: RNG, context: TokenMarketTransitionContext): TokenMarketRegime {
