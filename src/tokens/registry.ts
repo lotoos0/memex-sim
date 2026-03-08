@@ -1,14 +1,13 @@
 import { RNG } from '../engine/rng';
 import type { Candle } from '../engine/types';
-import { getTokenAvatarUrl } from '../lib/tokenAvatar';
-import { usePostStore } from '../store/postStore';
 import { useTokenStore } from '../store/tokenStore';
 import { generateToken, getFateTimeoutSimMs, getStartingMcapUsd } from './generator';
 import { TokenSim, type MarketMicroSnapshot, type UserTradeExecutionNotice, type UserTradeOrderStatus, type UserTradeQuote, type UserTradeSide, type UserTradeSubmitRequest, type UserTradeSubmitResult } from './tokenSim';
 import type { TokenPhase } from './types';
-import type { NarrativeEvent, NarrativePost, TokenNarrativeState } from '../narrative/narrativeTypes';
-import { applyNarrativeEvent, createTokenNarrativeState } from '../narrative/tokenNarrative';
 import { getSessionBucket } from '../market/session';
+import { publishRegistryFeed } from './registryFeedPublisher';
+import { RegistryNarrativeRelay } from './registryNarrative';
+import { RegistryExecutionRelay, type TradeExecutionCallback } from './registryExecutionRelay';
 
 const TICK_MS = 200;
 const FEED_PUBLISH_MS = 1000;
@@ -17,17 +16,14 @@ const MAX_NEW = 5;
 const MAX_FINAL = 5;
 const MAX_MIGRATED = 5;
 const INITIAL_TOKENS = 12;
-const MAX_ORDER_SNAPSHOTS = 4_000;
-
 export type ChartMetric = 'mcap' | 'price';
 export type ChartCallback = (candles: Candle[], lastValue: number) => void;
-export type TradeExecutionCallback = (execution: UserTradeExecutionNotice) => void;
 
 class TokenRegistry {
   private tokens = new Map<string, TokenSim>();
   private rng = new RNG(Date.now() & 0xffffffff);
-  private tradeOrders = new Map<string, UserTradeOrderStatus>();
-  private tradeExecutionSubscribers = new Set<TradeExecutionCallback>();
+  private executions = new RegistryExecutionRelay();
+  private narrative = new RegistryNarrativeRelay();
 
   private tickHandle: ReturnType<typeof setInterval> | null = null;
   private feedHandle: ReturnType<typeof setInterval> | null = null;
@@ -38,8 +34,6 @@ class TokenRegistry {
   private activeMetric: ChartMetric = 'mcap';
 
   private phaseByTokenId = new Map<string, TokenPhase>();
-  private lastProcessedTradeMsByToken = new Map<string, number>();
-  private narrativeByTokenId = new Map<string, TokenNarrativeState>();
 
   start(): void {
     if (this.tickHandle) return;
@@ -60,42 +54,13 @@ class TokenRegistry {
 
         const executions = sim.drainUserTradeExecutions();
         if (executions.length > 0) {
-          useTokenStore.getState().updateToken(id, sim.getRuntime());
-          const simNowMs = sim.getSimTimeMs();
-          for (let j = 0; j < executions.length; j++) {
-            const execution = executions[j]!;
-            this.tradeOrders.set(execution.orderId, execution);
-            this.pruneTradeOrders();
-            if (execution.status === 'FILLED') {
-              usePostStore.getState().addSystemPost(
-                id,
-                `You ${execution.side} ${fmtUsdCompact(execution.fill.filledUsd)} @ ${fmtPrice(execution.fill.avgPriceUsd)}`,
-                {
-                  kind: 'TRADE',
-                  tone: execution.side === 'BUY' ? 'buy' : 'sell',
-                  author: 'you',
-                  createdAtMs: simNowMs,
-                }
-              );
-              useTokenStore.getState().pushTokenEvents(id, [{
-                tokenId: id,
-                tMs: execution.fill.tsMs,
-                type: execution.side === 'BUY' ? 'USER_BUY' : 'USER_SELL',
-                price: execution.fill.priceAfterUsd,
-                mcap: execution.fill.mcapAfterUsd,
-                size: execution.fill.filledToken,
-              }]);
-            }
-            if (this.tradeExecutionSubscribers.size > 0) {
-              for (const cb of this.tradeExecutionSubscribers) cb(execution);
-            }
-          }
+          this.executions.process(id, sim, executions);
         }
 
         const prevPhase = this.phaseByTokenId.get(id);
         const nextPhase = sim.getPhase();
         if (prevPhase && prevPhase !== nextPhase) {
-          this.postPhaseChange(sim, prevPhase, nextPhase);
+          this.narrative.processPhaseChange(sim, nextPhase);
         }
         this.phaseByTokenId.set(id, nextPhase);
 
@@ -130,10 +95,9 @@ class TokenRegistry {
     if (this.spawnHandle) clearInterval(this.spawnHandle);
     this.tickHandle = this.feedHandle = this.spawnHandle = null;
     this.tokens.clear();
-    this.tradeOrders.clear();
+    this.executions.clear();
     this.phaseByTokenId.clear();
-    this.lastProcessedTradeMsByToken.clear();
-    this.narrativeByTokenId.clear();
+    this.narrative.clear();
   }
 
   setChartCallback(cb: ChartCallback | null): void {
@@ -168,34 +132,17 @@ class TokenRegistry {
 
     const result = sim.submitUserTrade(req);
     if (result.ok) {
-      this.tradeOrders.set(result.orderId, {
-        tokenId: result.tokenId,
-        orderId: result.orderId,
-        side: result.side,
-        status: 'PENDING',
-        amountIn: result.amountIn,
-        expectedOut: result.expectedOut,
-        minOut: result.minOut,
-        slippageBps: result.slippageBps,
-        submitMs: result.submitMs,
-        execMs: result.execMs,
-        prioritySol: result.prioritySol,
-        txCostSol: result.txCostSol,
-      });
-      this.pruneTradeOrders();
+      this.executions.onSubmitAccepted(result);
     }
     return result;
   }
 
   getTradeOrderStatus(orderId: string): UserTradeOrderStatus | null {
-    return this.tradeOrders.get(orderId) ?? null;
+    return this.executions.getOrderStatus(orderId);
   }
 
   subscribeTradeExecutions(cb: TradeExecutionCallback): () => void {
-    this.tradeExecutionSubscribers.add(cb);
-    return () => {
-      this.tradeExecutionSubscribers.delete(cb);
-    };
+    return this.executions.subscribe(cb);
   }
 
   private spawnBatch(count: number): void {
@@ -213,21 +160,11 @@ class TokenRegistry {
     const sim = new TokenSim(meta, startMcap, fateMsMs);
     this.tokens.set(meta.id, sim);
     this.phaseByTokenId.set(meta.id, sim.getPhase());
-    this.lastProcessedTradeMsByToken.set(meta.id, 0);
-    this.narrativeByTokenId.set(meta.id, createTokenNarrativeState(meta.id));
+    this.narrative.registerToken(meta.id);
 
     const runtime = sim.getRuntime();
     useTokenStore.getState().addToken(meta, runtime);
-
-    this.emitNarrative({
-      kind: 'TOKEN_LAUNCH',
-      tokenId: meta.id,
-      simNowMs: runtime.simTimeMs,
-      tokenName: meta.name,
-      tokenSymbol: meta.ticker,
-      priceUsd: runtime.lastPriceUsd,
-      mcapUsd: runtime.mcapUsd,
-    });
+    this.narrative.emitLaunch(sim);
   }
 
   private maybeSpawn(): void {
@@ -257,20 +194,9 @@ class TokenRegistry {
   }
 
   private publishFeed(): void {
-    const updates: Record<string, ReturnType<TokenSim['getRuntime']>> = {};
-    const marketUpdates: Record<string, MarketMicroSnapshot> = {};
-
-    for (const [id, sim] of this.tokens) {
-      const runtime = sim.getRuntime();
-      const market = sim.getMarketSnapshot();
-      updates[id] = runtime;
-      marketUpdates[id] = market;
-      this.processBigTradeNarrative(sim, market, runtime.simTimeMs);
-    }
-
-    const store = useTokenStore.getState();
-    store.batchUpdateTokens(updates);
-    store.batchUpdateTokenMarketSnapshots(marketUpdates);
+    publishRegistryFeed(this.tokens, (_tokenId, sim, market) => {
+      this.narrative.processMarketSnapshot(sim, market);
+    });
   }
 
   private updateMarketSessionBucket(): void {
@@ -283,112 +209,6 @@ class TokenRegistry {
     if (override) return override;
     return getSessionBucket(nowMs);
   }
-
-  private pruneTradeOrders(): void {
-    while (this.tradeOrders.size > MAX_ORDER_SNAPSHOTS) {
-      const firstKey = this.tradeOrders.keys().next().value;
-      if (typeof firstKey !== 'string') break;
-      this.tradeOrders.delete(firstKey);
-    }
-  }
-
-  private processBigTradeNarrative(
-    sim: TokenSim,
-    snapshot: MarketMicroSnapshot,
-    simNowMs: number
-  ): void {
-    const trades = snapshot.recentTrades ?? [];
-    if (trades.length === 0) return;
-
-    const tokenId = sim.meta.id;
-    const prevSeen = this.lastProcessedTradeMsByToken.get(tokenId) ?? 0;
-    let maxSeen = prevSeen;
-    let biggest: (typeof trades)[number] | null = null;
-    const threshold = bigTradeThresholdUsd(sim.getLastMcapUsd());
-
-    for (let i = 0; i < trades.length; i++) {
-      const tr = trades[i]!;
-      if (!Number.isFinite(tr.tMs)) continue;
-      if (tr.tMs > maxSeen) maxSeen = tr.tMs;
-      if (tr.tMs <= prevSeen) continue;
-      if (tr.notionalUsd < threshold) continue;
-      if (!biggest || tr.notionalUsd > biggest.notionalUsd) biggest = tr;
-    }
-
-    if (maxSeen > prevSeen) this.lastProcessedTradeMsByToken.set(tokenId, maxSeen);
-    if (!biggest) return;
-
-    this.emitNarrative({
-      kind: biggest.side === 'BUY' ? 'BIG_BUY' : 'BIG_SELL',
-      tokenId,
-      simNowMs,
-      tokenName: sim.meta.name,
-      tokenSymbol: sim.meta.ticker,
-      usd: biggest.notionalUsd,
-      priceUsd: biggest.priceUsd,
-      mcapUsd: biggest.mcapUsd,
-      impact: threshold > 0 ? biggest.notionalUsd / threshold : 1,
-    });
-  }
-
-  private postPhaseChange(sim: TokenSim, _prevPhase: TokenPhase, nextPhase: TokenPhase): void {
-    if (nextPhase !== 'MIGRATED' && nextPhase !== 'RUGGED' && nextPhase !== 'DEAD') return;
-    this.emitNarrative({
-      kind: nextPhase === 'MIGRATED' ? 'TOKEN_MIGRATION' : 'TOKEN_RUG',
-      tokenId: sim.meta.id,
-      simNowMs: sim.getSimTimeMs(),
-      tokenName: sim.meta.name,
-      tokenSymbol: sim.meta.ticker,
-      mcapUsd: sim.getLastMcapUsd(),
-    });
-  }
-
-  private emitNarrative(event: NarrativeEvent): void {
-    const existingState = this.narrativeByTokenId.get(event.tokenId) ?? createTokenNarrativeState(event.tokenId);
-    const out = applyNarrativeEvent(event, existingState);
-    this.narrativeByTokenId.set(event.tokenId, out.state);
-    if (out.posts.length === 0) return;
-    usePostStore.getState().appendPosts(event.tokenId, out.posts.map((post) => this.mapNarrativePost(post)));
-  }
-
-  private mapNarrativePost(post: NarrativePost) {
-    return {
-      id: post.id,
-      tokenId: post.tokenId,
-      kind: post.kind,
-      tone: post.tone,
-      author: post.authorHandle,
-      authorName: post.authorName,
-      authorHandle: post.authorHandle,
-      authorAvatar: getTokenAvatarUrl(`author:${post.authorId}`),
-      text: post.text,
-      createdAtMs: post.simNowMs,
-      simNowMs: post.simNowMs,
-      topic: post.topic,
-      importance: post.importance,
-      tags: post.tags,
-    };
-  }
-}
-
-function bigTradeThresholdUsd(mcapUsd: number): number {
-  const raw = mcapUsd * 0.002;
-  return Math.max(200, Math.min(1500, raw));
-}
-
-function fmtUsdCompact(v: number): string {
-  if (!Number.isFinite(v)) return '$0';
-  const a = Math.abs(v);
-  if (a >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
-  if (a >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
-  return `$${v.toFixed(0)}`;
-}
-
-function fmtPrice(v: number): string {
-  if (!Number.isFinite(v) || v <= 0) return '$0';
-  if (v >= 1) return `$${v.toFixed(4)}`;
-  if (v >= 0.01) return `$${v.toFixed(6)}`;
-  return `$${v.toExponential(3)}`;
 }
 
 export const registry = new TokenRegistry();
