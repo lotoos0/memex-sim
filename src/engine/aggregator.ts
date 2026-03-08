@@ -30,18 +30,9 @@ export class CandleAggregator {
       this.pushCandle(c);
       return { mode: 'new', candle: c };
     } else if (bucket > last.time) {
-      // Fill missing buckets with flat zero-volume candles to avoid chart gaps.
-      let prevClose = last.close;
-      for (let ts = last.time + this.tfSec; ts < bucket; ts += this.tfSec) {
-        this.pushCandle({
-          time: ts,
-          open: prevClose,
-          high: prevClose,
-          low: prevClose,
-          close: prevClose,
-          volume: 0,
-        });
-      }
+      // Sparse-candle contract: if no trade happened in skipped buckets, do not synthesize flat candles.
+      // The next candle appears only when a real trade hits a later bucket.
+      const prevClose = last.close;
       const c: Candle = { time: bucket, open: prevClose, high: price, low: price, close: price, volume: vol };
       c.high = Math.max(c.open, c.high, c.close);
       c.low = Math.min(c.open, c.low, c.close);
