@@ -14,6 +14,11 @@ import {
   getMarketBehavior,
   getMigrationShockDurationMs,
   getMigrationThresholdUsd,
+  MICROBUST_CANDLES_MAX,
+  MICROBUST_CANDLES_MIN,
+  MICROBUST_CONTINUATION_DECAY,
+  MICROBUST_RETRACE_CHANCE,
+  MICROBUST_RETRACE_STRENGTH_PCT,
   rollNextMarketRegime,
   type TokenMarketBehavior,
   type TokenMarketRegime,
@@ -78,6 +83,11 @@ type HolderWalletProfile = {
   avgSellUsd: number;
   realizedPnlUsd: number;
   openCostBasisUsd: number;
+};
+
+type MicroburstState = {
+  stepsUsd: number[];
+  cooldownMs: number;
 };
 
 export type SimTapeTrade = {
@@ -352,6 +362,7 @@ export class TokenSim {
   private tape: SimTapeTrade[] = [];
   private walletSeq = 0;
   private readonly baseQualityScore: number;
+  private microburst: MicroburstState | null = null;
 
   // Rolling 5-min stats window (in simMs)
   private statWindow: StatBucket[] = [];
@@ -542,6 +553,7 @@ export class TokenSim {
       regimeBehavior.devSignalMul
     );
     const prevPriceUsd = this.lastPriceUsd;
+    const burstDirectionalUsd = this.consumeMicroburstDirectionalUsd(realDtSec);
 
     // Minimal warm-up only for launch tick (avoid scripted behavior).
     if (isLaunchTick) {
@@ -558,7 +570,7 @@ export class TokenSim {
       attention: this.attention,
       baseLambda: this.baseLambda * lambdaMul * (isLaunchTick ? 0.15 : 1),
       baseTradeSizeUsd: this.baseTradeSizeUsd * tradeSizeMul,
-      tradeSigma: this.tradeSigma * regimeBehavior.tradeSigmaMul,
+      tradeSigma: this.tradeSigma * regimeBehavior.tradeSigmaMul * regimeBehavior.wickinessMultiplier,
       driftPerSec,
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
       buyBias: effectiveBuyBias,
@@ -569,13 +581,43 @@ export class TokenSim {
       externalFlow: devFlow?.externalFlow,
     });
 
+    let targetBuyUsd = market.buyUsd;
+    let targetSellUsd = market.sellUsd;
+    let expectedNextPriceUsd = market.nextPriceUsd;
+
+    if (burstDirectionalUsd > 0) {
+      targetBuyUsd += burstDirectionalUsd;
+      expectedNextPriceUsd = this.adjustExpectedPriceForDirectionalUsd(
+        expectedNextPriceUsd,
+        burstDirectionalUsd,
+        liquidityUsd,
+        this.impactK * impactMul
+      );
+    } else if (burstDirectionalUsd < 0) {
+      targetSellUsd += Math.abs(burstDirectionalUsd);
+      expectedNextPriceUsd = this.adjustExpectedPriceForDirectionalUsd(
+        expectedNextPriceUsd,
+        burstDirectionalUsd,
+        liquidityUsd,
+        this.impactK * impactMul
+      );
+    }
+
+    const guardedFlow = this.guardCandleDisplacement({
+      targetBuyUsd,
+      targetSellUsd,
+      expectedNextPriceUsd,
+      previousPriceUsd: prevPriceUsd,
+      regimeBehavior,
+    });
+
     if (!inMigrationFreeze) {
       this.executeMarketFlowAsTape({
         candleTsMs,
         realDtSec,
-        targetBuyUsd: market.buyUsd,
-        targetSellUsd: market.sellUsd,
-        expectedNextPriceUsd: market.nextPriceUsd,
+        targetBuyUsd: guardedFlow.targetBuyUsd,
+        targetSellUsd: guardedFlow.targetSellUsd,
+        expectedNextPriceUsd: guardedFlow.expectedNextPriceUsd,
         previousPriceUsd: prevPriceUsd,
       });
     } else {
@@ -685,6 +727,132 @@ export class TokenSim {
     }
 
     if (executedTrades === 0) return;
+  }
+
+  private guardCandleDisplacement(input: {
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    expectedNextPriceUsd: number;
+    previousPriceUsd: number;
+    regimeBehavior: TokenMarketBehavior;
+  }): {
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    expectedNextPriceUsd: number;
+  } {
+    const previousPriceUsd = Math.max(1e-12, input.previousPriceUsd);
+    const expectedNextPriceUsd = Math.max(1e-12, input.expectedNextPriceUsd);
+    const desiredMovePct = (expectedNextPriceUsd - previousPriceUsd) / previousPriceUsd;
+    const maxBodyMovePct = input.regimeBehavior.maxBodyMovePct;
+    if (!Number.isFinite(desiredMovePct) || Math.abs(desiredMovePct) <= maxBodyMovePct) {
+      return {
+        targetBuyUsd: input.targetBuyUsd,
+        targetSellUsd: input.targetSellUsd,
+        expectedNextPriceUsd: input.expectedNextPriceUsd,
+      };
+    }
+
+    const totalUsd = input.targetBuyUsd + input.targetSellUsd;
+    const netUsd = input.targetBuyUsd - input.targetSellUsd;
+    if (totalUsd <= 0 || Math.abs(netUsd) <= 1e-6) {
+      return {
+        targetBuyUsd: input.targetBuyUsd,
+        targetSellUsd: input.targetSellUsd,
+        expectedNextPriceUsd: input.expectedNextPriceUsd,
+      };
+    }
+
+    const allowedMovePct = Math.sign(desiredMovePct)
+      * maxBodyMovePct
+      * (0.9 + this.rng.next() * 0.1);
+    const actualAbsMove = Math.abs(desiredMovePct);
+    const scale = clamp(Math.abs(allowedMovePct) / Math.max(1e-6, actualAbsMove), 0.08, 1);
+    const newNetUsd = netUsd * scale;
+    const excessDirectionalUsd = Math.max(0, Math.abs(netUsd) - Math.abs(newNetUsd));
+    const newBuyUsd = Math.max(0, (totalUsd + newNetUsd) * 0.5);
+    const newSellUsd = Math.max(0, (totalUsd - newNetUsd) * 0.5);
+
+    if (excessDirectionalUsd > this.baseTradeSizeUsd * 0.75) {
+      this.queueMicroburst(Math.sign(netUsd) >= 0 ? 'BUY' : 'SELL', excessDirectionalUsd);
+    }
+
+    return {
+      targetBuyUsd: newBuyUsd,
+      targetSellUsd: newSellUsd,
+      expectedNextPriceUsd: previousPriceUsd * (1 + allowedMovePct),
+    };
+  }
+
+  private queueMicroburst(side: UserTradeSide, directionalUsd: number): void {
+    if (!Number.isFinite(directionalUsd) || directionalUsd <= 0) return;
+
+    const candleCount =
+      MICROBUST_CANDLES_MIN
+      + Math.floor(this.rng.next() * (MICROBUST_CANDLES_MAX - MICROBUST_CANDLES_MIN + 1));
+    const weights: number[] = [];
+    let sum = 0;
+    for (let i = 0; i < candleCount; i++) {
+      const frontLoadedBase =
+        i === 0 ? 0.34 :
+        i === 1 ? 0.24 :
+        i === 2 ? 0.18 :
+        0.11;
+      const decay = Math.pow(MICROBUST_CONTINUATION_DECAY, i);
+      const weight = Math.max(0.04, frontLoadedBase * decay * (0.92 + this.rng.next() * 0.24));
+      weights.push(weight);
+      sum += weight;
+    }
+
+    const sign = side === 'BUY' ? 1 : -1;
+    const stepsUsd: number[] = [];
+    for (let i = 0; i < weights.length; i++) {
+      let step = directionalUsd * (weights[i]! / Math.max(1e-6, sum));
+      if (i > 0 && this.rng.next() < MICROBUST_RETRACE_CHANCE) {
+        step *= -MICROBUST_RETRACE_STRENGTH_PCT * (0.75 + this.rng.next() * 0.6);
+      }
+      stepsUsd.push(step * sign);
+    }
+
+    if (this.microburst) {
+      this.microburst.stepsUsd.push(...stepsUsd);
+      return;
+    }
+
+    this.microburst = {
+      stepsUsd,
+      cooldownMs: 1_000,
+    };
+  }
+
+  private consumeMicroburstDirectionalUsd(realDtSec: number): number {
+    if (!this.microburst || this.microburst.stepsUsd.length === 0) return 0;
+
+    this.microburst.cooldownMs -= realDtSec * 1000;
+    if (this.microburst.cooldownMs > 0) return 0;
+
+    let directionalUsd = 0;
+    while (this.microburst && this.microburst.cooldownMs <= 0 && this.microburst.stepsUsd.length > 0) {
+      directionalUsd += this.microburst.stepsUsd.shift() ?? 0;
+      this.microburst.cooldownMs += 1_000;
+    }
+
+    if (this.microburst && this.microburst.stepsUsd.length === 0) {
+      this.microburst = null;
+    }
+
+    return directionalUsd;
+  }
+
+  private adjustExpectedPriceForDirectionalUsd(
+    expectedNextPriceUsd: number,
+    directionalUsd: number,
+    liquidityUsd: number,
+    impactK: number
+  ): number {
+    const price = Math.max(1e-12, expectedNextPriceUsd);
+    const liq = Math.max(1, liquidityUsd);
+    const dLog = (directionalUsd / liq) * impactK * 0.55;
+    return Math.max(1e-12, price * Math.exp(dLog));
   }
 
   private splitNotional(totalUsd: number, parts: number): number[] {

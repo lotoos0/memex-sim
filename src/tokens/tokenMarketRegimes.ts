@@ -24,6 +24,11 @@ export const MIGRATION_SHOCK_CANDLES_MAX = 20;
 export const MIGRATION_SHOCK_VOLATILITY_MULTIPLIER = 2.45;
 export const MIGRATION_SHOCK_WICKINESS_MULTIPLIER = 1.9;
 export const MIGRATION_SHOCK_CONTINUATION_PENALTY = 0.18;
+export const MICROBUST_CANDLES_MIN = 3;
+export const MICROBUST_CANDLES_MAX = 6;
+export const MICROBUST_RETRACE_CHANCE = 0.35;
+export const MICROBUST_RETRACE_STRENGTH_PCT = 0.18;
+export const MICROBUST_CONTINUATION_DECAY = 0.82;
 
 export interface TokenMarketBehavior {
   driftPerSec: number;
@@ -34,8 +39,10 @@ export interface TokenMarketBehavior {
   tradeSizeMul: number;
   impactMul: number;
   tradeSigmaMul: number;
+  wickinessMultiplier: number;
   devSignalMul: number;
   whaleChanceMul: number;
+  maxBodyMovePct: number;
 }
 
 type MigrationOutcomeWeightSet = {
@@ -143,8 +150,10 @@ export function getMarketBehavior(
         tradeSizeMul: 1.22,
         impactMul: 1.16,
         tradeSigmaMul: 1.35,
+        wickinessMultiplier: 1.35,
         devSignalMul: 1.1,
         whaleChanceMul: 1.05,
+        maxBodyMovePct: 0.45,
       };
     case 'FIRST_PUMP':
       return {
@@ -156,8 +165,10 @@ export function getMarketBehavior(
         tradeSizeMul: 1.12,
         impactMul: 1.08,
         tradeSigmaMul: 1.08,
+        wickinessMultiplier: 1.15,
         devSignalMul: 1.18,
         whaleChanceMul: 1.12,
+        maxBodyMovePct: 0.35,
       };
     case 'CHOP':
       return {
@@ -169,8 +180,10 @@ export function getMarketBehavior(
         tradeSizeMul: 0.96,
         impactMul: 0.92,
         tradeSigmaMul: 1.18,
+        wickinessMultiplier: 1.4,
         devSignalMul: 0.92,
         whaleChanceMul: 0.9,
+        maxBodyMovePct: 0.12,
       };
     case 'GRIND_UP':
       return {
@@ -182,8 +195,10 @@ export function getMarketBehavior(
         tradeSizeMul: 1.02,
         impactMul: 0.82,
         tradeSigmaMul: 0.8,
+        wickinessMultiplier: 1.1,
         devSignalMul: 0.95,
         whaleChanceMul: 0.86,
+        maxBodyMovePct: 0.18,
       };
     case 'BLEED_OUT':
       return {
@@ -195,8 +210,10 @@ export function getMarketBehavior(
         tradeSizeMul: 0.92,
         impactMul: 0.94,
         tradeSigmaMul: 0.86,
+        wickinessMultiplier: 1.2,
         devSignalMul: 0.72,
         whaleChanceMul: 0.95,
+        maxBodyMovePct: 0.16,
       };
     case 'DEAD_BOUNCE':
       return {
@@ -208,8 +225,10 @@ export function getMarketBehavior(
         tradeSizeMul: 0.84,
         impactMul: 1.04,
         tradeSigmaMul: 0.95,
+        wickinessMultiplier: 1.1,
         devSignalMul: 0.35,
         whaleChanceMul: 0.45,
+        maxBodyMovePct: 0.14,
       };
     case 'MIGRATION_SHOCK':
       return {
@@ -221,8 +240,10 @@ export function getMarketBehavior(
         tradeSizeMul: 1.38,
         impactMul: 1.34,
         tradeSigmaMul: MIGRATION_SHOCK_WICKINESS_MULTIPLIER,
+        wickinessMultiplier: 1.75,
         devSignalMul: 1.35,
         whaleChanceMul: 1.6,
+        maxBodyMovePct: 0.28,
       };
     case 'POST_MIGRATION_DISCOVERY':
       return {
@@ -234,8 +255,10 @@ export function getMarketBehavior(
         tradeSizeMul: 1.06,
         impactMul: 0.88,
         tradeSigmaMul: 0.92,
+        wickinessMultiplier: 1.3,
         devSignalMul: 1.04,
         whaleChanceMul: 1.05,
+        maxBodyMovePct: 0.2,
       };
   }
 }
