@@ -157,25 +157,25 @@ export function getMarketBehavior(
 ): TokenMarketBehavior {
   const strength = context.flowStrength;
   const quality = context.qualityScore;
-  const phaseBoost = context.phase === 'FINAL' ? 1.08 : context.phase === 'MIGRATED' ? 0.96 : 1;
+  const phaseBoost = context.phase === 'FINAL' ? 0.94 : context.phase === 'MIGRATED' ? 0.96 : 1;
   const discoveryTailwind = clamp(context.changePct / 220, -0.25, 0.25);
 
   switch (regime) {
     case 'LAUNCH_CHAOS':
       return {
-        driftPerSec: 0.004 + strength * 0.012,
-        buyBias: clamp(0.5 + strength * 0.12 + quality * 0.04, 0.28, 0.72),
-        volMul: 1.45,
-        lambdaMul: 1.5 * phaseBoost,
+        driftPerSec: 0.0015 + strength * 0.008,
+        buyBias: clamp(0.47 + strength * 0.08 + quality * 0.03, 0.26, 0.67),
+        volMul: 1.28,
+        lambdaMul: 1.24 * phaseBoost,
         liquidityMul: 0.92,
-        tradeSizeMul: 1.22,
-        impactMul: 1.16,
-        maxNetImpactPctPerSec: 0.55,
-        regimeImpactMultiplier: 1.08,
-        tradeSigmaMul: 1.35,
+        tradeSizeMul: 1.06,
+        impactMul: 1.01,
+        maxNetImpactPctPerSec: 0.46,
+        regimeImpactMultiplier: 0.98,
+        tradeSigmaMul: 1.22,
         wickinessMultiplier: 1.35,
         devSignalMul: 1.1,
-        whaleChanceMul: 1.05,
+        whaleChanceMul: 0.96,
         maxBodyMovePct: 0.45,
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
@@ -185,19 +185,19 @@ export function getMarketBehavior(
       };
     case 'FIRST_PUMP':
       return {
-        driftPerSec: 0.022 + strength * 0.018 + quality * 0.008,
-        buyBias: clamp(0.61 + strength * 0.1 + quality * 0.05, 0.46, 0.86),
-        volMul: 1.1,
-        lambdaMul: 1.45 * phaseBoost,
+        driftPerSec: 0.012 + strength * 0.011 + quality * 0.004,
+        buyBias: clamp(0.56 + strength * 0.065 + quality * 0.035, 0.42, 0.77),
+        volMul: 0.94,
+        lambdaMul: 1.18 * phaseBoost,
         liquidityMul: 0.98,
-        tradeSizeMul: 1.12,
-        impactMul: 1.08,
-        maxNetImpactPctPerSec: 0.42,
-        regimeImpactMultiplier: 1.04,
-        tradeSigmaMul: 1.08,
+        tradeSizeMul: 1.0,
+        impactMul: 0.97,
+        maxNetImpactPctPerSec: 0.34,
+        regimeImpactMultiplier: 0.95,
+        tradeSigmaMul: 0.98,
         wickinessMultiplier: 1.15,
-        devSignalMul: 1.18,
-        whaleChanceMul: 1.12,
+        devSignalMul: 1.08,
+        whaleChanceMul: 0.98,
         maxBodyMovePct: 0.35,
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
@@ -207,19 +207,19 @@ export function getMarketBehavior(
       };
     case 'CHOP':
       return {
-        driftPerSec: strength * 0.004 + discoveryTailwind * 0.008,
-        buyBias: clamp(0.5 + strength * 0.05, 0.4, 0.6),
-        volMul: 0.92,
-        lambdaMul: 1.0 * phaseBoost,
-        liquidityMul: 1.05,
-        tradeSizeMul: 0.96,
-        impactMul: 0.92,
+        driftPerSec: strength * 0.002 + discoveryTailwind * 0.006,
+        buyBias: clamp(0.49 + strength * 0.035, 0.38, 0.59),
+        volMul: 0.88,
+        lambdaMul: 0.96 * phaseBoost,
+        liquidityMul: 1.08,
+        tradeSizeMul: 0.92,
+        impactMul: 0.88,
         maxNetImpactPctPerSec: 0.12,
-        regimeImpactMultiplier: 0.98,
-        tradeSigmaMul: 1.18,
+        regimeImpactMultiplier: 0.94,
+        tradeSigmaMul: 1.12,
         wickinessMultiplier: 1.4,
-        devSignalMul: 0.92,
-        whaleChanceMul: 0.9,
+        devSignalMul: 0.84,
+        whaleChanceMul: 0.84,
         maxBodyMovePct: 0.12,
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
@@ -229,19 +229,19 @@ export function getMarketBehavior(
       };
     case 'GRIND_UP':
       return {
-        driftPerSec: 0.012 + quality * 0.01 + Math.max(0, strength) * 0.014,
-        buyBias: clamp(0.56 + quality * 0.08 + strength * 0.06, 0.46, 0.8),
-        volMul: 0.74,
-        lambdaMul: 1.08 * phaseBoost,
-        liquidityMul: 1.18,
-        tradeSizeMul: 1.02,
-        impactMul: 0.82,
-        maxNetImpactPctPerSec: 0.18,
-        regimeImpactMultiplier: 0.96,
-        tradeSigmaMul: 0.8,
+        driftPerSec: 0.007 + quality * 0.006 + Math.max(0, strength) * 0.008,
+        buyBias: clamp(0.525 + quality * 0.055 + strength * 0.045, 0.44, 0.72),
+        volMul: 0.68,
+        lambdaMul: 0.94 * phaseBoost,
+        liquidityMul: 1.16,
+        tradeSizeMul: 0.96,
+        impactMul: 0.74,
+        maxNetImpactPctPerSec: 0.15,
+        regimeImpactMultiplier: 0.9,
+        tradeSigmaMul: 0.74,
         wickinessMultiplier: 1.1,
-        devSignalMul: 0.95,
-        whaleChanceMul: 0.86,
+        devSignalMul: 0.86,
+        whaleChanceMul: 0.78,
         maxBodyMovePct: 0.18,
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
@@ -251,19 +251,19 @@ export function getMarketBehavior(
       };
     case 'BLEED_OUT':
       return {
-        driftPerSec: -0.01 - Math.max(0, -strength) * 0.018 - (1 - quality) * 0.008,
-        buyBias: clamp(0.43 + strength * 0.05 - (1 - quality) * 0.08, 0.18, 0.54),
-        volMul: 0.82,
-        lambdaMul: 0.88 * phaseBoost,
-        liquidityMul: 0.9,
-        tradeSizeMul: 0.92,
-        impactMul: 0.94,
+        driftPerSec: -0.015 - Math.max(0, -strength) * 0.022 - (1 - quality) * 0.012,
+        buyBias: clamp(0.39 + strength * 0.04 - (1 - quality) * 0.11, 0.14, 0.5),
+        volMul: 0.78,
+        lambdaMul: 0.8 * phaseBoost,
+        liquidityMul: 0.86,
+        tradeSizeMul: 0.88,
+        impactMul: 0.88,
         maxNetImpactPctPerSec: 0.16,
-        regimeImpactMultiplier: 1.02,
-        tradeSigmaMul: 0.86,
+        regimeImpactMultiplier: 0.96,
+        tradeSigmaMul: 0.8,
         wickinessMultiplier: 1.2,
-        devSignalMul: 0.72,
-        whaleChanceMul: 0.95,
+        devSignalMul: 0.62,
+        whaleChanceMul: 0.88,
         maxBodyMovePct: 0.16,
         postMigrationRetestChance: 0,
         postMigrationRejectionChance: 0,
@@ -357,39 +357,50 @@ export function rollNextMarketRegime(
     return withTtl(rng, migratedRegime, context.sessionProfile);
   }
 
-  if (context.simTimeMs < 70_000) {
-    const earlyRegime = context.flowStrength > 0.18 || context.changePct > 30 ? 'FIRST_PUMP' : 'LAUNCH_CHAOS';
-    return withTtl(rng, earlyRegime, context.sessionProfile);
+  if (context.simTimeMs < 85_000) {
+    if (context.flowStrength > 0.34 && context.changePct > 55 && context.qualityScore > 0.56) {
+      return withTtl(rng, 'FIRST_PUMP', context.sessionProfile);
+    }
+    if ((1 - context.qualityScore) * 0.5 + Math.max(0, -context.flowStrength) > 0.42) {
+      return withTtl(rng, 'BLEED_OUT', context.sessionProfile);
+    }
+    return withTtl(rng, context.simTimeMs < 32_000 ? 'LAUNCH_CHAOS' : 'CHOP', context.sessionProfile);
   }
 
   const breakoutBias = context.flowStrength + context.qualityScore * 0.55;
   const decayBias = (1 - context.qualityScore) * 0.55 + Math.max(0, -context.flowStrength);
-  const fakeout = context.sessionProfile.fakeoutChancePerSec * clamp(context.sessionProfile.tempoMul, 0.7, 1.6) * 18;
+  const fakeout = context.sessionProfile.fakeoutChancePerSec * clamp(context.sessionProfile.tempoMul, 0.7, 1.6) * 24;
   const current = context.currentRegime;
 
   if (current === 'GRIND_UP' || current === 'FIRST_PUMP') {
-    if (rng.next() < fakeout) return withTtl(rng, rng.next() < 0.55 ? 'CHOP' : 'BLEED_OUT', context.sessionProfile);
-    if (breakoutBias > 0.62) return withTtl(rng, 'GRIND_UP', context.sessionProfile);
-    if (decayBias > 0.55) return withTtl(rng, 'BLEED_OUT', context.sessionProfile);
+    if (rng.next() < fakeout) return withTtl(rng, rng.next() < 0.42 ? 'CHOP' : 'BLEED_OUT', context.sessionProfile);
+    if (breakoutBias > 0.82 && context.qualityScore > 0.62 && context.flowStrength > 0.18) {
+      return withTtl(rng, 'GRIND_UP', context.sessionProfile);
+    }
+    if (decayBias > 0.48 || context.flowStrength < -0.08) return withTtl(rng, 'BLEED_OUT', context.sessionProfile);
     return withTtl(rng, 'CHOP', context.sessionProfile);
   }
 
   if (current === 'BLEED_OUT') {
-    if (context.flowStrength > 0.2 && context.qualityScore > 0.55) {
-      return withTtl(rng, rng.next() < 0.45 ? 'CHOP' : 'FIRST_PUMP', context.sessionProfile);
+    if (context.flowStrength > 0.32 && context.qualityScore > 0.7 && rng.next() < 0.22) {
+      return withTtl(rng, 'CHOP', context.sessionProfile);
     }
     return withTtl(rng, 'BLEED_OUT', context.sessionProfile);
   }
 
   if (current === 'CHOP') {
-    if (breakoutBias > 0.72) return withTtl(rng, rng.next() < 0.6 ? 'FIRST_PUMP' : 'GRIND_UP', context.sessionProfile);
-    if (decayBias > 0.62) return withTtl(rng, 'BLEED_OUT', context.sessionProfile);
+    if (breakoutBias > 0.9 && context.qualityScore > 0.64 && context.flowStrength > 0.22) {
+      return withTtl(rng, rng.next() < 0.78 ? 'FIRST_PUMP' : 'GRIND_UP', context.sessionProfile);
+    }
+    if (decayBias > 0.52 || context.flowStrength < -0.12) return withTtl(rng, 'BLEED_OUT', context.sessionProfile);
     return withTtl(rng, 'CHOP', context.sessionProfile);
   }
 
   if (current === 'LAUNCH_CHAOS') {
-    if (context.flowStrength > 0.24 || context.changePct > 45) return withTtl(rng, 'FIRST_PUMP', context.sessionProfile);
-    if (decayBias > 0.52) return withTtl(rng, 'BLEED_OUT', context.sessionProfile);
+    if (context.flowStrength > 0.36 && context.changePct > 58 && context.qualityScore > 0.58) {
+      return withTtl(rng, 'FIRST_PUMP', context.sessionProfile);
+    }
+    if (decayBias > 0.46 || context.flowStrength < -0.06) return withTtl(rng, 'BLEED_OUT', context.sessionProfile);
     return withTtl(rng, 'CHOP', context.sessionProfile);
   }
 

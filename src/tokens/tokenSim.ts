@@ -464,10 +464,10 @@ export class TokenSim {
     const inMigrationFreeze = this.migrationFreezeLeftMs > 0;
 
     if (this.marketRegime === 'FIRST_PUMP' || this.marketRegime === 'MIGRATION_SHOCK') {
-      this.attention = Math.min(2.8, this.attention + 0.04 * realDtSec);
+      this.attention = Math.min(2.6, this.attention + 0.026 * realDtSec);
     }
     if (this.marketRegime === 'BLEED_OUT') {
-      this.attention = Math.min(2.8, this.attention + 0.01 * realDtSec);
+      this.attention = Math.max(0.1, this.attention - 0.018 * realDtSec);
     }
 
     let lambdaMul = phaseModel.lambdaMul * regimeBehavior.lambdaMul;
@@ -592,6 +592,26 @@ export class TokenSim {
         effectiveBuyBias = clamp(effectiveBuyBias - friction * 0.08, 0.18, 0.82);
         lambdaMul *= Math.max(0.55, 1 - friction * 0.28);
         volMul *= 1 + friction * 0.18;
+      }
+
+      if (this.phase === 'FINAL') {
+        const finalStretchPressure = clamp((progressToMigration - 0.72) / 0.28, 0, 1);
+        if (finalStretchPressure > 0) {
+          const quality = this.getDynamicQualityScore(flowStrength);
+          const stallBias = clamp(
+            (1 - quality) * 0.72 + Math.max(0, 0.16 - flowStrength) * 1.15,
+            0,
+            1.25
+          );
+          driftPerSec -= finalStretchPressure * stallBias * 0.032;
+          effectiveBuyBias = clamp(
+            effectiveBuyBias - finalStretchPressure * stallBias * 0.1,
+            0.16,
+            0.78
+          );
+          lambdaMul *= Math.max(0.42, 1 - finalStretchPressure * stallBias * 0.26);
+          volMul *= 1 + finalStretchPressure * stallBias * 0.14;
+        }
       }
     }
 
@@ -1220,17 +1240,17 @@ export class TokenSim {
     }
     if (this.phase === 'FINAL') {
       return {
-        liquidityMul: 2.1,
-        lambdaMul: 1.0,
-        volMul: 0.9,
-        attentionDecayPerSec: 0.022,
+        liquidityMul: 1.8,
+        lambdaMul: 0.82,
+        volMul: 0.8,
+        attentionDecayPerSec: 0.03,
       };
     }
     return {
       liquidityMul: 1.0,
-      lambdaMul: 1.35,
-      volMul: 1.2,
-      attentionDecayPerSec: 0.016,
+      lambdaMul: 1.12,
+      volMul: 1.0,
+      attentionDecayPerSec: 0.021,
     };
   }
 
@@ -2111,15 +2131,15 @@ export class TokenSim {
   }
 
   private getDynamicQualityScore(flowStrength = this.getFlowStrength()): number {
-    const finalBoost = this.hasEnteredFinal ? 0.06 : 0;
+    const finalBoost = this.hasEnteredFinal ? 0.03 : 0;
     const migrationBoost = this.phase === 'MIGRATED' ? 0.04 : 0;
-    const heatPenalty = this.getMcapHeat() * 0.05;
+    const heatPenalty = this.getMcapHeat() * 0.07;
     return clamp(
       this.baseQualityScore
       + finalBoost
       + migrationBoost
-      + Math.max(0, this.preMigrationFlowStrength) * 0.08
-      + flowStrength * 0.12
+      + Math.max(0, this.preMigrationFlowStrength) * 0.05
+      + flowStrength * 0.08
       - heatPenalty,
       0.03,
       0.97
@@ -2166,12 +2186,12 @@ export class TokenSim {
   }
 
   private getFlowPowerMul(): number {
-    if (this.meta.fate === 'QUICK_RUG') return 1.35;
+    if (this.meta.fate === 'QUICK_RUG') return 1.12;
 
     const ramp = 0.35 + 0.65 * clamp(this.simTimeMs / FLOW_WARMUP_SIM_MS, 0, 1);
-    if (this.meta.fate === 'LONG_RUNNER') return 0.82 * ramp;
-    if (this.meta.fate === 'NORMAL') return 0.68 * ramp;
-    return 0.55 * ramp;
+    if (this.meta.fate === 'LONG_RUNNER') return 0.74 * ramp;
+    if (this.meta.fate === 'NORMAL') return 0.54 * ramp;
+    return 0.4 * ramp;
   }
 
   private getDevFlowPowerMul(): number {
