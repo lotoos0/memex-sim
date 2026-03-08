@@ -4,9 +4,34 @@ import type { TokenMeta, TokenRuntime, TokenPhase } from './types';
 import {
   SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER, SOL_PRICE_USD,
 } from './types';
-import { stepMarket, type FlowRegime } from './marketModel';
+import { stepMarket } from './marketModel';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
 import { SESSION_SIM_PROFILE, getSessionBucket, type SessionBucket, type SessionSimProfile } from '../market/session';
+import {
+  HIGH_LIQUIDITY_DAMPING,
+  IMPACT_SATURATION_FLOOR_USD,
+  LOW_LIQUIDITY_BOOST,
+  MIGRATION_APPROACH_FRICTION_MAX,
+  MIGRATION_APPROACH_FRICTION_START_PCT,
+  MIN_MIGRATION_AGE_SEC,
+  MIN_MIGRATION_HOLDERS,
+  MIN_MIGRATION_SUSTAIN_CANDLES,
+  MIN_MIGRATION_TX_60S,
+  computeBaseQualityScore,
+  computeFlowStrength,
+  decideMigrationOutcome,
+  getMarketBehavior,
+  getMigrationShockDurationMs,
+  getMigrationThresholdUsd,
+  MICROBUST_CANDLES_MAX,
+  MICROBUST_CANDLES_MIN,
+  MICROBUST_CONTINUATION_DECAY,
+  MICROBUST_RETRACE_CHANCE,
+  MICROBUST_RETRACE_STRENGTH_PCT,
+  rollNextMarketRegime,
+  type TokenMarketBehavior,
+  type TokenMarketRegime,
+} from './tokenMarketRegimes';
 
 interface StatBucket {
   simMs: number;
@@ -33,8 +58,6 @@ type ArchetypeProfile = {
   initialRealTokenRatioMax: number;
   virtualTokenLiquidityMulMin: number;
   virtualTokenLiquidityMulMax: number;
-  migrationChaosChance: number;
-  deathSpiralChance: number;
 };
 
 type CurveSwapDebug = {
@@ -69,6 +92,11 @@ type HolderWalletProfile = {
   avgSellUsd: number;
   realizedPnlUsd: number;
   openCostBasisUsd: number;
+};
+
+type MicroburstState = {
+  stepsUsd: number[];
+  cooldownMs: number;
 };
 
 export type SimTapeTrade = {
@@ -250,10 +278,8 @@ export type UserTradeOrderStatus =
   | UserTradeExecutionNotice;
 
 const FINAL_PROGRESS = 0.85;
-const MIGRATE_PROGRESS = 1.0;
 const CURVE_FEE_BPS = 100;
 const CURVE_TOKEN_EPS = 1e-6;
-const POST_MIGRATION_WARMUP_MS = 1_500;
 const MIGRATED_LIQUIDITY_FLOOR_USD = 7_500;
 const MIN_USER_LATENCY_MS = 80;
 const MAX_USER_LATENCY_MS = 320;
@@ -306,8 +332,8 @@ export class TokenSim {
   private ruggedAtSimMs: number | null = null;
 
   // Microstructure internals (not part of external contracts)
-  private regime: FlowRegime = 'PAUSE';
-  private regimeTtlSec = 0;
+  private marketRegime: TokenMarketRegime = 'LAUNCH_CHAOS';
+  private marketRegimeTtlSec = 0;
   private attention = 1;
   private baseLambda = 10;
   private baseLiquidityUsd = 25_000;
@@ -319,10 +345,11 @@ export class TokenSim {
   private emittedInitialDevBuy = false;
   private emittedDoaSell = false;
   private devEventsUsed = 0;
-  private postMigrationChaosLeftMs = 0;
-  private postMigrationWarmupMs = 0;
+  private migrationFreezeLeftMs = 0;
+  private migrationShockLeftMs = 0;
+  private migrationPostShockRegime: TokenMarketRegime | null = null;
+  private preMigrationFlowStrength = 0;
   private deadUserReboundMs = 0;
-  private deathSpiralLeftMs = 0;
   private hasEnteredFinal = false;
   private hasMigrated = false;
   private bondingProgress = 0;
@@ -343,6 +370,10 @@ export class TokenSim {
   private walletProfiles = new Map<string, HolderWalletProfile>();
   private tape: SimTapeTrade[] = [];
   private walletSeq = 0;
+  private readonly baseQualityScore: number;
+  private microburst: MicroburstState | null = null;
+  private migrationEligibilityStreak = 0;
+  private lastMigrationEligibilitySecond = -1;
 
   // Rolling 5-min stats window (in simMs)
   private statWindow: StatBucket[] = [];
@@ -367,6 +398,7 @@ export class TokenSim {
     this.attention = 0.9 + this.rng.next() * 0.8;
     this.archetype = this.rollArchetype();
     this.archetypeProfile = this.buildArchetypeProfile(this.archetype);
+    this.baseQualityScore = computeBaseQualityScore(this.meta.fate, this.meta.metrics);
     this.initCurveState(startMcapUsd);
 
     this.aggr1s = new CandleAggregator(1);
@@ -384,7 +416,7 @@ export class TokenSim {
     this.seedGenesisHolders();
     this.priceAtSpawn = this.lastPriceUsd;
     this.phase = 'NEW';
-    this.rollRegime(this.getSessionProfile());
+    this.rollMarketRegime(this.getSessionProfile());
 
     // Seed initial flat candle so first dev buy grows from launch baseline.
     this.aggr1s.pushTick(this.spawnRealMs, startPriceUsd, 0);
@@ -414,6 +446,7 @@ export class TokenSim {
     const simDtSec = realDtSec * SIM_TIME_MULTIPLIER;
     this.simTimeMs += simDtSec * 1000;
     const queuedEvents = this.processPendingUserTrades(nowMs);
+    this.updateMigrationEligibility(nowMs);
     const inDeadMode = this.phase === 'DEAD';
     const inCollapseMode = !inDeadMode && this.ruggedAtSimMs != null;
     const hasUserBuyEvent = queuedEvents.some((ev) => ev.type === 'USER_BUY');
@@ -421,51 +454,74 @@ export class TokenSim {
       this.deadUserReboundMs = Math.max(this.deadUserReboundMs, 8_000 + this.rng.next() * 14_000);
     }
 
-    this.advanceRegime(realDtSec, sessionProfile);
+    const flowStrength = this.getFlowStrength();
+    this.advanceMarketRegime(realDtSec, sessionProfile, flowStrength);
     const phaseModel = this.getPhaseModel();
     this.attention = Math.max(0.12, this.attention * Math.exp(-phaseModel.attentionDecayPerSec * realDtSec));
 
-    const regimeDriftPerSec = this.getRegimeDriftPerSec();
-    const regimeBuyBias = this.getRegimeBuyBias();
-    const regimeVolMul = this.getRegimeVolMul();
-    const regimeLambdaMul = this.getRegimeLambdaMul();
-    const inMigrationChaos = this.postMigrationChaosLeftMs > 0;
+    const regimeBehavior = this.getMarketBehavior(flowStrength, sessionProfile);
+    const inMigrationShock = this.migrationShockLeftMs > 0;
+    const inMigrationFreeze = this.migrationFreezeLeftMs > 0;
 
-    if (this.regime === 'IMPULSE') this.attention = Math.min(2.8, this.attention + 0.04 * realDtSec);
-    if (this.regime === 'DUMP') this.attention = Math.min(2.8, this.attention + 0.02 * realDtSec);
+    if (this.marketRegime === 'FIRST_PUMP' || this.marketRegime === 'MIGRATION_SHOCK') {
+      this.attention = Math.min(2.6, this.attention + 0.026 * realDtSec);
+    }
+    if (this.marketRegime === 'BLEED_OUT') {
+      this.attention = Math.max(0.1, this.attention - 0.018 * realDtSec);
+    }
 
-    let lambdaMul = phaseModel.lambdaMul * regimeLambdaMul;
-    let volMul = phaseModel.volMul * regimeVolMul;
-    let liquidityMul = phaseModel.liquidityMul;
-    let driftPerSec = regimeDriftPerSec + this.archetypeProfile.driftBiasPerSec;
-    let effectiveBuyBias = clamp(regimeBuyBias + sessionProfile.buyBiasShift, 0.14, 0.86);
-    const inPostMigrationWarmup = this.phase === 'MIGRATED' && this.postMigrationWarmupMs > 0;
+    let lambdaMul = phaseModel.lambdaMul * regimeBehavior.lambdaMul;
+    let volMul = phaseModel.volMul * regimeBehavior.volMul;
+    let liquidityMul = phaseModel.liquidityMul * regimeBehavior.liquidityMul;
+    let driftPerSec = regimeBehavior.driftPerSec + this.archetypeProfile.driftBiasPerSec;
+    let effectiveBuyBias = clamp(regimeBehavior.buyBias + sessionProfile.buyBiasShift, 0.14, 0.86);
+
+    if (inMigrationShock) {
+      driftPerSec += this.rng.normal() * 0.022;
+      effectiveBuyBias = clamp(0.5 + this.rng.normal() * 0.14 + flowStrength * 0.03, 0.24, 0.76);
+    }
+
+    if (this.phase === 'MIGRATED') {
+      const migrationThresholdUsd = getMigrationThresholdUsd();
+      const overMigration = (this.lastMcapUsd - migrationThresholdUsd) / Math.max(1, migrationThresholdUsd);
+      if (overMigration > 0) {
+        const contestedBias = clamp(overMigration, 0, 1.4);
+        driftPerSec -= regimeBehavior.postMigrationPlateauPenalty * contestedBias * 0.028;
+        effectiveBuyBias = clamp(
+          effectiveBuyBias - regimeBehavior.postMigrationPlateauPenalty * contestedBias * 0.08,
+          0.22,
+          0.78
+        );
+        volMul *= 1 + regimeBehavior.postMigrationPlateauPenalty * contestedBias * 0.55;
+        lambdaMul *= 1 + regimeBehavior.postMigrationPlateauPenalty * contestedBias * 0.18;
+
+        if (this.rng.next() < regimeBehavior.postMigrationRetestChance * realDtSec) {
+          driftPerSec -= 0.018 + contestedBias * 0.016;
+          effectiveBuyBias = clamp(effectiveBuyBias - 0.06, 0.2, 0.74);
+          volMul *= 1.12;
+        }
+        if (overMigration > 0.08 && this.rng.next() < regimeBehavior.postMigrationRejectionChance * realDtSec) {
+          driftPerSec -= 0.028 + contestedBias * 0.02;
+          effectiveBuyBias = clamp(effectiveBuyBias - 0.09, 0.18, 0.72);
+          volMul *= 1.18;
+        }
+        if (overMigration > 0.12 && this.rng.next() < regimeBehavior.postMigrationMeanReversionChance * realDtSec) {
+          driftPerSec -= regimeBehavior.postMigrationOverextensionPenalty * (0.04 + contestedBias * 0.02);
+          effectiveBuyBias = clamp(
+            effectiveBuyBias - regimeBehavior.postMigrationOverextensionPenalty * 0.12,
+            0.16,
+            0.72
+          );
+          lambdaMul *= 1.04;
+          volMul *= 1.12;
+        }
+      }
+    }
 
     lambdaMul *= this.archetypeProfile.lambdaMul;
     volMul *= this.archetypeProfile.volMul;
     lambdaMul *= sessionProfile.tempoMul;
     volMul *= Math.max(0.6, 0.9 + (sessionProfile.tempoMul - 1) * 0.45);
-
-    if (this.postMigrationChaosLeftMs > 0) {
-      this.postMigrationChaosLeftMs = Math.max(0, this.postMigrationChaosLeftMs - realDtSec * 1000);
-      const chaosPulse = 0.9 + this.rng.next() * 0.8;
-      lambdaMul *= (2.0 + this.rng.next() * 4.0) * chaosPulse;
-      volMul *= 1.6 + this.rng.next() * 1.7;
-      liquidityMul *= 0.3 + this.rng.next() * 0.4;
-    }
-    if (this.deathSpiralLeftMs > 0) {
-      this.deathSpiralLeftMs = Math.max(0, this.deathSpiralLeftMs - realDtSec * 1000);
-      driftPerSec -= 0.12;
-      effectiveBuyBias = Math.min(effectiveBuyBias, 0.22);
-      lambdaMul *= 1.4;
-      volMul *= 1.3;
-      liquidityMul *= 0.7;
-    }
-    if (inPostMigrationWarmup) {
-      this.postMigrationWarmupMs = Math.max(0, this.postMigrationWarmupMs - realDtSec * 1000);
-      volMul *= 0.5;
-      lambdaMul *= 0.9;
-    }
 
     if (inCollapseMode) {
       const collapseAgeMs = Math.max(0, this.simTimeMs - (this.ruggedAtSimMs ?? this.simTimeMs));
@@ -521,12 +577,55 @@ export class TokenSim {
       volMul *= Math.max(0.45, 1 - 0.35 * heatRatio);
     }
 
+    if (this.phase !== 'MIGRATED' && this.phase !== 'DEAD') {
+      const migrationThresholdUsd = getMigrationThresholdUsd();
+      const progressToMigration = this.lastMcapUsd / Math.max(1, migrationThresholdUsd);
+      if (progressToMigration >= MIGRATION_APPROACH_FRICTION_START_PCT) {
+        const frictionProgress = clamp(
+          (progressToMigration - MIGRATION_APPROACH_FRICTION_START_PCT)
+          / Math.max(1e-6, 1 - MIGRATION_APPROACH_FRICTION_START_PCT),
+          0,
+          1
+        );
+        const friction = MIGRATION_APPROACH_FRICTION_MAX * frictionProgress;
+        driftPerSec -= friction * 0.035;
+        effectiveBuyBias = clamp(effectiveBuyBias - friction * 0.08, 0.18, 0.82);
+        lambdaMul *= Math.max(0.55, 1 - friction * 0.28);
+        volMul *= 1 + friction * 0.18;
+      }
+
+      if (this.phase === 'FINAL') {
+        const finalStretchPressure = clamp((progressToMigration - 0.72) / 0.28, 0, 1);
+        if (finalStretchPressure > 0) {
+          const quality = this.getDynamicQualityScore(flowStrength);
+          const stallBias = clamp(
+            (1 - quality) * 0.72 + Math.max(0, 0.16 - flowStrength) * 1.15,
+            0,
+            1.25
+          );
+          driftPerSec -= finalStretchPressure * stallBias * 0.032;
+          effectiveBuyBias = clamp(
+            effectiveBuyBias - finalStretchPressure * stallBias * 0.1,
+            0.16,
+            0.78
+          );
+          lambdaMul *= Math.max(0.42, 1 - finalStretchPressure * stallBias * 0.26);
+          volMul *= 1 + finalStretchPressure * stallBias * 0.14;
+        }
+      }
+    }
+
     const heatRatio = mcapHeat / (1 + mcapHeat);
     const sessionTradeSizeMul = 0.6 + sessionProfile.tempoMul * 0.4;
-    const tradeSizeMul = Math.max(0.12, flowPowerMul * (1 - 0.45 * heatRatio) * sessionTradeSizeMul);
+    const tradeSizeMul = Math.max(
+      0.12,
+      flowPowerMul * regimeBehavior.tradeSizeMul * (1 - 0.45 * heatRatio) * sessionTradeSizeMul
+    );
     const impactMul = Math.max(
       0.45,
-      (0.75 + 0.25 * flowPowerMul - 0.2 * heatRatio) * (0.78 + 0.28 * sessionProfile.whaleMul)
+      (0.75 + 0.25 * flowPowerMul - 0.2 * heatRatio)
+      * regimeBehavior.impactMul
+      * (0.78 + 0.28 * sessionProfile.whaleMul)
     );
 
     const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
@@ -537,9 +636,11 @@ export class TokenSim {
       realDtSec,
       effectiveBuyBias,
       isLaunchTick,
-      !inPostMigrationWarmup && !inDeadMode && !inCollapseMode
+      !inMigrationFreeze && !inDeadMode && !inCollapseMode,
+      regimeBehavior.devSignalMul
     );
     const prevPriceUsd = this.lastPriceUsd;
+    const burstDirectionalUsd = this.consumeMicroburstDirectionalUsd(realDtSec);
 
     // Minimal warm-up only for launch tick (avoid scripted behavior).
     if (isLaunchTick) {
@@ -556,23 +657,61 @@ export class TokenSim {
       attention: this.attention,
       baseLambda: this.baseLambda * lambdaMul * (isLaunchTick ? 0.15 : 1),
       baseTradeSizeUsd: this.baseTradeSizeUsd * tradeSizeMul,
-      tradeSigma: this.tradeSigma,
+      tradeSigma: this.tradeSigma * regimeBehavior.tradeSigmaMul * regimeBehavior.wickinessMultiplier,
       driftPerSec,
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
       buyBias: effectiveBuyBias,
       impactK: this.impactK * impactMul,
-      whaleChance: (isLaunchTick || inPostMigrationWarmup || inDeadMode || inCollapseMode) ? 0 : this.getWhaleChance(inMigrationChaos, sessionProfile),
+      whaleChance: (isLaunchTick || inMigrationFreeze || inDeadMode || inCollapseMode)
+        ? 0
+        : this.getWhaleChance(inMigrationShock, sessionProfile, regimeBehavior),
       externalFlow: devFlow?.externalFlow,
     });
 
-    this.executeMarketFlowAsTape({
-      candleTsMs,
-      realDtSec,
-      targetBuyUsd: market.buyUsd,
-      targetSellUsd: market.sellUsd,
-      expectedNextPriceUsd: market.nextPriceUsd,
+    let targetBuyUsd = market.buyUsd;
+    let targetSellUsd = market.sellUsd;
+    let expectedNextPriceUsd = market.nextPriceUsd;
+
+    if (burstDirectionalUsd > 0) {
+      targetBuyUsd += burstDirectionalUsd;
+      expectedNextPriceUsd = this.adjustExpectedPriceForDirectionalUsd(
+        expectedNextPriceUsd,
+        burstDirectionalUsd,
+        liquidityUsd,
+        this.impactK * impactMul
+      );
+    } else if (burstDirectionalUsd < 0) {
+      targetSellUsd += Math.abs(burstDirectionalUsd);
+      expectedNextPriceUsd = this.adjustExpectedPriceForDirectionalUsd(
+        expectedNextPriceUsd,
+        burstDirectionalUsd,
+        liquidityUsd,
+        this.impactK * impactMul
+      );
+    }
+
+    const guardedFlow = this.guardCandleDisplacement({
+      targetBuyUsd,
+      targetSellUsd,
+      expectedNextPriceUsd,
       previousPriceUsd: prevPriceUsd,
+      regimeBehavior,
+      realDtSec,
+      liquidityUsd,
     });
+
+    if (!inMigrationFreeze) {
+      this.executeMarketFlowAsTape({
+        candleTsMs,
+        realDtSec,
+        targetBuyUsd: guardedFlow.targetBuyUsd,
+        targetSellUsd: guardedFlow.targetSellUsd,
+        expectedNextPriceUsd: guardedFlow.expectedNextPriceUsd,
+        previousPriceUsd: prevPriceUsd,
+      });
+    } else {
+      this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - realDtSec * 1000);
+    }
 
     const events: TokenChartEvent[] = queuedEvents.slice();
     if (devFlow?.eventType) {
@@ -677,6 +816,158 @@ export class TokenSim {
     }
 
     if (executedTrades === 0) return;
+  }
+
+  private guardCandleDisplacement(input: {
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    expectedNextPriceUsd: number;
+    previousPriceUsd: number;
+    regimeBehavior: TokenMarketBehavior;
+    realDtSec: number;
+    liquidityUsd: number;
+  }): {
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    expectedNextPriceUsd: number;
+  } {
+    const previousPriceUsd = Math.max(1e-12, input.previousPriceUsd);
+    const expectedNextPriceUsd = Math.max(1e-12, input.expectedNextPriceUsd);
+    const desiredMovePct = (expectedNextPriceUsd - previousPriceUsd) / previousPriceUsd;
+    const maxBodyMovePct = input.regimeBehavior.maxBodyMovePct * clamp(input.realDtSec, 0.18, 1);
+    const impactBudgetPct = this.getImpactBudgetPct(input.regimeBehavior, input.liquidityUsd, input.realDtSec);
+    const allowedMoveAbsPct = Math.min(maxBodyMovePct, impactBudgetPct);
+    if (!Number.isFinite(desiredMovePct) || Math.abs(desiredMovePct) <= allowedMoveAbsPct) {
+      return {
+        targetBuyUsd: input.targetBuyUsd,
+        targetSellUsd: input.targetSellUsd,
+        expectedNextPriceUsd: input.expectedNextPriceUsd,
+      };
+    }
+
+    const totalUsd = input.targetBuyUsd + input.targetSellUsd;
+    const netUsd = input.targetBuyUsd - input.targetSellUsd;
+    if (totalUsd <= 0 || Math.abs(netUsd) <= 1e-6) {
+      return {
+        targetBuyUsd: input.targetBuyUsd,
+        targetSellUsd: input.targetSellUsd,
+        expectedNextPriceUsd: input.expectedNextPriceUsd,
+      };
+    }
+
+    const allowedMovePct = Math.sign(desiredMovePct)
+      * allowedMoveAbsPct
+      * (0.9 + this.rng.next() * 0.1);
+    const actualAbsMove = Math.abs(desiredMovePct);
+    const scale = clamp(Math.abs(allowedMovePct) / Math.max(1e-6, actualAbsMove), 0.08, 1);
+    const newNetUsd = netUsd * scale;
+    const excessDirectionalUsd = Math.max(0, Math.abs(netUsd) - Math.abs(newNetUsd));
+    const newBuyUsd = Math.max(0, (totalUsd + newNetUsd) * 0.5);
+    const newSellUsd = Math.max(0, (totalUsd - newNetUsd) * 0.5);
+
+    if (excessDirectionalUsd > this.baseTradeSizeUsd * 0.75) {
+      this.queueMicroburst(Math.sign(netUsd) >= 0 ? 'BUY' : 'SELL', excessDirectionalUsd);
+    }
+
+    return {
+      targetBuyUsd: newBuyUsd,
+      targetSellUsd: newSellUsd,
+      expectedNextPriceUsd: previousPriceUsd * (1 + allowedMovePct),
+    };
+  }
+
+  private getImpactBudgetPct(
+    regimeBehavior: TokenMarketBehavior,
+    liquidityUsd: number,
+    realDtSec: number
+  ): number {
+    const secScale = clamp(realDtSec, 0.18, 1);
+    const liq = Math.max(1, liquidityUsd);
+    let liquidityModifier: number;
+    if (liq <= IMPACT_SATURATION_FLOOR_USD) {
+      const ratio = liq / IMPACT_SATURATION_FLOOR_USD;
+      liquidityModifier = 1 + (LOW_LIQUIDITY_BOOST - 1) * (1 - ratio);
+    } else {
+      const ratio = IMPACT_SATURATION_FLOOR_USD / liq;
+      liquidityModifier = Math.max(HIGH_LIQUIDITY_DAMPING, Math.pow(ratio, 0.22));
+    }
+
+    return regimeBehavior.maxNetImpactPctPerSec
+      * regimeBehavior.regimeImpactMultiplier
+      * liquidityModifier
+      * secScale;
+  }
+
+  private queueMicroburst(side: UserTradeSide, directionalUsd: number): void {
+    if (!Number.isFinite(directionalUsd) || directionalUsd <= 0) return;
+
+    const candleCount =
+      MICROBUST_CANDLES_MIN
+      + Math.floor(this.rng.next() * (MICROBUST_CANDLES_MAX - MICROBUST_CANDLES_MIN + 1));
+    const weights: number[] = [];
+    let sum = 0;
+    for (let i = 0; i < candleCount; i++) {
+      const frontLoadedBase =
+        i === 0 ? 0.34 :
+        i === 1 ? 0.24 :
+        i === 2 ? 0.18 :
+        0.11;
+      const decay = Math.pow(MICROBUST_CONTINUATION_DECAY, i);
+      const weight = Math.max(0.04, frontLoadedBase * decay * (0.92 + this.rng.next() * 0.24));
+      weights.push(weight);
+      sum += weight;
+    }
+
+    const sign = side === 'BUY' ? 1 : -1;
+    const stepsUsd: number[] = [];
+    for (let i = 0; i < weights.length; i++) {
+      let step = directionalUsd * (weights[i]! / Math.max(1e-6, sum));
+      if (i > 0 && this.rng.next() < MICROBUST_RETRACE_CHANCE) {
+        step *= -MICROBUST_RETRACE_STRENGTH_PCT * (0.75 + this.rng.next() * 0.6);
+      }
+      stepsUsd.push(step * sign);
+    }
+
+    if (this.microburst) {
+      this.microburst.stepsUsd.push(...stepsUsd);
+      return;
+    }
+
+    this.microburst = {
+      stepsUsd,
+      cooldownMs: 1_000,
+    };
+  }
+
+  private consumeMicroburstDirectionalUsd(realDtSec: number): number {
+    if (!this.microburst || this.microburst.stepsUsd.length === 0) return 0;
+
+    this.microburst.cooldownMs -= realDtSec * 1000;
+    if (this.microburst.cooldownMs > 0) return 0;
+
+    let directionalUsd = 0;
+    while (this.microburst && this.microburst.cooldownMs <= 0 && this.microburst.stepsUsd.length > 0) {
+      directionalUsd += this.microburst.stepsUsd.shift() ?? 0;
+      this.microburst.cooldownMs += 1_000;
+    }
+
+    if (this.microburst && this.microburst.stepsUsd.length === 0) {
+      this.microburst = null;
+    }
+
+    return directionalUsd;
+  }
+
+  private adjustExpectedPriceForDirectionalUsd(
+    expectedNextPriceUsd: number,
+    directionalUsd: number,
+    liquidityUsd: number,
+    impactK: number
+  ): number {
+    const price = Math.max(1e-12, expectedNextPriceUsd);
+    const liq = Math.max(1, liquidityUsd);
+    const dLog = (directionalUsd / liq) * impactK * 0.55;
+    return Math.max(1e-12, price * Math.exp(dLog));
   }
 
   private splitNotional(totalUsd: number, parts: number): number[] {
@@ -949,17 +1240,17 @@ export class TokenSim {
     }
     if (this.phase === 'FINAL') {
       return {
-        liquidityMul: 2.1,
-        lambdaMul: 1.0,
-        volMul: 0.9,
-        attentionDecayPerSec: 0.022,
+        liquidityMul: 1.8,
+        lambdaMul: 0.82,
+        volMul: 0.8,
+        attentionDecayPerSec: 0.03,
       };
     }
     return {
       liquidityMul: 1.0,
-      lambdaMul: 1.35,
-      volMul: 1.2,
-      attentionDecayPerSec: 0.016,
+      lambdaMul: 1.12,
+      volMul: 1.0,
+      attentionDecayPerSec: 0.021,
     };
   }
 
@@ -967,121 +1258,121 @@ export class TokenSim {
     return SESSION_SIM_PROFILE[this.sessionBucket] ?? SESSION_SIM_PROFILE.OFF;
   }
 
-  private advanceRegime(realDtSec: number, sessionProfile: SessionSimProfile): void {
-    if (
-      this.regime === 'IMPULSE'
-      && sessionProfile.fakeoutChancePerSec > 0
-      && this.rng.next() < sessionProfile.fakeoutChancePerSec * realDtSec
-    ) {
-      this.regime = this.rng.next() < 0.82 ? 'PULLBACK' : 'DUMP';
-      this.regimeTtlSec = 1 + this.rng.next() * 4;
+  private advanceMarketRegime(
+    realDtSec: number,
+    sessionProfile: SessionSimProfile,
+    flowStrength: number
+  ): void {
+    if (this.migrationShockLeftMs > 0) {
+      this.migrationShockLeftMs = Math.max(0, this.migrationShockLeftMs - realDtSec * 1000);
+      this.marketRegime = 'MIGRATION_SHOCK';
+      if (this.migrationShockLeftMs <= 0 && this.migrationPostShockRegime) {
+        this.marketRegime = this.migrationPostShockRegime;
+        this.migrationPostShockRegime = null;
+        this.marketRegimeTtlSec = clamp(
+          (this.marketRegime === 'POST_MIGRATION_DISCOVERY' ? 10 : this.marketRegime === 'CHOP' ? 8 : 9)
+          + this.rng.next() * 12,
+          4,
+          28
+        );
+      }
       return;
     }
-    this.regimeTtlSec -= realDtSec;
-    if (this.regimeTtlSec <= 0) this.rollRegime(sessionProfile);
+
+    if (this.phase === 'DEAD') {
+      this.marketRegime = this.deadUserReboundMs > 0 ? 'DEAD_BOUNCE' : 'BLEED_OUT';
+    }
+
+    this.marketRegimeTtlSec -= realDtSec;
+    if (this.marketRegimeTtlSec > 0) return;
+    this.rollMarketRegime(sessionProfile, flowStrength);
   }
 
-  private rollRegime(sessionProfile: SessionSimProfile = this.getSessionProfile()): void {
-    const u = this.rng.next();
-    if (this.archetype === 'DOA') {
-      this.regime = u < 0.12 ? 'IMPULSE' : u < 0.75 ? 'PAUSE' : 'DUMP';
-      this.regimeTtlSec = 4 + this.rng.next() * 18;
-      this.applySessionRegimeTtl(sessionProfile);
-      return;
-    }
-    if (this.archetype === 'SLOW_COOK') {
-      this.regime = u < 0.2 ? 'IMPULSE' : u < 0.62 ? 'PAUSE' : u < 0.93 ? 'PULLBACK' : 'DUMP';
-      this.regimeTtlSec = 5 + this.rng.next() * 16;
-      this.applySessionRegimeTtl(sessionProfile);
-      return;
-    }
-    if (this.archetype === 'CHAOS') {
-      this.regime = u < 0.3 ? 'IMPULSE' : u < 0.42 ? 'PAUSE' : u < 0.75 ? 'PULLBACK' : 'DUMP';
-      this.regimeTtlSec = 2 + this.rng.next() * 10;
-      this.applySessionRegimeTtl(sessionProfile);
-      return;
-    }
-    if (this.phase === 'MIGRATED') {
-      this.regime = u < 0.15 ? 'IMPULSE' : u < 0.65 ? 'PAUSE' : u < 0.92 ? 'PULLBACK' : 'DUMP';
-      this.regimeTtlSec = 4 + this.rng.next() * 14;
-      this.applySessionRegimeTtl(sessionProfile);
-      return;
-    }
-    if (this.phase === 'FINAL') {
-      this.regime = u < 0.22 ? 'IMPULSE' : u < 0.48 ? 'PAUSE' : u < 0.85 ? 'PULLBACK' : 'DUMP';
-      this.regimeTtlSec = 3 + this.rng.next() * 12;
-      this.applySessionRegimeTtl(sessionProfile);
-      return;
-    }
-    this.regime = u < 0.4 ? 'IMPULSE' : u < 0.72 ? 'PAUSE' : u < 0.92 ? 'PULLBACK' : 'DUMP';
-    this.regimeTtlSec = 2 + this.rng.next() * 9;
-    this.applySessionRegimeTtl(sessionProfile);
+  private rollMarketRegime(
+    sessionProfile: SessionSimProfile = this.getSessionProfile(),
+    flowStrength = this.getFlowStrength()
+  ): void {
+    const { regime, ttlSec } = rollNextMarketRegime(this.rng, {
+      currentRegime: this.marketRegime,
+      phase: this.phase,
+      fate: this.meta.fate,
+      simTimeMs: this.simTimeMs,
+      lastMcapUsd: this.lastMcapUsd,
+      changePct: this.getChangePct(),
+      flowStrength,
+      qualityScore: this.getDynamicQualityScore(flowStrength),
+      hasEnteredFinal: this.hasEnteredFinal,
+      inMigrationShock: this.migrationShockLeftMs > 0,
+      sessionProfile,
+    });
+    this.marketRegime = regime;
+    this.marketRegimeTtlSec = ttlSec;
   }
 
-  private applySessionRegimeTtl(sessionProfile: SessionSimProfile): void {
-    if (this.regime === 'IMPULSE') {
-      this.regimeTtlSec *= sessionProfile.impulseTtlMul;
-    }
-    this.regimeTtlSec = clamp(this.regimeTtlSec, 1.2, 36);
-  }
+  private getMarketBehavior(flowStrength: number, sessionProfile: SessionSimProfile): TokenMarketBehavior {
+    const behavior = getMarketBehavior(this.marketRegime, {
+      qualityScore: this.getDynamicQualityScore(flowStrength),
+      flowStrength,
+      sessionProfile,
+      phase: this.phase,
+      changePct: this.getChangePct(),
+    });
 
-  private getRegimeDriftPerSec(): number {
-    switch (this.regime) {
-      case 'IMPULSE': return 0.035;
-      case 'PAUSE': return 0;
-      case 'PULLBACK': return -0.012;
-      case 'DUMP': return -0.05;
+    if (this.migrationFreezeLeftMs > 0) {
+      return {
+        ...behavior,
+        driftPerSec: 0,
+        buyBias: clamp(behavior.buyBias, 0.42, 0.58),
+        volMul: behavior.volMul * 0.35,
+        lambdaMul: behavior.lambdaMul * 0.08,
+        liquidityMul: behavior.liquidityMul * 1.1,
+        tradeSizeMul: behavior.tradeSizeMul * 0.2,
+        impactMul: behavior.impactMul * 0.4,
+        tradeSigmaMul: behavior.tradeSigmaMul * 0.6,
+        devSignalMul: 0,
+        whaleChanceMul: 0,
+      };
     }
-  }
 
-  private getRegimeBuyBias(): number {
-    switch (this.regime) {
-      case 'IMPULSE': return 0.63;
-      case 'PAUSE': return 0.51;
-      case 'PULLBACK': return 0.43;
-      case 'DUMP': return 0.32;
-    }
-  }
-
-  private getRegimeVolMul(): number {
-    switch (this.regime) {
-      case 'IMPULSE': return 1.15;
-      case 'PAUSE': return 0.5;
-      case 'PULLBACK': return 0.8;
-      case 'DUMP': return 1.2;
-    }
-  }
-
-  private getRegimeLambdaMul(): number {
-    switch (this.regime) {
-      case 'IMPULSE': return 1.5;
-      case 'PAUSE': return 0.6;
-      case 'PULLBACK': return 1.0;
-      case 'DUMP': return 1.25;
-    }
+    return behavior;
   }
 
   private getDevSignalChancePerSec(): number {
     if (this.devEventsUsed >= this.archetypeProfile.maxDevEvents) return 0;
     if (this.archetype === 'DOA') return 0.015;
-    if (this.phase === 'MIGRATED') {
-      return this.regime === 'IMPULSE' ? 0.04 : this.regime === 'DUMP' ? 0.035 : 0.015;
+    switch (this.marketRegime) {
+      case 'LAUNCH_CHAOS':
+        return 0.04;
+      case 'FIRST_PUMP':
+      case 'MIGRATION_SHOCK':
+        return this.phase === 'MIGRATED' ? 0.05 : 0.08;
+      case 'GRIND_UP':
+      case 'POST_MIGRATION_DISCOVERY':
+        return 0.03;
+      case 'BLEED_OUT':
+        return 0.05;
+      case 'DEAD_BOUNCE':
+        return 0.015;
+      case 'CHOP':
+      default:
+        return 0.022;
     }
-    if (this.phase === 'FINAL') {
-      return this.regime === 'IMPULSE' ? 0.08 : this.regime === 'DUMP' ? 0.09 : 0.03;
-    }
-    return this.regime === 'IMPULSE' ? 0.07 : this.regime === 'DUMP' ? 0.06 : 0.025;
   }
 
-  private getWhaleChance(inMigrationChaos: boolean, sessionProfile: SessionSimProfile): number {
+  private getWhaleChance(
+    inMigrationShock: boolean,
+    sessionProfile: SessionSimProfile,
+    behavior: TokenMarketBehavior
+  ): number {
     let chance: number;
-    if (inMigrationChaos) chance = this.regime === 'IMPULSE' ? 0.04 : this.regime === 'DUMP' ? 0.035 : 0.025;
-    else if (this.phase === 'MIGRATED') chance = this.regime === 'IMPULSE' ? 0.012 : this.regime === 'PAUSE' ? 0.006 : 0.009;
-    else if (this.phase === 'FINAL') chance = this.regime === 'IMPULSE' ? 0.014 : this.regime === 'PAUSE' ? 0.007 : 0.011;
-    else chance = this.regime === 'IMPULSE' ? 0.015 : this.regime === 'PAUSE' ? 0.008 : 0.012;
+    if (inMigrationShock) chance = 0.028;
+    else if (this.phase === 'MIGRATED') chance = 0.009;
+    else if (this.phase === 'FINAL') chance = 0.011;
+    else chance = 0.012;
 
     chance *= sessionProfile.whaleMul;
-    if (this.regime === 'DUMP') chance *= sessionProfile.nukeChanceMul;
+    chance *= behavior.whaleChanceMul;
+    if (this.marketRegime === 'BLEED_OUT') chance *= sessionProfile.nukeChanceMul;
     return clamp(chance, 0, 0.16);
   }
 
@@ -1090,7 +1381,8 @@ export class TokenSim {
     realDtSec: number,
     buyBias: number,
     isLaunchTick: boolean,
-    allowSignals: boolean
+    allowSignals: boolean,
+    devSignalMul: number
   ): {
     eventType: 'DEV_BUY' | 'DEV_SELL';
     externalFlow: { buyBoostUsd?: number; sellBoostUsd?: number };
@@ -1126,7 +1418,7 @@ export class TokenSim {
     if (isLaunchTick || !allowSignals) return null;
 
     if (candleTsMs - this.lastDevEventRealMs < 2500) return null;
-    if (this.rng.next() >= this.getDevSignalChancePerSec() * realDtSec) return null;
+    if (this.rng.next() >= this.getDevSignalChancePerSec() * devSignalMul * realDtSec) return null;
 
     const isBuy = this.rng.next() < buyBias;
     const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6) * DEV_FLOW_SCALE * devPowerMul;
@@ -1162,33 +1454,37 @@ export class TokenSim {
       this.hasEnteredFinal = true;
     }
 
-    if ((this.bondingProgress >= MIGRATE_PROGRESS || this.curveRealToken <= CURVE_TOKEN_EPS) && !this.hasMigrated) {
-      const sessionProfile = this.getSessionProfile();
+    const migrationThresholdUsd = getMigrationThresholdUsd();
+    const forcedCurveMigration = this.curveRealToken <= CURVE_TOKEN_EPS;
+    const eligibleForMigration =
+      this.lastMcapUsd >= migrationThresholdUsd
+      && this.migrationEligibilityStreak >= MIN_MIGRATION_SUSTAIN_CANDLES;
+    if ((eligibleForMigration || forcedCurveMigration) && !this.hasMigrated) {
       this.hasMigrated = true;
       this.phase = 'MIGRATED';
-      this.postMigrationWarmupMs = POST_MIGRATION_WARMUP_MS;
+      this.preMigrationFlowStrength = this.getFlowStrength();
+      this.migrationFreezeLeftMs = 2_000 + this.rng.next() * 2_000;
+      this.migrationShockLeftMs = getMigrationShockDurationMs(this.rng);
       // Seed post-migration liquidity from curve reserves to avoid first-tick teleport.
       const handoffLiquidity = Math.max(5_000, (this.curveVirtualBase + this.curveRealBase) * 3);
       this.baseLiquidityUsd = Math.max(this.baseLiquidityUsd, handoffLiquidity);
-      this.rollRegime(sessionProfile);
-      const migrationChaosChance = clamp(this.archetypeProfile.migrationChaosChance * sessionProfile.nukeChanceMul, 0, 0.98);
-      if (this.rng.next() < migrationChaosChance) {
-        this.postMigrationChaosLeftMs = 8_000 + this.rng.next() * 17_000;
-      } else {
-        this.postMigrationChaosLeftMs = 0;
-      }
-      const deathSpiralChance = clamp(this.archetypeProfile.deathSpiralChance * sessionProfile.nukeChanceMul, 0, 0.98);
-      if (this.rng.next() < deathSpiralChance) {
-        this.deathSpiralLeftMs = 5_000 + this.rng.next() * 15_000;
-      } else {
-        this.deathSpiralLeftMs = 0;
-      }
+      this.marketRegime = 'MIGRATION_SHOCK';
+      this.marketRegimeTtlSec = Math.max(this.marketRegimeTtlSec, this.migrationShockLeftMs / 1000);
+      const outcome = decideMigrationOutcome(this.rng, {
+        qualityScore: this.getDynamicQualityScore(this.preMigrationFlowStrength),
+        preMigrationStrength: this.preMigrationFlowStrength,
+        currentFlowStrength: this.getFlowStrength(),
+      });
+      this.migrationPostShockRegime =
+        outcome === 'CONTINUATION' ? 'POST_MIGRATION_DISCOVERY' :
+        outcome === 'VIOLENT_CHOP' ? 'CHOP' :
+        'BLEED_OUT';
       return {
         tokenId: this.meta.id,
         tMs: candleTsMs,
         type: 'MIGRATION',
-        price: this.lastPriceUsd,
-        mcap: this.lastMcapUsd,
+        price: migrationThresholdUsd / SUPPLY,
+        mcap: migrationThresholdUsd,
       };
     }
 
@@ -1209,17 +1505,8 @@ export class TokenSim {
 
   getRuntime(): TokenRuntime {
     const mcap = this.lastMcapUsd;
-    let vol5m = 0;
-    let buys5m = 0;
-    let sells5m = 0;
-    for (let i = 0; i < this.statWindow.length; i++) {
-      vol5m += this.statWindow[i]!.volUsd;
-      buys5m += this.statWindow[i]!.buys;
-      sells5m += this.statWindow[i]!.sells;
-    }
-    const changePct = this.priceAtSpawn > 0
-      ? ((this.lastPriceUsd - this.priceAtSpawn) / this.priceAtSpawn) * 100
-      : 0;
+    const stats = this.getFlowWindowTotals();
+    const changePct = this.getChangePct();
 
     return {
       phase: this.phase,
@@ -1228,9 +1515,9 @@ export class TokenSim {
       mcapUsd: mcap,
       liquidityUsd: mcap * 0.15,
       bondingCurvePct: Math.min(100, this.bondingProgress * 100),
-      vol5mUsd: vol5m,
-      buys5m,
-      sells5m,
+      vol5mUsd: stats.vol5mUsd,
+      buys5m: stats.buys5m,
+      sells5m: stats.sells5m,
       changePct,
       priceAtSpawn: this.priceAtSpawn,
       ruggedAtSimMs: this.ruggedAtSimMs,
@@ -1738,8 +2025,6 @@ export class TokenSim {
         initialRealTokenRatioMax: 0.98,
         virtualTokenLiquidityMulMin: 1.15,
         virtualTokenLiquidityMulMax: 1.4,
-        migrationChaosChance: 0,
-        deathSpiralChance: 0.5,
       };
     }
     if (archetype === 'SLOW_COOK') {
@@ -1752,8 +2037,6 @@ export class TokenSim {
         initialRealTokenRatioMax: 0.9,
         virtualTokenLiquidityMulMin: 1.1,
         virtualTokenLiquidityMulMax: 1.35,
-        migrationChaosChance: 0.03,
-        deathSpiralChance: 0.04,
       };
     }
     if (archetype === 'CHAOS') {
@@ -1766,8 +2049,6 @@ export class TokenSim {
         initialRealTokenRatioMax: 0.62,
         virtualTokenLiquidityMulMin: 1.05,
         virtualTokenLiquidityMulMax: 1.2,
-        migrationChaosChance: 0.8,
-        deathSpiralChance: 0.28,
       };
     }
     return {
@@ -1779,8 +2060,6 @@ export class TokenSim {
       initialRealTokenRatioMax: 0.74,
       virtualTokenLiquidityMulMin: 1.08,
       virtualTokenLiquidityMulMax: 1.28,
-      migrationChaosChance: 0.15,
-      deathSpiralChance: 0.08,
     };
   }
 
@@ -1823,13 +2102,96 @@ export class TokenSim {
     return clamp(over / 0.75, 0, 3);
   }
 
+  private getChangePct(): number {
+    if (this.priceAtSpawn <= 0) return 0;
+    return ((this.lastPriceUsd - this.priceAtSpawn) / this.priceAtSpawn) * 100;
+  }
+
+  private getFlowWindowTotals(): { vol5mUsd: number; buys5m: number; sells5m: number } {
+    let vol5mUsd = 0;
+    let buys5m = 0;
+    let sells5m = 0;
+    for (let i = 0; i < this.statWindow.length; i++) {
+      vol5mUsd += this.statWindow[i]!.volUsd;
+      buys5m += this.statWindow[i]!.buys;
+      sells5m += this.statWindow[i]!.sells;
+    }
+    return { vol5mUsd, buys5m, sells5m };
+  }
+
+  private getFlowStrength(): number {
+    const stats = this.getFlowWindowTotals();
+    return computeFlowStrength({
+      vol5mUsd: stats.vol5mUsd,
+      buys5m: stats.buys5m,
+      sells5m: stats.sells5m,
+      mcapUsd: this.lastMcapUsd,
+      changePct: this.getChangePct(),
+    });
+  }
+
+  private getDynamicQualityScore(flowStrength = this.getFlowStrength()): number {
+    const finalBoost = this.hasEnteredFinal ? 0.03 : 0;
+    const migrationBoost = this.phase === 'MIGRATED' ? 0.04 : 0;
+    const heatPenalty = this.getMcapHeat() * 0.07;
+    return clamp(
+      this.baseQualityScore
+      + finalBoost
+      + migrationBoost
+      + Math.max(0, this.preMigrationFlowStrength) * 0.05
+      + flowStrength * 0.08
+      - heatPenalty,
+      0.03,
+      0.97
+    );
+  }
+
+  private getRecentTradeStatsReal(windowMs: number, nowMs: number): { tx: number; buys: number; sells: number } {
+    const cutoff = nowMs - windowMs;
+    let tx = 0;
+    let buys = 0;
+    let sells = 0;
+    for (let i = this.tape.length - 1; i >= 0; i--) {
+      const trade = this.tape[i]!;
+      if (trade.tMs < cutoff) break;
+      tx += 1;
+      if (trade.side === 'BUY') buys += 1;
+      else sells += 1;
+    }
+    return { tx, buys, sells };
+  }
+
+  private getEligibleHolderCount(): number {
+    return this.getHolderWalletIds(false).length;
+  }
+
+  private updateMigrationEligibility(nowMs: number): void {
+    const secondBucket = Math.floor(nowMs / 1000);
+    if (secondBucket === this.lastMigrationEligibilitySecond) return;
+    this.lastMigrationEligibilitySecond = secondBucket;
+
+    const migrationThresholdUsd = getMigrationThresholdUsd();
+    const ageSec = (nowMs - this.spawnRealMs) / 1000;
+    const tx60s = this.getRecentTradeStatsReal(60_000, nowMs).tx;
+    const holders = this.getEligibleHolderCount();
+    const aboveThreshold = this.lastMcapUsd >= migrationThresholdUsd;
+    const eligible =
+      aboveThreshold
+      && ageSec >= MIN_MIGRATION_AGE_SEC
+      && tx60s >= MIN_MIGRATION_TX_60S
+      && holders >= MIN_MIGRATION_HOLDERS;
+
+    if (eligible) this.migrationEligibilityStreak += 1;
+    else this.migrationEligibilityStreak = 0;
+  }
+
   private getFlowPowerMul(): number {
-    if (this.meta.fate === 'QUICK_RUG') return 1.35;
+    if (this.meta.fate === 'QUICK_RUG') return 1.12;
 
     const ramp = 0.35 + 0.65 * clamp(this.simTimeMs / FLOW_WARMUP_SIM_MS, 0, 1);
-    if (this.meta.fate === 'LONG_RUNNER') return 0.82 * ramp;
-    if (this.meta.fate === 'NORMAL') return 0.68 * ramp;
-    return 0.55 * ramp;
+    if (this.meta.fate === 'LONG_RUNNER') return 0.74 * ramp;
+    if (this.meta.fate === 'NORMAL') return 0.54 * ramp;
+    return 0.4 * ramp;
   }
 
   private getDevFlowPowerMul(): number {
