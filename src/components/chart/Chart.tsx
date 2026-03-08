@@ -13,7 +13,6 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import { registry, type ChartMetric } from '../../tokens/registry';
-import { getMigrationThresholdUsd } from '../../tokens/tokenMarketRegimes';
 import type { Candle } from '../../engine/types';
 import { useTokenStore, selectMarketSessionBucket } from '../../store/tokenStore';
 import {
@@ -142,15 +141,10 @@ export default function Chart({ tokenId }: Props) {
     (s: ReturnType<typeof useTokenStore.getState>) => s.eventsByTokenId[tokenId] ?? EMPTY_EVENTS,
     [tokenId]
   );
-  const selectToken = useCallback(
-    (s: ReturnType<typeof useTokenStore.getState>) => s.tokensById[tokenId] ?? null,
-    [tokenId]
-  );
   const selectAvgEntryPrice = useMemo(() => selectAvgEntryPriceByTokenId(tokenId), [tokenId]);
   const selectAvgEntryMcap = useMemo(() => selectAvgEntryMcapByTokenId(tokenId), [tokenId]);
   const selectAvgSellPrice = useMemo(() => selectAvgSellPriceByTokenId(tokenId), [tokenId]);
   const selectAvgSellMcap = useMemo(() => selectAvgSellMcapByTokenId(tokenId), [tokenId]);
-  const token = useTokenStore(selectToken);
   const tokenEvents = useTokenStore(selectTokenEvents);
   const marketSessionBucket = useTokenStore(selectMarketSessionBucket);
   const avgEntryPrice = useTradingStore(selectAvgEntryPrice);
@@ -175,14 +169,6 @@ export default function Chart({ tokenId }: Props) {
     }
     return null;
   }, [tokenEvents]);
-  const migrationThresholdMcap = useMemo(() => {
-    if (!token || token.phase === 'MIGRATED' || token.phase === 'DEAD') return null;
-    return getMigrationThresholdUsd();
-  }, [token]);
-  const migrationThresholdPrice = useMemo(() => {
-    if (migrationThresholdMcap == null || !token || !Number.isFinite(token.supply) || token.supply <= 0) return null;
-    return migrationThresholdMcap / token.supply;
-  }, [migrationThresholdMcap, token]);
 
   const [tfSec, setTfSec] = useState(1);
   const [metric, setMetric] = useState<Metric>('mcap');
@@ -202,12 +188,10 @@ export default function Chart({ tokenId }: Props) {
     [displayOptions]
   );
   const linePills = useMemo(() => {
-    const visibleMigrationMcap = token?.phase === 'MIGRATED' ? null : (migrationMcap ?? migrationThresholdMcap);
-    const visibleMigrationPrice = token?.phase === 'MIGRATED' ? null : (migrationPrice ?? migrationThresholdPrice);
     const values = {
       avgBuy: metric === 'mcap' ? avgEntryMcap : avgEntryPrice,
       avgSell: metric === 'mcap' ? avgSellMcap : avgSellPrice,
-      migration: metric === 'mcap' ? visibleMigrationMcap : visibleMigrationPrice,
+      migration: metric === 'mcap' ? migrationMcap : migrationPrice,
     };
 
     return [
@@ -215,18 +199,7 @@ export default function Chart({ tokenId }: Props) {
       { key: 'avgSell', label: 'Avg Sell', color: AVG_EXIT_PRICE_LINE.color, value: values.avgSell },
       { key: 'migration', label: 'Migration', color: MIGRATION_LINE.color, value: values.migration },
     ].filter((item) => Number.isFinite(item.value) && (item.value ?? 0) > 0);
-  }, [
-    metric,
-    avgEntryMcap,
-    avgEntryPrice,
-    avgSellMcap,
-    avgSellPrice,
-    migrationMcap,
-    migrationPrice,
-    migrationThresholdMcap,
-    migrationThresholdPrice,
-    token?.phase,
-  ]);
+  }, [metric, avgEntryMcap, avgEntryPrice, avgSellMcap, avgSellPrice, migrationMcap, migrationPrice]);
 
   const clearAllPriceLines = useCallback(() => {
     const series = candleSeriesRef.current;
@@ -588,12 +561,7 @@ export default function Chart({ tokenId }: Props) {
   useEffect(() => {
     const avgBuyLine = metric === 'mcap' ? avgEntryMcap : avgEntryPrice;
     const avgSellLine = metric === 'mcap' ? avgSellMcap : avgSellPrice;
-    const migrationLine =
-      token?.phase === 'MIGRATED'
-        ? null
-        : metric === 'mcap'
-          ? (migrationMcap ?? migrationThresholdMcap)
-          : (migrationPrice ?? migrationThresholdPrice);
+    const migrationLine = metric === 'mcap' ? migrationMcap : migrationPrice;
     upsertPriceLine('avgBuy', avgBuyLine, AVG_COST_BASIS_LINE);
     upsertPriceLine('avgSell', avgSellLine, AVG_EXIT_PRICE_LINE);
     upsertPriceLine('migration', migrationLine, MIGRATION_LINE);
@@ -605,9 +573,6 @@ export default function Chart({ tokenId }: Props) {
     avgSellMcap,
     migrationPrice,
     migrationMcap,
-    migrationThresholdPrice,
-    migrationThresholdMcap,
-    token?.phase,
     upsertPriceLine,
   ]);
 

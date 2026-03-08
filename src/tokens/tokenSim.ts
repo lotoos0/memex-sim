@@ -1435,10 +1435,11 @@ export class TokenSim {
     }
 
     const migrationThresholdUsd = getMigrationThresholdUsd();
+    const forcedCurveMigration = this.curveRealToken <= CURVE_TOKEN_EPS;
     const eligibleForMigration =
       this.lastMcapUsd >= migrationThresholdUsd
       && this.migrationEligibilityStreak >= MIN_MIGRATION_SUSTAIN_CANDLES;
-    if (eligibleForMigration && !this.hasMigrated) {
+    if ((eligibleForMigration || forcedCurveMigration) && !this.hasMigrated) {
       this.hasMigrated = true;
       this.phase = 'MIGRATED';
       this.preMigrationFlowStrength = this.getFlowStrength();
