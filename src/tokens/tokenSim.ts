@@ -29,6 +29,7 @@ import {
   MICROBUST_RETRACE_CHANCE,
   MICROBUST_RETRACE_STRENGTH_PCT,
   rollNextMarketRegime,
+  TRADE_SIZE_BUCKETS_SOL,
   type TokenMarketBehavior,
   type TokenMarketRegime,
 } from './tokenMarketRegimes';
@@ -361,6 +362,7 @@ export class TokenSim {
   private preMigrationFlowStrength = 0;
   private deadUserReboundMs = 0;
   private lowEndImpulseCooldownMs = 0;
+  private cadenceBurstLeftMs = 0;
   private hasEnteredFinal = false;
   private hasMigrated = false;
   private bondingProgress = 0;
@@ -487,6 +489,17 @@ export class TokenSim {
     let driftPerSec = regimeBehavior.driftPerSec + this.archetypeProfile.driftBiasPerSec;
     let effectiveBuyBias = clamp(regimeBehavior.buyBias + sessionProfile.buyBiasShift, 0.14, 0.86);
 
+    const cadenceBurstActive = this.advanceCadenceBurst(realDtSec, sessionProfile, flowStrength, regimeBehavior);
+    if (cadenceBurstActive) {
+      const cadenceHeat = clamp(
+        0.9 + Math.max(0, flowStrength) * 0.55 + Math.max(0, this.attention - 1) * 0.18,
+        0.75,
+        1.6
+      );
+      lambdaMul *= 1 + regimeBehavior.cadenceBurstIntensity * 0.55 * cadenceHeat;
+      volMul *= 1 + regimeBehavior.cadenceBurstIntensity * 0.28 * cadenceHeat;
+    }
+
     if (inMigrationShock) {
       driftPerSec += this.rng.normal() * 0.022;
       effectiveBuyBias = clamp(0.5 + this.rng.normal() * 0.14 + flowStrength * 0.03, 0.24, 0.76);
@@ -524,6 +537,32 @@ export class TokenSim {
             0.72
           );
           lambdaMul *= 1.04;
+          volMul *= 1.12;
+        }
+      }
+
+      if (this.marketRegime === 'BLEED_OUT') {
+        const belowMigration = clamp((migrationThresholdUsd - this.lastMcapUsd) / Math.max(1, migrationThresholdUsd), 0, 1.4);
+        driftPerSec += this.rng.normal() * regimeBehavior.postMigrationBleedNoise * 0.024;
+        lambdaMul *= 1 + regimeBehavior.postMigrationBleedNoise * 0.1;
+        volMul *= 1 + regimeBehavior.postMigrationBleedNoise * 0.18;
+
+        if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedRetestChance * realDtSec) {
+          this.queueMicroburst('BUY', this.baseTradeSizeUsd * (1.2 + this.rng.next() * 1.6));
+          driftPerSec += 0.008 + belowMigration * 0.006;
+          effectiveBuyBias = clamp(effectiveBuyBias + 0.05, 0.16, 0.72);
+        }
+
+        if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedBounceChance * realDtSec) {
+          this.queueMicroburst('BUY', this.baseTradeSizeUsd * (0.8 + this.rng.next() * 1.1));
+          driftPerSec += 0.005;
+          volMul *= 1.06;
+        }
+
+        if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedRejectionChance * realDtSec) {
+          this.queueMicroburst('SELL', this.baseTradeSizeUsd * (1.35 + this.rng.next() * 1.65));
+          driftPerSec -= 0.014 + belowMigration * 0.01;
+          effectiveBuyBias = clamp(effectiveBuyBias - 0.07, 0.12, 0.68);
           volMul *= 1.12;
         }
       }
@@ -832,10 +871,11 @@ export class TokenSim {
       return;
     }
 
+    const minTradeUsd = this.getMinSyntheticTradeUsd();
     const targetTrades = clamp(
-      Math.round(6 + Math.sqrt(totalUsd / Math.max(25, this.baseTradeSizeUsd)) * 6 + this.rng.next() * 8),
-      4,
-      40
+      Math.round(3 + Math.sqrt(totalUsd / Math.max(20, this.baseTradeSizeUsd)) * 3.2 + this.rng.next() * 4),
+      2,
+      Math.max(2, Math.min(24, Math.floor(totalUsd / Math.max(1, minTradeUsd)) || 2))
     );
     let buyTrades = targetBuyUsd > 0
       ? Math.max(1, Math.round(targetTrades * (targetBuyUsd / Math.max(1e-9, totalUsd))))
@@ -848,8 +888,8 @@ export class TokenSim {
       else sellTrades -= 1;
     }
 
-    const buyParts = this.splitNotional(targetBuyUsd, buyTrades);
-    const sellParts = this.splitNotional(targetSellUsd, sellTrades);
+    const buyParts = this.splitNotional(targetBuyUsd, buyTrades, minTradeUsd);
+    const sellParts = this.splitNotional(targetSellUsd, sellTrades, minTradeUsd);
     const sidePlan: UserTradeSide[] = [];
     for (let i = 0; i < buyParts.length; i++) sidePlan.push('BUY');
     for (let i = 0; i < sellParts.length; i++) sidePlan.push('SELL');
@@ -1063,27 +1103,85 @@ export class TokenSim {
     return Math.max(1e-12, price * Math.exp(dLog));
   }
 
-  private splitNotional(totalUsd: number, parts: number): number[] {
+  private splitNotional(totalUsd: number, parts: number, minTradeUsdHint = 0): number[] {
     if (!Number.isFinite(totalUsd) || totalUsd <= 0 || parts <= 0) return [];
     if (parts === 1) return [totalUsd];
-    const weights: number[] = [];
-    let sum = 0;
-    for (let i = 0; i < parts; i++) {
-      const w = 0.35 + this.rng.next() * 1.35;
-      weights.push(w);
-      sum += w;
-    }
-    if (sum <= 0) return [totalUsd];
 
+    const behavior = this.getMarketBehavior(this.getFlowStrength(), this.getSessionProfile());
+    const minTradeUsd = Math.max(minTradeUsdHint, this.getMinSyntheticTradeUsd());
+    const maxParts = Math.max(1, Math.min(parts, Math.floor(totalUsd / Math.max(1, minTradeUsd)) || 1));
+    const bucketUsd = this.getTradeSizeBucketsUsd();
     const out: number[] = [];
-    let used = 0;
-    for (let i = 0; i < parts - 1; i++) {
-      const v = totalUsd * (weights[i]! / sum);
-      out.push(v);
-      used += v;
+    let remaining = totalUsd;
+
+    while (out.length < maxParts - 1) {
+      const remainingSlots = maxParts - out.length - 1;
+      const reserve = remainingSlots * minTradeUsd;
+      const maxAllowed = remaining - reserve;
+      if (maxAllowed <= minTradeUsd * 0.7) break;
+
+      const bucketIndex = this.pickWeightedIndex(behavior.tradeSizeBucketWeights);
+      const baseBucketUsd = bucketUsd[Math.min(bucketIndex, bucketUsd.length - 1)] ?? minTradeUsd;
+      const candidate = baseBucketUsd * (0.82 + this.rng.next() * 0.44);
+      const part = clamp(candidate, minTradeUsd, maxAllowed);
+      out.push(part);
+      remaining -= part;
     }
-    out.push(Math.max(0, totalUsd - used));
+
+    if (out.length === 0) return [totalUsd];
+    if (remaining < minTradeUsd * 0.55) {
+      out[out.length - 1] += remaining;
+      return out;
+    }
+    out.push(Math.max(0, remaining));
     return out;
+  }
+
+  private getTradeSizeBucketsUsd(): number[] {
+    return [...TRADE_SIZE_BUCKETS_SOL].map((sol) => sol * SOL_PRICE_USD);
+  }
+
+  private getMinSyntheticTradeUsd(): number {
+    const behavior = this.getMarketBehavior(this.getFlowStrength(), this.getSessionProfile());
+    let floorUsd = behavior.tradeSizeMinClipSol * SOL_PRICE_USD;
+    if (this.phase === 'DEAD') floorUsd *= 0.45;
+    else if (this.marketRegime === 'BLEED_OUT' && this.lastMcapUsd <= MCAP_FLOOR_USD * 3.5) floorUsd *= 0.6;
+    return Math.max(1.5, floorUsd);
+  }
+
+  private pickWeightedIndex(weights: readonly number[]): number {
+    if (weights.length === 0) return 0;
+    const total = weights.reduce((sum, weight) => sum + Math.max(0, weight), 0);
+    if (total <= 0) return 0;
+    let roll = this.rng.next() * total;
+    for (let i = 0; i < weights.length; i++) {
+      roll -= Math.max(0, weights[i] ?? 0);
+      if (roll <= 0) return i;
+    }
+    return weights.length - 1;
+  }
+
+  private advanceCadenceBurst(
+    realDtSec: number,
+    sessionProfile: SessionSimProfile,
+    flowStrength: number,
+    regimeBehavior: TokenMarketBehavior
+  ): boolean {
+    this.cadenceBurstLeftMs = Math.max(0, this.cadenceBurstLeftMs - realDtSec * 1000);
+    if (this.cadenceBurstLeftMs > 0) return true;
+    if (this.phase === 'DEAD' || this.migrationFreezeLeftMs > 0) return false;
+
+    const triggerChance =
+      regimeBehavior.cadenceBurstChance
+      * clamp(sessionProfile.tempoMul, 0.75, 1.5)
+      * clamp(0.8 + Math.max(0, flowStrength) * 0.75 + Math.max(0, this.attention - 1) * 0.22, 0.75, 1.7)
+      * realDtSec;
+    if (this.rng.next() >= triggerChance) return false;
+
+    const minMs = regimeBehavior.cadenceBurstDurationMinSec * 1000;
+    const maxMs = regimeBehavior.cadenceBurstDurationMaxSec * 1000;
+    this.cadenceBurstLeftMs = minMs + this.rng.next() * Math.max(0, maxMs - minMs);
+    return true;
   }
 
   private executeSimBuyTrade(targetUsd: number, tsMs: number, actorGroup: TokenActorGroup = 'late_retail'): boolean {
@@ -1447,10 +1545,19 @@ export class TokenSim {
         lambdaMul: behavior.lambdaMul * 0.08,
         liquidityMul: behavior.liquidityMul * 1.1,
         tradeSizeMul: behavior.tradeSizeMul * 0.2,
+        tradeSizeMinClipSol: Math.max(0.02, behavior.tradeSizeMinClipSol * 0.6),
         impactMul: behavior.impactMul * 0.4,
         tradeSigmaMul: behavior.tradeSigmaMul * 0.6,
         devSignalMul: 0,
         whaleChanceMul: 0,
+        cadenceBurstChance: 0,
+        cadenceBurstDurationMinSec: behavior.cadenceBurstDurationMinSec,
+        cadenceBurstDurationMaxSec: behavior.cadenceBurstDurationMaxSec,
+        cadenceBurstIntensity: 0,
+        postMigrationBleedRetestChance: behavior.postMigrationBleedRetestChance,
+        postMigrationBleedBounceChance: behavior.postMigrationBleedBounceChance,
+        postMigrationBleedRejectionChance: behavior.postMigrationBleedRejectionChance,
+        postMigrationBleedNoise: behavior.postMigrationBleedNoise,
       };
     }
 
