@@ -543,27 +543,40 @@ export class TokenSim {
 
       if (this.marketRegime === 'BLEED_OUT') {
         const belowMigration = clamp((migrationThresholdUsd - this.lastMcapUsd) / Math.max(1, migrationThresholdUsd), 0, 1.4);
-        driftPerSec += this.rng.normal() * regimeBehavior.postMigrationBleedNoise * 0.024;
-        lambdaMul *= 1 + regimeBehavior.postMigrationBleedNoise * 0.1;
-        volMul *= 1 + regimeBehavior.postMigrationBleedNoise * 0.18;
+        const reclaimBias = clamp(belowMigration, 0, 1);
+        driftPerSec += this.rng.normal() * regimeBehavior.postMigrationBleedNoise * 0.02;
+        lambdaMul *= 1 + regimeBehavior.postMigrationBleedNoise * 0.08;
+        volMul *= 1 + regimeBehavior.postMigrationBleedNoise * 0.16;
 
         if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedRetestChance * realDtSec) {
-          this.queueMicroburst('BUY', this.baseTradeSizeUsd * (1.2 + this.rng.next() * 1.6));
-          driftPerSec += 0.008 + belowMigration * 0.006;
-          effectiveBuyBias = clamp(effectiveBuyBias + 0.05, 0.16, 0.72);
+          this.queueMicroburst('BUY', this.baseTradeSizeUsd * (1.1 + this.rng.next() * 1.45));
+          driftPerSec += 0.006 + reclaimBias * 0.008;
+          effectiveBuyBias = clamp(effectiveBuyBias + 0.055, 0.16, 0.72);
+          lambdaMul *= 1.06;
         }
 
         if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedBounceChance * realDtSec) {
-          this.queueMicroburst('BUY', this.baseTradeSizeUsd * (0.8 + this.rng.next() * 1.1));
-          driftPerSec += 0.005;
-          volMul *= 1.06;
+          this.queueMicroburst('BUY', this.baseTradeSizeUsd * (0.7 + this.rng.next() * 1.0));
+          driftPerSec += 0.004 + reclaimBias * 0.003;
+          volMul *= 1.05;
+          effectiveBuyBias = clamp(effectiveBuyBias + 0.03, 0.15, 0.7);
         }
 
         if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedRejectionChance * realDtSec) {
           this.queueMicroburst('SELL', this.baseTradeSizeUsd * (1.35 + this.rng.next() * 1.65));
-          driftPerSec -= 0.014 + belowMigration * 0.01;
-          effectiveBuyBias = clamp(effectiveBuyBias - 0.07, 0.12, 0.68);
-          volMul *= 1.12;
+          driftPerSec -= 0.018 + belowMigration * 0.012;
+          effectiveBuyBias = clamp(effectiveBuyBias - 0.085, 0.12, 0.66);
+          volMul *= 1.14;
+        }
+
+        if (
+          !this.microburst
+          && belowMigration > 0.06
+          && this.rng.next() < (0.1 + reclaimBias * 0.16) * realDtSec
+        ) {
+          this.queueMicroburst('BUY', this.baseTradeSizeUsd * (0.55 + this.rng.next() * 0.65));
+          driftPerSec += 0.003 + reclaimBias * 0.004;
+          effectiveBuyBias = clamp(effectiveBuyBias + 0.025, 0.14, 0.68);
         }
       }
     }
@@ -873,7 +886,7 @@ export class TokenSim {
 
     const minTradeUsd = this.getMinSyntheticTradeUsd();
     const targetTrades = clamp(
-      Math.round(3 + Math.sqrt(totalUsd / Math.max(20, this.baseTradeSizeUsd)) * 3.2 + this.rng.next() * 4),
+      Math.round(3 + Math.sqrt(totalUsd / Math.max(20, this.baseTradeSizeUsd)) * 3.05 + this.rng.next() * 3.6),
       2,
       Math.max(2, Math.min(24, Math.floor(totalUsd / Math.max(1, minTradeUsd)) || 2))
     );
@@ -1144,9 +1157,19 @@ export class TokenSim {
   private getMinSyntheticTradeUsd(): number {
     const behavior = this.getMarketBehavior(this.getFlowStrength(), this.getSessionProfile());
     let floorUsd = behavior.tradeSizeMinClipSol * SOL_PRICE_USD;
+    const activity = this.getSyntheticTradeActivityFactor();
+    floorUsd *= 0.92 + activity * 0.38;
     if (this.phase === 'DEAD') floorUsd *= 0.45;
     else if (this.marketRegime === 'BLEED_OUT' && this.lastMcapUsd <= MCAP_FLOOR_USD * 3.5) floorUsd *= 0.6;
     return Math.max(1.5, floorUsd);
+  }
+
+  private getSyntheticTradeActivityFactor(): number {
+    const stats = this.getFlowWindowTotals();
+    const volHeat = clamp(stats.vol5mUsd / Math.max(4_000, this.lastMcapUsd * 0.18), 0, 1.4);
+    const txHeat = clamp((stats.buys5m + stats.sells5m) / 90, 0, 1.25);
+    const attentionHeat = clamp(this.attention - 0.8, 0, 1.2);
+    return clamp(volHeat * 0.45 + txHeat * 0.35 + attentionHeat * 0.2, 0, 1.25);
   }
 
   private pickWeightedIndex(weights: readonly number[]): number {
