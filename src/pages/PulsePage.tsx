@@ -20,6 +20,7 @@ import {
   type PulseSortsByBucket,
 } from '../components/pulse/pulseSorts';
 import type { TokenState } from '../tokens/types';
+import { isFinalStretchToken, isMigratedToken, isNewPairsToken } from '../tokens/tokenBuckets';
 
 type ColumnKey = 'newPairs' | 'finalStretch' | 'migrated';
 type PulseDisplayMode = 'comfortable' | 'dense';
@@ -64,19 +65,17 @@ function loadPulseSorts(): PulseSortsByBucket {
   }
 }
 
-function withDead(
+function selectPulseBucketRows(
   filters: PulseColumnFilters,
   buckets: {
     newPairs: TokenState[];
     finalStretch: TokenState[];
     migrated: TokenState[];
-    deadLow: TokenState[];
-    deadHigh: TokenState[];
   }
 ): TokenState[] {
   const out: TokenState[] = [];
-  if (filters.newPairs) out.push(...buckets.newPairs, ...buckets.deadLow);
-  if (filters.finalStretch) out.push(...buckets.finalStretch, ...buckets.deadHigh);
+  if (filters.newPairs) out.push(...buckets.newPairs);
+  if (filters.finalStretch) out.push(...buckets.finalStretch);
   if (filters.migrated) out.push(...buckets.migrated);
   return out.sort((a, b) => b.mcapUsd - a.mcapUsd);
 }
@@ -177,11 +176,9 @@ export default function PulsePage() {
     const all = Object.values(tokensById);
     const byMcapDesc = (a: (typeof all)[number], b: (typeof all)[number]) => b.mcapUsd - a.mcapUsd;
     return {
-      newPairs: all.filter(t => t.phase === 'NEW').sort(byMcapDesc),
-      finalStretch: all.filter(t => t.phase === 'FINAL').sort(byMcapDesc),
-      migrated: all.filter(t => t.phase === 'MIGRATED').sort(byMcapDesc),
-      deadLow: all.filter(t => (t.phase === 'DEAD' || t.phase === 'RUGGED') && t.mcapUsd < 30_000).sort(byMcapDesc),
-      deadHigh: all.filter(t => (t.phase === 'DEAD' || t.phase === 'RUGGED') && t.mcapUsd >= 30_000).sort(byMcapDesc),
+      newPairs: all.filter(isNewPairsToken).sort(byMcapDesc),
+      finalStretch: all.filter(isFinalStretchToken).sort(byMcapDesc),
+      migrated: all.filter(isMigratedToken).sort(byMcapDesc),
     };
   }, [tokensById]);
 
@@ -201,15 +198,15 @@ export default function PulsePage() {
     sortPulseTokensForBucket(rows, bucket, pulseSortsByBucket[bucket], tradeFlowByTokenId);
 
   const newPairs = useMemo(
-    () => sortTokensForBucket('newPairs', filterTokensForBucket('newPairs', withDead(columnFilters.newPairs, buckets))),
+    () => sortTokensForBucket('newPairs', filterTokensForBucket('newPairs', selectPulseBucketRows(columnFilters.newPairs, buckets))),
     [buckets, columnFilters.newPairs, compiledFiltersByBucket, pulseSortsByBucket, tradeFlowByTokenId]
   );
   const finalStretch = useMemo(
-    () => sortTokensForBucket('finalStretch', filterTokensForBucket('finalStretch', withDead(columnFilters.finalStretch, buckets))),
+    () => sortTokensForBucket('finalStretch', filterTokensForBucket('finalStretch', selectPulseBucketRows(columnFilters.finalStretch, buckets))),
     [buckets, columnFilters.finalStretch, compiledFiltersByBucket, pulseSortsByBucket, tradeFlowByTokenId]
   );
   const migrated = useMemo(
-    () => sortTokensForBucket('migrated', filterTokensForBucket('migrated', withDead(columnFilters.migrated, buckets))),
+    () => sortTokensForBucket('migrated', filterTokensForBucket('migrated', selectPulseBucketRows(columnFilters.migrated, buckets))),
     [buckets, columnFilters.migrated, compiledFiltersByBucket, pulseSortsByBucket, tradeFlowByTokenId]
   );
 

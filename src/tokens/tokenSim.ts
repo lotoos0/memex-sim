@@ -288,7 +288,7 @@ export type UserTradeOrderStatus =
   }
   | UserTradeExecutionNotice;
 
-const FINAL_PROGRESS = 0.85;
+const FINAL_PROGRESS = 0.8;
 const CURVE_FEE_BPS = 100;
 const CURVE_TOKEN_EPS = 1e-6;
 const MIGRATED_LIQUIDITY_FLOOR_USD = 7_500;
@@ -1757,10 +1757,12 @@ export class TokenSim {
     const mcap = this.lastMcapUsd;
     const stats = this.getFlowWindowTotals();
     const changePct = this.getChangePct();
+    const simNowMs = this.getPublishedSimTimeMs();
+    const ruggedAtSimMs = this.ruggedAtSimMs == null ? null : this.meta.createdAtSimMs + this.ruggedAtSimMs;
 
     return {
       phase: this.phase,
-      simTimeMs: this.simTimeMs,
+      simTimeMs: simNowMs,
       lastPriceUsd: this.lastPriceUsd,
       mcapUsd: mcap,
       liquidityUsd: mcap * 0.15,
@@ -1770,7 +1772,7 @@ export class TokenSim {
       sells5m: stats.sells5m,
       changePct,
       priceAtSpawn: this.priceAtSpawn,
-      ruggedAtSimMs: this.ruggedAtSimMs,
+      ruggedAtSimMs,
     };
   }
 
@@ -1859,10 +1861,21 @@ export class TokenSim {
   }
 
   getPhase(): TokenPhase { return this.phase; }
-  getSimTimeMs(): number { return this.simTimeMs; }
+  getSimTimeMs(): number { return this.getPublishedSimTimeMs(); }
   getSpawnRealMs(): number { return this.spawnRealMs; }
   getLastPriceUsd(): number { return this.lastPriceUsd; }
   getLastMcapUsd(): number { return this.lastMcapUsd; }
+  bootstrapAdvance(targetAgeSimMs: number, sessionBucket: SessionBucket = 'OFF'): void {
+    const targetMs = Math.max(0, targetAgeSimMs);
+    let guard = 0;
+    while (this.simTimeMs + 1 < targetMs && guard < 20_000) {
+      const remainingMs = targetMs - this.simTimeMs;
+      const stepRealSec = clamp(remainingMs / (SIM_TIME_MULTIPLIER * 1000), 0.2, 1.2);
+      this.lastTickRealMs = Date.now() - stepRealSec * 1000;
+      this.tick(stepRealSec, sessionBucket);
+      guard += 1;
+    }
+  }
   getCurveDebugSnapshot(): CurveDebugSnapshot {
     const k = this.curveVirtualBase * this.curveVirtualToken;
     return {
@@ -2396,6 +2409,10 @@ export class TokenSim {
     );
   }
 
+  private getPublishedSimTimeMs(): number {
+    return this.meta.createdAtSimMs + this.simTimeMs;
+  }
+
   private getRecentTradeStatsReal(windowMs: number, nowMs: number): { tx: number; buys: number; sells: number } {
     const cutoff = nowMs - windowMs;
     let tx = 0;
@@ -2421,7 +2438,7 @@ export class TokenSim {
     this.lastMigrationEligibilitySecond = secondBucket;
 
     const migrationThresholdUsd = getMigrationThresholdUsd();
-    const ageSec = (nowMs - this.spawnRealMs) / 1000;
+    const ageSec = this.simTimeMs / 1000;
     const tx60s = this.getRecentTradeStatsReal(60_000, nowMs).tx;
     const holders = this.getEligibleHolderCount();
     const aboveThreshold = this.lastMcapUsd >= migrationThresholdUsd;

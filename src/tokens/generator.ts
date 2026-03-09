@@ -26,7 +26,7 @@ const LOGO_COLORS = [
 
 let _counter = 0;
 
-export function generateToken(rng: RNG, simTimeMs: number): TokenMeta {
+export function generateToken(rng: RNG, simTimeMs: number, fateOverride?: TokenFate): TokenMeta {
   const id = `tok_${++_counter}_${(rng.next() * 0xFFFFFF | 0).toString(16)}`;
 
   const useAdj = rng.next() < 0.35;
@@ -37,12 +37,16 @@ export function generateToken(rng: RNG, simTimeMs: number): TokenMeta {
 
   const logoColor = LOGO_COLORS[Math.floor(rng.next() * LOGO_COLORS.length)]!;
 
-  const fateRoll = rng.next();
   let fate: TokenFate;
-  if (fateRoll < 0.20)      fate = 'QUICK_RUG';
-  else if (fateRoll < 0.60) fate = 'SHORT';
-  else if (fateRoll < 0.90) fate = 'NORMAL';
-  else                       fate = 'LONG_RUNNER';
+  if (fateOverride) {
+    fate = fateOverride;
+  } else {
+    const fateRoll = rng.next();
+    if (fateRoll < 0.20)      fate = 'QUICK_RUG';
+    else if (fateRoll < 0.60) fate = 'SHORT';
+    else if (fateRoll < 0.90) fate = 'NORMAL';
+    else                       fate = 'LONG_RUNNER';
+  }
 
   return {
     id, name, ticker, logoColor,
