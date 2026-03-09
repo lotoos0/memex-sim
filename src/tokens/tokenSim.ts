@@ -360,6 +360,7 @@ export class TokenSim {
   private migrationPostShockRegime: TokenMarketRegime | null = null;
   private preMigrationFlowStrength = 0;
   private deadUserReboundMs = 0;
+  private lowEndImpulseCooldownMs = 0;
   private hasEnteredFinal = false;
   private hasMigrated = false;
   private bondingProgress = 0;
@@ -639,6 +640,37 @@ export class TokenSim {
     );
 
     const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
+    const recentTradeStats = this.getRecentTradeStatsReal(18_000, nowMs);
+    const isNearFloor = this.lastMcapUsd <= MCAP_FLOOR_USD * 3.5;
+    const isLowLiquidity = liquidityUsd <= 9_500;
+    const isLowActivity = recentTradeStats.tx <= 3;
+    const isWeakOrDeadState =
+      this.phase === 'DEAD'
+      || this.marketRegime === 'DEAD_BOUNCE'
+      || this.marketRegime === 'BLEED_OUT'
+      || this.meta.fate === 'QUICK_RUG'
+      || this.getDynamicQualityScore(flowStrength) < 0.42;
+    const lowEndSuppressionContext = isNearFloor && isLowLiquidity && isLowActivity && isWeakOrDeadState;
+    if (lowEndSuppressionContext && this.deadUserReboundMs <= 0) {
+      this.lowEndImpulseCooldownMs = Math.max(0, this.lowEndImpulseCooldownMs - realDtSec * 1000);
+      const suppressionStrength = clamp(
+        ((MCAP_FLOOR_USD * 3.5 - this.lastMcapUsd) / Math.max(1, MCAP_FLOOR_USD * 2.5)) * 0.5
+        + (1 - clamp(liquidityUsd / 9_500, 0, 1)) * 0.3
+        + (1 - clamp(recentTradeStats.tx / 3, 0, 1)) * 0.2,
+        0.18,
+        0.85
+      );
+      lambdaMul *= Math.max(0.05, 0.22 - suppressionStrength * 0.08);
+      volMul *= Math.max(0.12, 0.42 - suppressionStrength * 0.16);
+      driftPerSec -= suppressionStrength * 0.012;
+      effectiveBuyBias = clamp(effectiveBuyBias - suppressionStrength * 0.1, 0.06, 0.48);
+      if (this.lowEndImpulseCooldownMs > 0) {
+        lambdaMul *= 0.22;
+        volMul *= 0.45;
+      }
+    } else {
+      this.lowEndImpulseCooldownMs = Math.max(0, this.lowEndImpulseCooldownMs - realDtSec * 1000);
+    }
     const candleTsMs = nowMs;
     const isLaunchTick = !this.emittedInitialDevBuy;
     const devFlow = this.buildDevFlow(
@@ -662,6 +694,7 @@ export class TokenSim {
       hasEnteredFinal: this.hasEnteredFinal,
       hasDevBuySignal: devFlow?.eventType === 'DEV_BUY',
       hasDevSellSignal: devFlow?.eventType === 'DEV_SELL',
+      suppressLowEndHeartbeat: lowEndSuppressionContext && this.deadUserReboundMs <= 0,
     });
     const prevPriceUsd = this.lastPriceUsd;
     const burstDirectionalUsd = this.consumeMicroburstDirectionalUsd(realDtSec);
@@ -731,6 +764,13 @@ export class TokenSim {
         liquidityUsd,
         this.impactK * impactMul
       );
+    }
+
+    if (lowEndSuppressionContext && this.deadUserReboundMs <= 0 && (targetBuyUsd + targetSellUsd) > 0) {
+      const syntheticPulse = actorBuyBoostUsd + actorSellBoostUsd + Math.abs(burstDirectionalUsd);
+      if (syntheticPulse > this.baseTradeSizeUsd * 0.18 && this.lowEndImpulseCooldownMs <= 0) {
+        this.lowEndImpulseCooldownMs = 5_000 + this.rng.next() * 15_000;
+      }
     }
 
     const guardedFlow = this.guardCandleDisplacement({

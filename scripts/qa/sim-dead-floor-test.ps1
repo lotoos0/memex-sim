@@ -28,7 +28,23 @@ function Start-DevServerIfNeeded {
   throw "Cannot start local dev server on http://127.0.0.1:5173"
 }
 
+function Wait-DevPageReady {
+  $deadline = (Get-Date).AddSeconds(45)
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 500
+    try {
+      $resp = Invoke-WebRequest -Uri "http://127.0.0.1:5173/" -UseBasicParsing -TimeoutSec 3
+      if (($resp.StatusCode -ge 200) -and ($resp.StatusCode -lt 500) -and ($resp.Content -match 'id="root"')) {
+        return
+      }
+    } catch {}
+  }
+
+  throw "Timed out waiting for Vite page readiness on http://127.0.0.1:5173"
+}
+
 $server = Start-DevServerIfNeeded
+Wait-DevPageReady
 
 try {
   npx --yes --package @playwright/cli playwright-cli install | Out-Null

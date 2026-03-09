@@ -21,6 +21,11 @@ async function waitFor<T>(predicate: () => T | null | false, timeoutMs: number, 
 }
 
 export async function runQuickLimitQa() {
+  await waitFor(() => {
+    const tokenState = useTokenStore.getState();
+    return Object.keys(tokenState.tokensById).length > 0 ? true : null;
+  }, 12_000, 'token store hydration');
+
   const tokenId = await waitFor(() => {
     const tokenState = useTokenStore.getState();
     const rows = Object.values(tokenState.tokensById);
@@ -58,7 +63,7 @@ export async function runQuickLimitQa() {
       });
     const token = ranked[0];
     return token?.id ?? null;
-  }, 8000, 'token runtime');
+  }, 15_000, 'token runtime');
 
   const getLastPriceUsd = () => useTokenStore.getState().tokensById[tokenId]?.lastPriceUsd ?? 0;
   const getWalletSol = () => useWalletStore.getState().solBalance;
