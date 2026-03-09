@@ -4,7 +4,21 @@ async (page) => {
     if (!cond) throw new Error(message);
   };
 
-  await page.goto('http://127.0.0.1:5173/');
+  let gotoError = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await page.goto('http://127.0.0.1:5173/', {
+        waitUntil: 'domcontentloaded',
+        timeout: 20_000,
+      });
+      gotoError = null;
+      break;
+    } catch (error) {
+      gotoError = error;
+      await wait(1500);
+    }
+  }
+  if (gotoError) throw gotoError;
   await page.waitForTimeout(1200);
 
   const result = await page.evaluate(async () => {
