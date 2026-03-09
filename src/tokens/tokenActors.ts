@@ -37,6 +37,7 @@ export type TokenActorContext = {
   hasEnteredFinal: boolean;
   hasDevBuySignal: boolean;
   hasDevSellSignal: boolean;
+  suppressLowEndHeartbeat: boolean;
 };
 
 type ActorProfile = {
@@ -158,6 +159,15 @@ export function pickActorGroup(
 }
 
 export function computeActorOverlay(rng: RNG, context: TokenActorContext): TokenActorOverlay {
+  if (context.suppressLowEndHeartbeat) {
+    return {
+      buyBoostUsd: 0,
+      sellBoostUsd: 0,
+      buyMix: [],
+      sellMix: [],
+    };
+  }
+
   const buyWeights: Partial<Record<TokenActorGroup, number>> = {};
   const sellWeights: Partial<Record<TokenActorGroup, number>> = {};
 
