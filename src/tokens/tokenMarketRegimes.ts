@@ -36,6 +36,7 @@ export const POST_MIGRATION_REJECTION_CHANCE = 0.35;
 export const POST_MIGRATION_PLATEAU_PENALTY = 0.3;
 export const POST_MIGRATION_MEAN_REVERSION_CHANCE = 0.3;
 export const POST_MIGRATION_OVEREXTENSION_PENALTY = 0.25;
+export const TRADE_SIZE_BUCKETS_SOL = [0.02, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.5] as const;
 export const MIGRATION_APPROACH_FRICTION_START_PCT = 0.8;
 export const MIGRATION_APPROACH_FRICTION_MAX = 0.35;
 export const MICROBUST_CANDLES_MIN = 3;
@@ -51,6 +52,8 @@ export interface TokenMarketBehavior {
   lambdaMul: number;
   liquidityMul: number;
   tradeSizeMul: number;
+  tradeSizeMinClipSol: number;
+  tradeSizeBucketWeights: readonly number[];
   impactMul: number;
   maxNetImpactPctPerSec: number;
   regimeImpactMultiplier: number;
@@ -64,6 +67,14 @@ export interface TokenMarketBehavior {
   postMigrationPlateauPenalty: number;
   postMigrationMeanReversionChance: number;
   postMigrationOverextensionPenalty: number;
+  cadenceBurstChance: number;
+  cadenceBurstDurationMinSec: number;
+  cadenceBurstDurationMaxSec: number;
+  cadenceBurstIntensity: number;
+  postMigrationBleedRetestChance: number;
+  postMigrationBleedBounceChance: number;
+  postMigrationBleedRejectionChance: number;
+  postMigrationBleedNoise: number;
 }
 
 type MigrationOutcomeWeightSet = {
@@ -113,6 +124,17 @@ const MIGRATION_OUTCOME_WEIGHTS: Record<'weak' | 'average' | 'strong', Migration
     chop: 0.45,
     bleed: 0.25,
   },
+};
+
+const TRADE_SIZE_WEIGHTS_BY_REGIME: Record<TokenMarketRegime, readonly number[]> = {
+  LAUNCH_CHAOS: [0.04, 0.14, 0.2, 0.24, 0.2, 0.12, 0.04, 0.02],
+  FIRST_PUMP: [0.03, 0.12, 0.2, 0.25, 0.22, 0.12, 0.04, 0.02],
+  CHOP: [0.08, 0.2, 0.24, 0.22, 0.16, 0.07, 0.02, 0.01],
+  GRIND_UP: [0.05, 0.15, 0.22, 0.24, 0.19, 0.1, 0.04, 0.01],
+  BLEED_OUT: [0.1, 0.24, 0.24, 0.2, 0.14, 0.06, 0.015, 0.005],
+  DEAD_BOUNCE: [0.16, 0.28, 0.24, 0.17, 0.1, 0.04, 0.01, 0],
+  MIGRATION_SHOCK: [0.02, 0.08, 0.16, 0.24, 0.24, 0.16, 0.07, 0.03],
+  POST_MIGRATION_DISCOVERY: [0.03, 0.1, 0.18, 0.24, 0.22, 0.14, 0.06, 0.03],
 };
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -169,6 +191,8 @@ export function getMarketBehavior(
         lambdaMul: 1.24 * phaseBoost,
         liquidityMul: 0.92,
         tradeSizeMul: 1.06,
+        tradeSizeMinClipSol: 0.05,
+        tradeSizeBucketWeights: TRADE_SIZE_WEIGHTS_BY_REGIME.LAUNCH_CHAOS,
         impactMul: 1.01,
         maxNetImpactPctPerSec: 0.46,
         regimeImpactMultiplier: 0.98,
@@ -182,6 +206,14 @@ export function getMarketBehavior(
         postMigrationPlateauPenalty: 0,
         postMigrationMeanReversionChance: 0,
         postMigrationOverextensionPenalty: 0,
+        cadenceBurstChance: 0.24,
+        cadenceBurstDurationMinSec: 2,
+        cadenceBurstDurationMaxSec: 5,
+        cadenceBurstIntensity: 0.82,
+        postMigrationBleedRetestChance: 0,
+        postMigrationBleedBounceChance: 0,
+        postMigrationBleedRejectionChance: 0,
+        postMigrationBleedNoise: 0,
       };
     case 'FIRST_PUMP':
       return {
@@ -191,6 +223,8 @@ export function getMarketBehavior(
         lambdaMul: 1.18 * phaseBoost,
         liquidityMul: 0.98,
         tradeSizeMul: 1.0,
+        tradeSizeMinClipSol: 0.05,
+        tradeSizeBucketWeights: TRADE_SIZE_WEIGHTS_BY_REGIME.FIRST_PUMP,
         impactMul: 0.97,
         maxNetImpactPctPerSec: 0.34,
         regimeImpactMultiplier: 0.95,
@@ -204,6 +238,14 @@ export function getMarketBehavior(
         postMigrationPlateauPenalty: 0,
         postMigrationMeanReversionChance: 0,
         postMigrationOverextensionPenalty: 0,
+        cadenceBurstChance: 0.2,
+        cadenceBurstDurationMinSec: 2,
+        cadenceBurstDurationMaxSec: 4,
+        cadenceBurstIntensity: 0.74,
+        postMigrationBleedRetestChance: 0,
+        postMigrationBleedBounceChance: 0,
+        postMigrationBleedRejectionChance: 0,
+        postMigrationBleedNoise: 0,
       };
     case 'CHOP':
       return {
@@ -213,6 +255,8 @@ export function getMarketBehavior(
         lambdaMul: 0.96 * phaseBoost,
         liquidityMul: 1.08,
         tradeSizeMul: 0.92,
+        tradeSizeMinClipSol: 0.04,
+        tradeSizeBucketWeights: TRADE_SIZE_WEIGHTS_BY_REGIME.CHOP,
         impactMul: 0.88,
         maxNetImpactPctPerSec: 0.12,
         regimeImpactMultiplier: 0.94,
@@ -226,6 +270,14 @@ export function getMarketBehavior(
         postMigrationPlateauPenalty: 0,
         postMigrationMeanReversionChance: 0,
         postMigrationOverextensionPenalty: 0,
+        cadenceBurstChance: 0.13,
+        cadenceBurstDurationMinSec: 2,
+        cadenceBurstDurationMaxSec: 4,
+        cadenceBurstIntensity: 0.5,
+        postMigrationBleedRetestChance: 0,
+        postMigrationBleedBounceChance: 0,
+        postMigrationBleedRejectionChance: 0,
+        postMigrationBleedNoise: 0,
       };
     case 'GRIND_UP':
       return {
@@ -235,6 +287,8 @@ export function getMarketBehavior(
         lambdaMul: 0.94 * phaseBoost,
         liquidityMul: 1.16,
         tradeSizeMul: 0.96,
+        tradeSizeMinClipSol: 0.05,
+        tradeSizeBucketWeights: TRADE_SIZE_WEIGHTS_BY_REGIME.GRIND_UP,
         impactMul: 0.74,
         maxNetImpactPctPerSec: 0.15,
         regimeImpactMultiplier: 0.9,
@@ -248,6 +302,14 @@ export function getMarketBehavior(
         postMigrationPlateauPenalty: 0,
         postMigrationMeanReversionChance: 0,
         postMigrationOverextensionPenalty: 0,
+        cadenceBurstChance: 0.09,
+        cadenceBurstDurationMinSec: 2,
+        cadenceBurstDurationMaxSec: 3,
+        cadenceBurstIntensity: 0.38,
+        postMigrationBleedRetestChance: 0,
+        postMigrationBleedBounceChance: 0,
+        postMigrationBleedRejectionChance: 0,
+        postMigrationBleedNoise: 0,
       };
     case 'BLEED_OUT':
       return {
@@ -257,6 +319,8 @@ export function getMarketBehavior(
         lambdaMul: 0.8 * phaseBoost,
         liquidityMul: 0.86,
         tradeSizeMul: 0.88,
+        tradeSizeMinClipSol: 0.03,
+        tradeSizeBucketWeights: TRADE_SIZE_WEIGHTS_BY_REGIME.BLEED_OUT,
         impactMul: 0.88,
         maxNetImpactPctPerSec: 0.16,
         regimeImpactMultiplier: 0.96,
@@ -270,6 +334,14 @@ export function getMarketBehavior(
         postMigrationPlateauPenalty: 0,
         postMigrationMeanReversionChance: 0,
         postMigrationOverextensionPenalty: 0,
+        cadenceBurstChance: 0.06,
+        cadenceBurstDurationMinSec: 2,
+        cadenceBurstDurationMaxSec: 4,
+        cadenceBurstIntensity: 0.3,
+        postMigrationBleedRetestChance: 0.24,
+        postMigrationBleedBounceChance: 0.18,
+        postMigrationBleedRejectionChance: 0.34,
+        postMigrationBleedNoise: 0.65,
       };
     case 'DEAD_BOUNCE':
       return {
@@ -279,6 +351,8 @@ export function getMarketBehavior(
         lambdaMul: 0.65,
         liquidityMul: 0.72,
         tradeSizeMul: 0.84,
+        tradeSizeMinClipSol: 0.025,
+        tradeSizeBucketWeights: TRADE_SIZE_WEIGHTS_BY_REGIME.DEAD_BOUNCE,
         impactMul: 1.04,
         maxNetImpactPctPerSec: 0.14,
         regimeImpactMultiplier: 0.94,
@@ -292,6 +366,14 @@ export function getMarketBehavior(
         postMigrationPlateauPenalty: 0,
         postMigrationMeanReversionChance: 0,
         postMigrationOverextensionPenalty: 0,
+        cadenceBurstChance: 0.04,
+        cadenceBurstDurationMinSec: 1.5,
+        cadenceBurstDurationMaxSec: 3,
+        cadenceBurstIntensity: 0.24,
+        postMigrationBleedRetestChance: 0,
+        postMigrationBleedBounceChance: 0,
+        postMigrationBleedRejectionChance: 0,
+        postMigrationBleedNoise: 0,
       };
     case 'MIGRATION_SHOCK':
       return {
@@ -301,6 +383,8 @@ export function getMarketBehavior(
         lambdaMul: 2.3 * phaseBoost,
         liquidityMul: 0.55,
         tradeSizeMul: 1.38,
+        tradeSizeMinClipSol: 0.1,
+        tradeSizeBucketWeights: TRADE_SIZE_WEIGHTS_BY_REGIME.MIGRATION_SHOCK,
         impactMul: 1.34,
         maxNetImpactPctPerSec: 0.32,
         regimeImpactMultiplier: 1.1,
@@ -314,6 +398,14 @@ export function getMarketBehavior(
         postMigrationPlateauPenalty: POST_MIGRATION_PLATEAU_PENALTY,
         postMigrationMeanReversionChance: POST_MIGRATION_MEAN_REVERSION_CHANCE,
         postMigrationOverextensionPenalty: POST_MIGRATION_OVEREXTENSION_PENALTY,
+        cadenceBurstChance: 0.18,
+        cadenceBurstDurationMinSec: 2,
+        cadenceBurstDurationMaxSec: 5,
+        cadenceBurstIntensity: 0.86,
+        postMigrationBleedRetestChance: 0,
+        postMigrationBleedBounceChance: 0,
+        postMigrationBleedRejectionChance: 0,
+        postMigrationBleedNoise: 0,
       };
     case 'POST_MIGRATION_DISCOVERY':
       return {
@@ -323,6 +415,8 @@ export function getMarketBehavior(
         lambdaMul: 1.02,
         liquidityMul: 1.32,
         tradeSizeMul: 1.06,
+        tradeSizeMinClipSol: 0.05,
+        tradeSizeBucketWeights: TRADE_SIZE_WEIGHTS_BY_REGIME.POST_MIGRATION_DISCOVERY,
         impactMul: 0.88,
         maxNetImpactPctPerSec: 0.2,
         regimeImpactMultiplier: 0.98,
@@ -336,6 +430,14 @@ export function getMarketBehavior(
         postMigrationPlateauPenalty: POST_MIGRATION_PLATEAU_PENALTY,
         postMigrationMeanReversionChance: POST_MIGRATION_MEAN_REVERSION_CHANCE,
         postMigrationOverextensionPenalty: POST_MIGRATION_OVEREXTENSION_PENALTY,
+        cadenceBurstChance: 0.14,
+        cadenceBurstDurationMinSec: 2,
+        cadenceBurstDurationMaxSec: 4,
+        cadenceBurstIntensity: 0.56,
+        postMigrationBleedRetestChance: 0.16,
+        postMigrationBleedBounceChance: 0.12,
+        postMigrationBleedRejectionChance: 0.18,
+        postMigrationBleedNoise: 0.35,
       };
   }
 }
