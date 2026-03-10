@@ -13,13 +13,13 @@ import { SIM_TIME_MULTIPLIER } from './types';
 
 const TICK_MS = 200;
 const FEED_PUBLISH_MS = 1000;
-const SPAWN_INTERVAL_MIN_MS = 18_000;
-const SPAWN_INTERVAL_MAX_MS = 32_000;
-const TARGET_NEW_PAIRS = 5;
-const TARGET_FINAL_STRETCH = 4;
-const TARGET_MIGRATED = 3;
+const SPAWN_INTERVAL_MIN_MS = 8_000;
+const SPAWN_INTERVAL_MAX_MS = 16_000;
+const TARGET_NEW_PAIRS = 8;
+const TARGET_FINAL_STRETCH = 3;
+const TARGET_MIGRATED = 2;
 const TARGET_DEAD_WEAK = 2;
-const MIN_TOTAL_LIVE = 9;
+const MIN_TOTAL_LIVE = 11;
 const INITIAL_REGISTRY_SIM_TIME_MS = 2 * 60 * 60_000;
 const FRESH_BOOTSTRAP_AGE_RANGE_MS: [number, number] = [10_000, 110_000];
 const FINAL_BOOTSTRAP_AGE_RANGE_MS: [number, number] = [8 * 60_000, 22 * 60_000];
@@ -168,7 +168,12 @@ class TokenRegistry {
   private maybeSpawn(): void {
     const counts = this.bucketCounts();
     const liveTotal = counts.newPairs + counts.finalStretch + counts.migrated;
-    if (counts.newPairs < TARGET_NEW_PAIRS || liveTotal < MIN_TOTAL_LIVE) {
+    if (counts.newPairs < TARGET_NEW_PAIRS) {
+      this.spawnFreshToken();
+      if (counts.newPairs + 1 < TARGET_NEW_PAIRS) {
+        this.spawnFreshToken();
+      }
+    } else if (liveTotal < MIN_TOTAL_LIVE) {
       this.spawnFreshToken();
     }
     this.scheduleNextSpawn();

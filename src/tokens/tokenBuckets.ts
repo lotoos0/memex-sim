@@ -1,6 +1,6 @@
 import type { TokenState } from './types';
 
-export const NEW_PAIRS_MAX_AGE_MS = 3 * 60_000;
+export const NEW_PAIRS_MAX_AGE_MS = 2 * 60_000;
 export const FINAL_STRETCH_MIN_BONDING_PCT = 80;
 
 export function getTokenAgeMs(token: Pick<TokenState, 'simTimeMs' | 'createdAtSimMs'>): number {
@@ -9,7 +9,9 @@ export function getTokenAgeMs(token: Pick<TokenState, 'simTimeMs' | 'createdAtSi
 }
 
 export function isNewPairsToken(token: TokenState): boolean {
-  return token.phase === 'NEW' && getTokenAgeMs(token) <= NEW_PAIRS_MAX_AGE_MS;
+  if (token.phase === 'MIGRATED' || token.phase === 'DEAD' || token.phase === 'RUGGED') return false;
+  if (token.bondingCurvePct >= FINAL_STRETCH_MIN_BONDING_PCT) return false;
+  return getTokenAgeMs(token) <= NEW_PAIRS_MAX_AGE_MS;
 }
 
 export function isFinalStretchToken(token: TokenState): boolean {
