@@ -20,7 +20,7 @@ import {
   type PulseSortsByBucket,
 } from '../components/pulse/pulseSorts';
 import type { TokenState } from '../tokens/types';
-import { isFinalStretchToken, isMigratedToken, isNewPairsToken } from '../tokens/tokenBuckets';
+import { getTokenAgeMs, isFinalStretchToken, isMigratedToken, isNewPairsToken } from '../tokens/tokenBuckets';
 
 type ColumnKey = 'newPairs' | 'finalStretch' | 'migrated';
 type PulseDisplayMode = 'comfortable' | 'dense';
@@ -29,6 +29,7 @@ type CompiledPulseBucketFilters = { [K in keyof PulseBucketTokenFilters]: number
 const DISPLAY_MODE_STORAGE_KEY = 'memex:pulse:display-mode';
 const PULSE_FILTERS_STORAGE_KEY = 'memex:pulse:filters:v1';
 const PULSE_SORTS_STORAGE_KEY = 'memex:pulse:sorts:v1';
+const NEW_PAIRS_MAX_ITEMS = 20;
 
 const DEFAULT_COLUMN_FILTERS: Record<ColumnKey, PulseColumnFilters> = {
   newPairs: { newPairs: true, finalStretch: false, migrated: false },
@@ -175,8 +176,9 @@ export default function PulsePage() {
   const buckets = useMemo(() => {
     const all = Object.values(tokensById);
     const byMcapDesc = (a: (typeof all)[number], b: (typeof all)[number]) => b.mcapUsd - a.mcapUsd;
+    const byNewestDesc = (a: (typeof all)[number], b: (typeof all)[number]) => getTokenAgeMs(a) - getTokenAgeMs(b);
     return {
-      newPairs: all.filter(isNewPairsToken).sort(byMcapDesc),
+      newPairs: all.filter(isNewPairsToken).sort(byNewestDesc).slice(0, NEW_PAIRS_MAX_ITEMS),
       finalStretch: all.filter(isFinalStretchToken).sort(byMcapDesc),
       migrated: all.filter(isMigratedToken).sort(byMcapDesc),
     };
