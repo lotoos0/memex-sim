@@ -167,7 +167,7 @@ class TokenRegistry {
 
   private maybeSpawn(): void {
     const counts = this.bucketCounts();
-    const liveTotal = counts.newPairs + counts.finalStretch + counts.migrated;
+    const liveTotal = counts.visibleTotal;
     if (counts.newPairs < TARGET_NEW_PAIRS) {
       this.spawnFreshToken();
       if (counts.newPairs + 1 < TARGET_NEW_PAIRS) {
@@ -179,19 +179,29 @@ class TokenRegistry {
     this.scheduleNextSpawn();
   }
 
-  private bucketCounts(): { newPairs: number; finalStretch: number; migrated: number; weakDead: number } {
+  private bucketCounts(): { newPairs: number; finalStretch: number; migrated: number; weakDead: number; visibleTotal: number } {
     let newPairs = 0;
     let finalStretch = 0;
     let migrated = 0;
     let weakDead = 0;
+    const visible = new Set<string>();
     for (const sim of this.tokens.values()) {
       const token = this.toTokenState(sim);
-      if (isNewPairsToken(token)) newPairs += 1;
-      else if (isFinalStretchToken(token)) finalStretch += 1;
-      else if (isMigratedToken(token)) migrated += 1;
-      else if (token.phase === 'DEAD' || token.phase === 'RUGGED') weakDead += 1;
+      if (isNewPairsToken(token)) {
+        newPairs += 1;
+        visible.add(token.id);
+      }
+      if (isFinalStretchToken(token)) {
+        finalStretch += 1;
+        visible.add(token.id);
+      }
+      if (isMigratedToken(token)) {
+        migrated += 1;
+        visible.add(token.id);
+      }
+      if (token.phase === 'DEAD' || token.phase === 'RUGGED') weakDead += 1;
     }
-    return { newPairs, finalStretch, migrated, weakDead };
+    return { newPairs, finalStretch, migrated, weakDead, visibleTotal: visible.size };
   }
 
   private publishFeed(): void {
