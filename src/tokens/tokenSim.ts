@@ -829,10 +829,17 @@ export class TokenSim {
       }
     }
 
-    const guardedFlow = this.guardCandleDisplacement({
+    const constrainedApproach = this.constrainNonReadyMigrationApproach({
+      nowMs,
       targetBuyUsd,
       targetSellUsd,
       expectedNextPriceUsd,
+    });
+
+    const guardedFlow = this.guardCandleDisplacement({
+      targetBuyUsd: constrainedApproach.targetBuyUsd,
+      targetSellUsd: constrainedApproach.targetSellUsd,
+      expectedNextPriceUsd: constrainedApproach.expectedNextPriceUsd,
       previousPriceUsd: prevPriceUsd,
       regimeBehavior,
       realDtSec,
@@ -853,6 +860,8 @@ export class TokenSim {
     } else {
       this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - realDtSec * 1000);
     }
+
+    this.applyPreMigrationThresholdCap(candleTsMs);
 
     const events: TokenChartEvent[] = queuedEvents.slice();
     if (devFlow?.eventType) {
@@ -1023,6 +1032,52 @@ export class TokenSim {
       targetBuyUsd: newBuyUsd,
       targetSellUsd: newSellUsd,
       expectedNextPriceUsd: previousPriceUsd * (1 + allowedMovePct),
+    };
+  }
+
+  private constrainNonReadyMigrationApproach(input: {
+    nowMs: number;
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    expectedNextPriceUsd: number;
+  }): {
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    expectedNextPriceUsd: number;
+  } {
+    if (this.hasMigrated || this.phase === 'MIGRATED' || this.phase === 'DEAD') return input;
+    if (this.isMigrationRuntimeReady(input.nowMs)) return input;
+
+    const thresholdPriceUsd = getMigrationThresholdUsd() / SUPPLY;
+    const capPriceUsd = thresholdPriceUsd * (1.002 + this.rng.next() * 0.012);
+    const approachAnchor = Math.max(this.lastPriceUsd, input.expectedNextPriceUsd);
+    const clampedExpectedPriceUsd = Math.min(input.expectedNextPriceUsd, capPriceUsd);
+    if (approachAnchor < thresholdPriceUsd * 0.972) {
+      return {
+        targetBuyUsd: input.targetBuyUsd,
+        targetSellUsd: input.targetSellUsd,
+        expectedNextPriceUsd: clampedExpectedPriceUsd,
+      };
+    }
+
+    const totalUsd = input.targetBuyUsd + input.targetSellUsd;
+    const netUsd = input.targetBuyUsd - input.targetSellUsd;
+    if (netUsd <= 0) {
+      return {
+        targetBuyUsd: input.targetBuyUsd,
+        targetSellUsd: input.targetSellUsd,
+        expectedNextPriceUsd: clampedExpectedPriceUsd,
+      };
+    }
+
+    const overshootPressure = clamp((approachAnchor / Math.max(1e-9, thresholdPriceUsd) - 0.972) / 0.04, 0, 1);
+    const allowedNetBuyUsd = Math.max(0, this.baseTradeSizeUsd * (0.18 - overshootPressure * 0.16));
+    const compressedNetUsd = Math.min(netUsd, allowedNetBuyUsd);
+
+    return {
+      targetBuyUsd: Math.max(0, (totalUsd + compressedNetUsd) * 0.5),
+      targetSellUsd: Math.max(0, (totalUsd - compressedNetUsd) * 0.5),
+      expectedNextPriceUsd: clampedExpectedPriceUsd,
     };
   }
 
@@ -2476,7 +2531,7 @@ export class TokenSim {
     if (this.lastMcapUsd <= migrationThresholdUsd) return;
     if (this.isMigrationRuntimeReady(nowMs)) return;
 
-    const cappedMcapUsd = migrationThresholdUsd * (0.988 + this.rng.next() * 0.008);
+    const cappedMcapUsd = migrationThresholdUsd * (1.002 + this.rng.next() * 0.012);
     this.lastMcapUsd = Math.min(this.lastMcapUsd, this.clampMcapUsd(cappedMcapUsd));
     this.lastPriceUsd = this.lastMcapUsd / SUPPLY;
   }
