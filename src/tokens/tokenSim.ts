@@ -1226,6 +1226,7 @@ export class TokenSim {
       this.bondingProgress = this.getCurveProgress();
       this.lastPriceUsd = this.getCurvePriceUsd();
       this.lastMcapUsd = this.getCurveMcapUsd();
+      this.applyPreMigrationThresholdCap(tsMs);
       this.lastCurveSwap = {
         direction: 'BUY',
         amountIn: buy.baseInUsd,
@@ -2199,6 +2200,7 @@ export class TokenSim {
       this.bondingProgress = this.getCurveProgress();
       this.lastPriceUsd = this.getCurvePriceUsd();
       this.lastMcapUsd = this.getCurveMcapUsd();
+      this.applyPreMigrationThresholdCap(tsMs);
     } else {
       if (side === 'BUY') {
         const grossInUsd = amount * SOL_PRICE_USD;
@@ -2466,6 +2468,17 @@ export class TokenSim {
 
   private clampMcapUsd(mcapUsd: number): number {
     return clamp(mcapUsd, MCAP_FLOOR_USD, MCAP_CAP_USD);
+  }
+
+  private applyPreMigrationThresholdCap(nowMs: number): void {
+    if (this.hasMigrated || this.phase === 'MIGRATED' || this.phase === 'DEAD') return;
+    const migrationThresholdUsd = getMigrationThresholdUsd();
+    if (this.lastMcapUsd <= migrationThresholdUsd) return;
+    if (this.isMigrationRuntimeReady(nowMs)) return;
+
+    const cappedMcapUsd = migrationThresholdUsd * (0.988 + this.rng.next() * 0.008);
+    this.lastMcapUsd = Math.min(this.lastMcapUsd, this.clampMcapUsd(cappedMcapUsd));
+    this.lastPriceUsd = this.lastMcapUsd / SUPPLY;
   }
 
   private getCurveProgress(): number {
