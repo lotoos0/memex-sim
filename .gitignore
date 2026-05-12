@@ -10,6 +10,11 @@ lerna-debug.log*
 # Information folder 
 info/
 
+# AI
+.claude/
+examples/
+output/
+
 #deps
 node_modules/
 
