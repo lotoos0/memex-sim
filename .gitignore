@@ -7,6 +7,9 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Information folder 
+info/
+
 #deps
 node_modules/
 
