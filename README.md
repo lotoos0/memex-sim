@@ -1,91 +1,113 @@
 # memex-sim
 
-**Crypto trading simulator (DEX-style) built with React + TypeScript.**
-Random OHLC candles, pump/dump events, trading panel, positions, PnL, and persistent storage.
+DEX-style memecoin trading simulator — pure simulation, no real money.
 
-## Demo
+## What is memex-sim
 
-* Live: *TBD (Vercel/Netlify)*
-* GIF/screenshot: *TBD* ()
+memex-sim is a pure simulation of DEX-style memecoin trading. It uses no real wallets, no blockchain, and no real money. The goal is to help users practice reading memecoin charts, managing risk, and developing trading intuition in a safe environment.
+
+## Vision
+
+- Sim — current/active simulation mode.
+- Replay — next: play back recorded or generated market runs.
+- Live — future: paper-trading against a real feed, only after explicit approval.
 
 ## Features
 
-* 📈 Chart (Lightweight Charts) with volume, crosshair, OHLC tooltip
-* 📰 **Fake news events**: "CT hype", "Dev rug" → drift/volatility spikes
-* 💼 **Trading panel**: Market/Limit, preset amounts, % of balance
-* 📊 **Positions & history**: unrealized/realized PnL, order statuses
-* 💾 **Persistence**: localStorage (v1), IndexedDB planned (v2)
-* ⚙️ Settings: TF, candle type, indicators (EMA/SMMA), reset/lock autoscale
+- Multi-token feed on PulsePage.
+- Token lifecycle: NEW → FINAL → MIGRATED / RUGGED / DEAD.
+- Price engine with pump/dump/bleed-style regimes.
+- Fake tweet/news narrative system.
+- TradingView Lightweight Charts with migration marker.
+- Trading panel with quick buy/sell and limit orders.
+- Positions with realized/unrealized PnL.
+- Simulated wallet and SOL balance.
+- Market sessions: EU / NA / OVERLAP / OFF.
 
-## Roadmap (short)
+## Routes
 
-* [x] PnL, events, persistence
-* [ ] Limit/Stop lines with drag ↔ input sync
-* [ ] SL/TP with draggable lines and PnL calculator modal
-* [ ] Partial fills, fee model (maker/taker + dex fee)
-* [ ] Leverage, IM/MM, **liq price** (gold line) and liquidation
-* [ ] IndexedDB + migrations, CSV export, sorting/filtering
-* [ ] Seed `?seed=1234` + "Replay run"
-* [ ] Hotkeys: B/S/C/R, Alt-LMB=SL, Shift-LMB=TP
+| Route | Page | Description |
+| --- | --- | --- |
+| `/` | PulsePage | Live multi-token feed. |
+| `/token/:id` | TokenPage | Chart + trade sidebar + positions. |
+
+## Architecture
+
+```text
+src/
+  app/                  # app root
+  chart/                # chart event wiring
+  components/
+    chart/              # chart UI components
+    common/             # shared common components
+    floating/           # floating UI components
+    layout/             # layout components
+    pulse/              # PulsePage UI components
+    token/              # TokenPage UI components
+    news/               # fake news UI components
+    ui/                 # base UI components
+  engine/               # price engine
+  market/               # session system
+  narrative/            # fake tweet/news generation
+  pages/                # route pages
+  sim/                  # matching, risk, journal simulation
+  store/                # Zustand stores
+  tokens/               # registry, generator, lifecycle, regimes, buckets, actors
+  utils/                # helper utilities
+```
 
 ## Tech Stack
 
-* **Frontend:** React, TypeScript, Vite
-* **Charting:** TradingView Lightweight Charts
-* **State:** Zustand
-* **Testing:** Vitest + Cypress (planned)
-* **CI/CD:** GitHub Actions (planned)
-* **Deploy:** Vercel / Netlify
+| Area | Technology |
+| --- | --- |
+| UI | React 19 |
+| Language | TypeScript 5.8 |
+| Build | Vite 7 |
+| State | Zustand 5 |
+| Charts | TradingView Lightweight Charts 5 |
+| Styling | Tailwind CSS v4 |
+| Routing | react-router-dom v7 |
+| Storage helpers | idb-keyval |
+| Icons | lucide-react |
 
-## Architecture (v1)
-
-```
-/src
-  /components    # Chart, Toolbar, TradePanel, Tables
-  /lib           # candle generator, PnL/fees utils, events
-  /store         # trading state (positions, orders, settings)
-  /hooks         # feed/interval, persistence
-```
-
-## Installation
+## Getting Started
 
 ```bash
 git clone https://github.com/lotoos0/memex-sim.git
 cd memex-sim
-npm i
+npm install
 npm run dev
 ```
 
 ## Scripts
 
 ```bash
-npm run dev       # start dev
-npm run build     # production build
-npm run preview   # local preview
-npm run test      # tests (when added)
+npm run dev
+npm run build
+npm run lint
+npm run preview
+npm run qa:sim:dead-floor
+npm run qa:sim:quick-limit
 ```
 
-## Hotkeys (planned)
+The `qa:sim:*` scripts use PowerShell scripts.
 
-* **B/S** – Buy/Sell
-* **C** – Close 100%
-* **R** – Reset View
-* **Ctrl+0** – Reset zoom
-* **Alt+LMB** – draw SL, **Shift+LMB** – draw TP
+## Roadmap
 
-## Quality & Performance
+| Phase | Status | Scope |
+| --- | --- | --- |
+| Phase 1 — Sim | Active | Engine, multi-token feed, trading panel, PnL, lifecycle. |
+| Phase 2 — Replay | Next | Replay recorded/generated runs, timeline scrubber, export. |
+| Phase 3 — Live | Future | Paper trading against a real feed; no code without explicit approval. |
 
-* 60 FPS with 5–10k candles (worker + rAF)
-* Zustand selectors for minimal re-renders
-* Unit tests for PnL/avgPrice/liq (planned)
+## Contributing
 
-## Contribution / Issues
-
-PRs welcome. Report bugs and feature requests in **Issues**:
-
-* bug: description + steps + screenshot
-* feature: use-case + acceptance criteria
+- PRs only.
+- Do not commit directly to main.
+- Bug reports need description, steps, and screenshot.
+- Feature requests need use-case and acceptance criteria.
+- New npm dependencies require approval.
 
 ## License
 
-MIT. See `LICENSE` file.
+MIT. See LICENSE file.
