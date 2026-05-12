@@ -14,6 +14,8 @@ import {
 } from 'lightweight-charts';
 import { registry, type ChartMetric } from '../../tokens/registry';
 import type { Candle } from '../../engine/types';
+import { SUPPLY } from '../../tokens/types';
+import { getMigrationThresholdUsd } from '../../tokens/tokenMarketRegimes';
 import { useTokenStore, selectMarketSessionBucket } from '../../store/tokenStore';
 import {
   useTradingStore,
@@ -151,24 +153,8 @@ export default function Chart({ tokenId }: Props) {
   const avgEntryMcap = useTradingStore(selectAvgEntryMcap);
   const avgSellPrice = useTradingStore(selectAvgSellPrice);
   const avgSellMcap = useTradingStore(selectAvgSellMcap);
-  const migrationPrice = useMemo(() => {
-    for (let i = tokenEvents.length - 1; i >= 0; i--) {
-      const ev = tokenEvents[i]!;
-      if (ev.type !== 'MIGRATION') continue;
-      if (!Number.isFinite(ev.price) || (ev.price ?? 0) <= 0) continue;
-      return ev.price!;
-    }
-    return null;
-  }, [tokenEvents]);
-  const migrationMcap = useMemo(() => {
-    for (let i = tokenEvents.length - 1; i >= 0; i--) {
-      const ev = tokenEvents[i]!;
-      if (ev.type !== 'MIGRATION') continue;
-      if (!Number.isFinite(ev.mcap) || (ev.mcap ?? 0) <= 0) continue;
-      return ev.mcap!;
-    }
-    return null;
-  }, [tokenEvents]);
+  const migrationMcap = useMemo(() => getMigrationThresholdUsd(), []);
+  const migrationPrice = useMemo(() => migrationMcap / SUPPLY, [migrationMcap]);
 
   const [tfSec, setTfSec] = useState(1);
   const [metric, setMetric] = useState<Metric>('mcap');

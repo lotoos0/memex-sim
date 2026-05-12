@@ -15,7 +15,6 @@ import {
   MIGRATION_APPROACH_FRICTION_START_PCT,
   MIN_MIGRATION_AGE_SEC,
   MIN_MIGRATION_HOLDERS,
-  MIN_MIGRATION_SUSTAIN_CANDLES,
   MIN_MIGRATION_TX_60S,
   computeBaseQualityScore,
   computeFlowStrength,
@@ -385,8 +384,6 @@ export class TokenSim {
   private walletSeq = 0;
   private readonly baseQualityScore: number;
   private microburst: MicroburstState | null = null;
-  private migrationEligibilityStreak = 0;
-  private lastMigrationEligibilitySecond = -1;
 
   // Rolling 5-min stats window (in simMs)
   private statWindow: StatBucket[] = [];
@@ -459,7 +456,6 @@ export class TokenSim {
     const simDtSec = realDtSec * SIM_TIME_MULTIPLIER;
     this.simTimeMs += simDtSec * 1000;
     const queuedEvents = this.processPendingUserTrades(nowMs);
-    this.updateMigrationEligibility(nowMs);
     const inDeadMode = this.phase === 'DEAD';
     const inCollapseMode = !inDeadMode && this.ruggedAtSimMs != null;
     const hasUserBuyEvent = queuedEvents.some((ev) => ev.type === 'USER_BUY');
@@ -643,6 +639,7 @@ export class TokenSim {
     if (this.phase !== 'MIGRATED' && this.phase !== 'DEAD') {
       const migrationThresholdUsd = getMigrationThresholdUsd();
       const progressToMigration = this.lastMcapUsd / Math.max(1, migrationThresholdUsd);
+      const migrationReady = this.isMigrationRuntimeReady(nowMs);
       if (progressToMigration >= MIGRATION_APPROACH_FRICTION_START_PCT) {
         const frictionProgress = clamp(
           (progressToMigration - MIGRATION_APPROACH_FRICTION_START_PCT)
@@ -655,6 +652,13 @@ export class TokenSim {
         effectiveBuyBias = clamp(effectiveBuyBias - friction * 0.08, 0.18, 0.82);
         lambdaMul *= Math.max(0.55, 1 - friction * 0.28);
         volMul *= 1 + friction * 0.18;
+      }
+      if (progressToMigration >= 1 && !migrationReady) {
+        const overshoot = clamp(progressToMigration - 1, 0, 1.5);
+        driftPerSec -= 0.05 + overshoot * 0.045;
+        effectiveBuyBias = clamp(effectiveBuyBias - 0.16 - overshoot * 0.08, 0.12, 0.7);
+        lambdaMul *= Math.max(0.32, 0.7 - overshoot * 0.12);
+        volMul *= 1.1 + Math.min(0.2, overshoot * 0.1);
       }
 
       if (this.phase === 'FINAL') {
@@ -825,10 +829,17 @@ export class TokenSim {
       }
     }
 
-    const guardedFlow = this.guardCandleDisplacement({
+    const constrainedApproach = this.constrainNonReadyMigrationApproach({
+      nowMs,
       targetBuyUsd,
       targetSellUsd,
       expectedNextPriceUsd,
+    });
+
+    const guardedFlow = this.guardCandleDisplacement({
+      targetBuyUsd: constrainedApproach.targetBuyUsd,
+      targetSellUsd: constrainedApproach.targetSellUsd,
+      expectedNextPriceUsd: constrainedApproach.expectedNextPriceUsd,
       previousPriceUsd: prevPriceUsd,
       regimeBehavior,
       realDtSec,
@@ -1019,6 +1030,52 @@ export class TokenSim {
       targetBuyUsd: newBuyUsd,
       targetSellUsd: newSellUsd,
       expectedNextPriceUsd: previousPriceUsd * (1 + allowedMovePct),
+    };
+  }
+
+  private constrainNonReadyMigrationApproach(input: {
+    nowMs: number;
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    expectedNextPriceUsd: number;
+  }): {
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    expectedNextPriceUsd: number;
+  } {
+    if (this.hasMigrated || this.phase === 'MIGRATED' || this.phase === 'DEAD') return input;
+    if (this.isMigrationRuntimeReady(input.nowMs)) return input;
+
+    const thresholdPriceUsd = getMigrationThresholdUsd() / SUPPLY;
+    const capPriceUsd = thresholdPriceUsd * (1.002 + this.rng.next() * 0.012);
+    const approachAnchor = Math.max(this.lastPriceUsd, input.expectedNextPriceUsd);
+    const clampedExpectedPriceUsd = Math.min(input.expectedNextPriceUsd, capPriceUsd);
+    if (approachAnchor < thresholdPriceUsd * 0.972) {
+      return {
+        targetBuyUsd: input.targetBuyUsd,
+        targetSellUsd: input.targetSellUsd,
+        expectedNextPriceUsd: clampedExpectedPriceUsd,
+      };
+    }
+
+    const totalUsd = input.targetBuyUsd + input.targetSellUsd;
+    const netUsd = input.targetBuyUsd - input.targetSellUsd;
+    if (netUsd <= 0) {
+      return {
+        targetBuyUsd: input.targetBuyUsd,
+        targetSellUsd: input.targetSellUsd,
+        expectedNextPriceUsd: clampedExpectedPriceUsd,
+      };
+    }
+
+    const overshootPressure = clamp((approachAnchor / Math.max(1e-9, thresholdPriceUsd) - 0.972) / 0.04, 0, 1);
+    const allowedNetBuyUsd = Math.max(0, this.baseTradeSizeUsd * (0.18 - overshootPressure * 0.16));
+    const compressedNetUsd = Math.min(netUsd, allowedNetBuyUsd);
+
+    return {
+      targetBuyUsd: Math.max(0, (totalUsd + compressedNetUsd) * 0.5),
+      targetSellUsd: Math.max(0, (totalUsd - compressedNetUsd) * 0.5),
+      expectedNextPriceUsd: clampedExpectedPriceUsd,
     };
   }
 
@@ -1705,11 +1762,8 @@ export class TokenSim {
     }
 
     const migrationThresholdUsd = getMigrationThresholdUsd();
-    const forcedCurveMigration = this.curveRealToken <= CURVE_TOKEN_EPS;
-    const eligibleForMigration =
-      this.lastMcapUsd >= migrationThresholdUsd
-      && this.migrationEligibilityStreak >= MIN_MIGRATION_SUSTAIN_CANDLES;
-    if ((eligibleForMigration || forcedCurveMigration) && !this.hasMigrated) {
+    const eligibleForMigration = this.lastMcapUsd >= migrationThresholdUsd;
+    if (eligibleForMigration && !this.hasMigrated) {
       this.hasMigrated = true;
       this.phase = 'MIGRATED';
       this.preMigrationFlowStrength = this.getFlowStrength();
@@ -1805,10 +1859,10 @@ export class TokenSim {
 
     const lpTokens = (!this.hasMigrated && this.phase !== 'MIGRATED')
       ? Math.max(0, this.curveRealToken)
-      : Math.max(0, this.getMigratedReserves().reserveToken);
+      : Math.max(0, this.getMigratedReserves('BUY').reserveToken);
     const lpBaseUsd = (!this.hasMigrated && this.phase !== 'MIGRATED')
       ? Math.max(0, this.curveRealBase)
-      : Math.max(0, this.getMigratedReserves().reserveBaseUsd);
+      : Math.max(0, this.getMigratedReserves('BUY').reserveBaseUsd);
     const lpUsd = lpTokens * this.lastPriceUsd;
     if (Number.isFinite(lpUsd) && lpUsd >= HOLDER_DUST_USD && lpTokens > CURVE_TOKEN_EPS) {
       holders.push({
@@ -2432,24 +2486,15 @@ export class TokenSim {
     return this.getHolderWalletIds(false).length;
   }
 
-  private updateMigrationEligibility(nowMs: number): void {
-    const secondBucket = Math.floor(nowMs / 1000);
-    if (secondBucket === this.lastMigrationEligibilitySecond) return;
-    this.lastMigrationEligibilitySecond = secondBucket;
-
-    const migrationThresholdUsd = getMigrationThresholdUsd();
+  private isMigrationRuntimeReady(nowMs: number): boolean {
     const ageSec = this.simTimeMs / 1000;
     const tx60s = this.getRecentTradeStatsReal(60_000, nowMs).tx;
     const holders = this.getEligibleHolderCount();
-    const aboveThreshold = this.lastMcapUsd >= migrationThresholdUsd;
-    const eligible =
-      aboveThreshold
-      && ageSec >= MIN_MIGRATION_AGE_SEC
+    return (
+      ageSec >= MIN_MIGRATION_AGE_SEC
       && tx60s >= MIN_MIGRATION_TX_60S
-      && holders >= MIN_MIGRATION_HOLDERS;
-
-    if (eligible) this.migrationEligibilityStreak += 1;
-    else this.migrationEligibilityStreak = 0;
+      && holders >= MIN_MIGRATION_HOLDERS
+    );
   }
 
   private getFlowPowerMul(): number {
@@ -2648,7 +2693,7 @@ export class TokenSim {
       return { baseInGrossUsd: 0, baseInNetUsd: 0, tokensOut: 0, priceAfterUsd: this.lastPriceUsd };
     }
 
-    const { reserveBaseUsd: x, reserveToken: y } = this.getMigratedReserves();
+    const { reserveBaseUsd: x, reserveToken: y } = this.getMigratedReserves('BUY');
     const k = x * y;
     if (!Number.isFinite(k) || k <= 0) {
       return { baseInGrossUsd: 0, baseInNetUsd: 0, tokensOut: 0, priceAfterUsd: this.lastPriceUsd };
@@ -2681,7 +2726,7 @@ export class TokenSim {
     }
 
     const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
-    const { reserveBaseUsd: x, reserveToken: y } = this.getMigratedReserves();
+    const { reserveBaseUsd: x, reserveToken: y } = this.getMigratedReserves('SELL');
     const k = x * y;
     if (!Number.isFinite(k) || k <= 0) {
       return { tokenIn: 0, baseOutGrossUsd: 0, baseOutNetUsd: 0, priceAfterUsd: this.lastPriceUsd };
@@ -2704,13 +2749,15 @@ export class TokenSim {
     };
   }
 
-  private getMigratedReserves(): { reserveBaseUsd: number; reserveToken: number } {
+  private getMigratedReserves(side: UserTradeSide): { reserveBaseUsd: number; reserveToken: number } {
     const phaseModel = this.getPhaseModel();
+    const regimeBehavior = this.getMarketBehavior(this.getFlowStrength(), this.getSessionProfile());
     const referenceLiquidityUsd = Math.max(
       MIGRATED_LIQUIDITY_FLOOR_USD,
       this.baseLiquidityUsd * phaseModel.liquidityMul
     );
-    const reserveBaseUsd = Math.max(1, referenceLiquidityUsd * 0.5);
+    const sellLiquidityMul = side === 'SELL' ? regimeBehavior.postMigrationSellLiquidityMul : 1;
+    const reserveBaseUsd = Math.max(1, referenceLiquidityUsd * 0.5 * sellLiquidityMul);
     const reserveToken = Math.max(
       CURVE_TOKEN_EPS,
       reserveBaseUsd / Math.max(1e-12, this.lastPriceUsd)

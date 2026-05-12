@@ -75,6 +75,7 @@ export interface TokenMarketBehavior {
   postMigrationBleedBounceChance: number;
   postMigrationBleedRejectionChance: number;
   postMigrationBleedNoise: number;
+  postMigrationSellLiquidityMul: number;
 }
 
 type MigrationOutcomeWeightSet = {
@@ -214,6 +215,7 @@ export function getMarketBehavior(
         postMigrationBleedBounceChance: 0,
         postMigrationBleedRejectionChance: 0,
         postMigrationBleedNoise: 0,
+        postMigrationSellLiquidityMul: 1,
       };
     case 'FIRST_PUMP':
       return {
@@ -246,6 +248,7 @@ export function getMarketBehavior(
         postMigrationBleedBounceChance: 0,
         postMigrationBleedRejectionChance: 0,
         postMigrationBleedNoise: 0,
+        postMigrationSellLiquidityMul: 1,
       };
     case 'CHOP':
       return {
@@ -278,6 +281,7 @@ export function getMarketBehavior(
         postMigrationBleedBounceChance: 0,
         postMigrationBleedRejectionChance: 0,
         postMigrationBleedNoise: 0,
+        postMigrationSellLiquidityMul: 1,
       };
     case 'GRIND_UP':
       return {
@@ -310,6 +314,7 @@ export function getMarketBehavior(
         postMigrationBleedBounceChance: 0,
         postMigrationBleedRejectionChance: 0,
         postMigrationBleedNoise: 0,
+        postMigrationSellLiquidityMul: 1,
       };
     case 'BLEED_OUT':
       return {
@@ -342,6 +347,7 @@ export function getMarketBehavior(
         postMigrationBleedBounceChance: 0.22,
         postMigrationBleedRejectionChance: 0.42,
         postMigrationBleedNoise: 0.78,
+        postMigrationSellLiquidityMul: 0.8,
       };
     case 'DEAD_BOUNCE':
       return {
@@ -374,6 +380,7 @@ export function getMarketBehavior(
         postMigrationBleedBounceChance: 0,
         postMigrationBleedRejectionChance: 0,
         postMigrationBleedNoise: 0,
+        postMigrationSellLiquidityMul: 0.88,
       };
     case 'MIGRATION_SHOCK':
       return {
@@ -406,6 +413,7 @@ export function getMarketBehavior(
         postMigrationBleedBounceChance: 0,
         postMigrationBleedRejectionChance: 0,
         postMigrationBleedNoise: 0,
+        postMigrationSellLiquidityMul: 0.82,
       };
     case 'POST_MIGRATION_DISCOVERY':
       return {
@@ -438,6 +446,7 @@ export function getMarketBehavior(
         postMigrationBleedBounceChance: 0.16,
         postMigrationBleedRejectionChance: 0.24,
         postMigrationBleedNoise: 0.42,
+        postMigrationSellLiquidityMul: 0.9,
       };
   }
 }
