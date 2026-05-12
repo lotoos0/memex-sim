@@ -33,6 +33,15 @@ Agents must not perform multiple roles in a single PR without explicit approval.
 
 ---
 
+## AI workflow mode selection
+
+For day-to-day workflow selection, see docs/ai-workflow.md.
+
+Default mode is FAST.
+Escalate to STANDARD only when the task is unclear, risky, architectural, multi-file, or touches core runtime/trading/data flow.
+
+---
+
 ## Git / branch / PR rules
 
 - Branch from `main` unless told otherwise.
