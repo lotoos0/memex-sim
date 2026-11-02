@@ -2,7 +2,7 @@ import { RNG } from '../engine/rng';
 import type { Candle } from '../engine/types';
 import { useTokenStore } from '../store/tokenStore';
 import { generateToken, getFateTimeoutSimMs, getStartingMcapUsd } from './generator';
-import { TokenSim, type MarketMicroSnapshot, type UserTradeExecutionNotice, type UserTradeOrderStatus, type UserTradeQuote, type UserTradeSide, type UserTradeSubmitRequest, type UserTradeSubmitResult } from './tokenSim';
+import { TokenSim, type UserTradeOrderStatus, type UserTradeQuote, type UserTradeSide, type UserTradeSubmitRequest, type UserTradeSubmitResult } from './tokenSim';
 import type { TokenFate, TokenPhase, TokenState } from './types';
 import { getSessionBucket } from '../market/session';
 import { publishRegistryFeed } from './registryFeedPublisher';

@@ -5,8 +5,8 @@ import {
   selectQuickTradingUiStateByTokenId,
   useTradingStore,
 } from '../../store/tradingStore';
+import { TradingStateSummary } from './tradingUiShared';
 import {
-  TradingStateSummary,
   fmtPriceUsd,
   fmtQty,
   fmtSignedPct,
@@ -14,7 +14,7 @@ import {
   statusTone,
   fmtUsd,
   type TradingStatUnit,
-} from './tradingUiShared';
+} from './tradingUiFormatters';
 
 interface Props {
   token: TokenState;

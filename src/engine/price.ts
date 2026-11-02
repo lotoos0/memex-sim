@@ -15,6 +15,11 @@ type VolumeCfg = {
   seasonSec?: number;  // okres sezonowości w sekundach
 };
 
+type MeanReversionOptions = {
+  mrTauSec?: number;
+  mrK?: number;
+};
+
 export class PriceEngine {
   private cfg: EnginesConfig;
   private rng: RNG;
@@ -101,13 +106,13 @@ export class PriceEngine {
       jump;
 
     // mean-reversion (łagodny)
-    const tau = Math.max(5, (this.cfg as any).mrTauSec ?? 60);
+    const tau = Math.max(5, (this.cfg as EnginesConfig & MeanReversionOptions).mrTauSec ?? 60);
     const w = Math.min(1, Math.max(0, dtSec / tau));
     // aktualizuj kotwicę po log-cenie
     this.mrAnchor = Math.exp(
       (1 - w) * Math.log(this.mrAnchor || this.price) + w * Math.log(this.price)
     );
-    const mrK = Math.max(0, (this.cfg as any).mrK ?? 0); // 0 = wyłącz
+    const mrK = Math.max(0, (this.cfg as EnginesConfig & MeanReversionOptions).mrK ?? 0); // 0 = wyłącz
     const dev = Math.log(this.price / this.mrAnchor);
     const dLogTotal = dLog + (-mrK * dev * dtSec);
 
