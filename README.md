@@ -51,7 +51,7 @@ Only these two routes are registered. Other labels in the header do not imply im
 
 The entry is [src/main.tsx](src/main.tsx), which renders [src/router.tsx](src/router.tsx). The app shell starts and stops the [token registry](src/tokens/registry.ts).
 
-The registry owns TokenSim instances outside Zustand. Active simulation uses [TokenSim](src/tokens/tokenSim.ts), [stepMarket](src/tokens/marketModel.ts), RNG, and CandleAggregator. Stores expose UI snapshots and trading/accounting state; candles go directly to the chart through the registry callback. The old `src/app/App.tsx` and PriceEngine path are not the active application entry or simulation flow.
+The registry owns TokenSim instances outside Zustand. Active simulation uses [TokenSim](src/tokens/tokenSim.ts), [stepMarket](src/tokens/marketModel.ts), RNG, and CandleAggregator. Stores expose UI snapshots and trading/accounting state; candles go directly to the chart through the registry callback. The historical PriceEngine path is not the active simulation flow.
 
 ## Stack
 
