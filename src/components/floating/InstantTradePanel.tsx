@@ -20,11 +20,8 @@ import {
 import type { TokenState } from '../../tokens/types';
 import { selectQuickTradingUiStateByTokenId, useTradingStore } from '../../store/tradingStore';
 import { usdToSol, useWalletStore } from '../../store/walletStore';
-import {
-  TradingStateSummary,
-  fmtQty,
-  type TradingStatUnit,
-} from '../token/tradingUiShared';
+import { TradingStateSummary } from '../token/tradingUiShared';
+import { fmtQty, type TradingStatUnit } from '../token/tradingUiFormatters';
 
 type Pos = { x: number; y: number };
 type DragState = { pointerId: number; dx: number; dy: number } | null;
@@ -184,7 +181,6 @@ export default function InstantTradePanel({ token, open, onClose }: Props) {
   const buySettings = activeSettings.buy;
   const sellSettings = activeSettings.sell;
 
-  const safePrice = Number.isFinite(token.lastPriceUsd) ? token.lastPriceUsd : 0;
   const positionSummary = quickTradingUiState.summary;
   const positionQty = positionSummary.qty;
   const holdingUsd = positionSummary.holdingUsd;

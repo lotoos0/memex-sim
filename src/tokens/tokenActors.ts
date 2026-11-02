@@ -98,10 +98,6 @@ const ACTOR_PROFILES: Record<TokenActorGroup, ActorProfile> = {
   },
 };
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
 function addWeight(target: Partial<Record<TokenActorGroup, number>>, group: TokenActorGroup, weight: number): void {
   if (!Number.isFinite(weight) || weight <= 0) return;
   target[group] = (target[group] ?? 0) + weight;
