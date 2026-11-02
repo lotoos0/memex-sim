@@ -1,113 +1,75 @@
 # memex-sim
 
-DEX-style memecoin trading simulator — pure simulation, no real money.
+DEX-style memecoin trading practice with synthetic tokens, a simulated wallet, and no real money, wallet connection, or blockchain access.
 
-## What is memex-sim
+## Current state
 
-memex-sim is a pure simulation of DEX-style memecoin trading. It uses no real wallets, no blockchain, and no real money. The goal is to help users practice reading memecoin charts, managing risk, and developing trading intuition in a safe environment.
+**IMPLEMENTED:** simulation mode, Pulse token feed, token charts, synthetic news/posts, tokenId-based quick buy/sell, limit placement/cancellation, positions, PnL, watchlists, and market-session profiles.
 
-## Vision
+**PARTIAL:** the trading UI includes settings with no execution effect, decorative navigation, and a Dev Tokens placeholder. QA covers focused scenarios, not the full application.
 
-- Sim — current/active simulation mode.
-- Replay — next: play back recorded or generated market runs.
-- Live — future: paper-trading against a real feed, only after explicit approval.
+**PLANNED:** Replay and optional Live paper-trading are historical product intentions, not implemented modes or implementation approval. See the [status roadmap](docs/roadmap.md).
 
-## Features
+Status describes source wiring, not a claim that every flow has been verified manually. Known limitations are documented in the [architecture](docs/architecture.md).
 
-- Multi-token feed on PulsePage.
-- Token lifecycle: NEW → FINAL → MIGRATED / RUGGED / DEAD.
-- Price engine with pump/dump/bleed-style regimes.
-- Fake tweet/news narrative system.
-- TradingView Lightweight Charts with migration marker.
-- Trading panel with quick buy/sell and limit orders.
-- Positions with realized/unrealized PnL.
-- Simulated wallet and SOL balance.
-- Market sessions: EU / NA / OVERLAP / OFF.
-
-## Routes
-
-| Route | Page | Description |
-| --- | --- | --- |
-| `/` | PulsePage | Live multi-token feed. |
-| `/token/:id` | TokenPage | Chart + trade sidebar + positions. |
-
-## Architecture
-
-```text
-src/
-  app/                  # app root
-  chart/                # chart event wiring
-  components/
-    chart/              # chart UI components
-    common/             # shared common components
-    floating/           # floating UI components
-    layout/             # layout components
-    pulse/              # PulsePage UI components
-    token/              # TokenPage UI components
-    news/               # fake news UI components
-    ui/                 # base UI components
-  engine/               # price engine
-  market/               # session system
-  narrative/            # fake tweet/news generation
-  pages/                # route pages
-  sim/                  # matching, risk, journal simulation
-  store/                # Zustand stores
-  tokens/               # registry, generator, lifecycle, regimes, buckets, actors
-  utils/                # helper utilities
-```
-
-## Tech Stack
-
-| Area | Technology |
-| --- | --- |
-| UI | React 19 |
-| Language | TypeScript 5.8 |
-| Build | Vite 7 |
-| State | Zustand 5 |
-| Charts | TradingView Lightweight Charts 5 |
-| Styling | Tailwind CSS v4 |
-| Routing | react-router-dom v7 |
-| Storage helpers | idb-keyval |
-| Icons | lucide-react |
-
-## Getting Started
+## Getting started
 
 ```bash
 git clone https://github.com/lotoos0/memex-sim.git
 cd memex-sim
-npm install
+npm ci
 npm run dev
 ```
 
-## Scripts
+Use the URL printed by Vite. CI currently uses Node 20 on Windows; see the [workflow configuration](.github/workflows/ci.yml) for the exact setup.
 
-```bash
-npm run dev
-npm run build
-npm run lint
-npm run preview
-npm run qa:sim:dead-floor
-npm run qa:sim:quick-limit
-```
+## Commands
 
-The `qa:sim:*` scripts use PowerShell scripts.
+Commands are defined in [package.json](package.json).
 
-## Roadmap
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the Vite development server. |
+| `npm run build` | Run TypeScript project build checks and create a production build. |
+| `npm run lint` | Run ESLint; this is a local requirement, but is not currently a CI step. |
+| `npm run preview` | Serve an existing production build locally. |
+| `npm run qa:sim:dead-floor` | Run the focused floor/sparse-candle/post-DEAD-buy browser check. |
+| `npm run qa:sim:quick-limit` | Run the focused limit-order cancellation and fill browser check. |
 
-| Phase | Status | Scope |
-| --- | --- | --- |
-| Phase 1 — Sim | Active | Engine, multi-token feed, trading panel, PnL, lifecycle. |
-| Phase 2 — Replay | Next | Replay recorded/generated runs, timeline scrubber, export. |
-| Phase 3 — Live | Future | Paper trading against a real feed; no code without explicit approval. |
+Run the two QA commands sequentially. Their current launchers use Windows PowerShell, `cmd.exe`, Edge, and an npm-fetched Playwright CLI; they use the shared local server at `127.0.0.1:5173`. They are not platform-neutral test commands. See [QA coverage and limitations](docs/architecture.md#qa-coverage-and-limitations).
 
-## Contributing
+## Routes
 
-- PRs only.
-- Do not commit directly to main.
-- Bug reports need description, steps, and screenshot.
-- Feature requests need use-case and acceptance criteria.
-- New npm dependencies require approval.
+| Route | Page |
+| --- | --- |
+| `/` | Pulse: New Pairs, Final Stretch, and Migrated columns with filters, sorting, and quick buy. |
+| `/token/:id` | Token chart, trade sidebar, positions/orders, posts, holders, and optional floating trading/trades panels. |
+
+Only these two routes are registered. Other labels in the header do not imply implemented pages.
+
+## Implementation map
+
+The entry is [src/main.tsx](src/main.tsx), which renders [src/router.tsx](src/router.tsx). The app shell starts and stops the [token registry](src/tokens/registry.ts).
+
+The registry owns TokenSim instances outside Zustand. Active simulation uses [TokenSim](src/tokens/tokenSim.ts), [stepMarket](src/tokens/marketModel.ts), RNG, and CandleAggregator. Stores expose UI snapshots and trading/accounting state; candles go directly to the chart through the registry callback. The old `src/app/App.tsx` and PriceEngine path are not the active application entry or simulation flow.
+
+## Stack
+
+React 19, TypeScript 5.8, Vite 7, Zustand 5, Lightweight Charts 5, React Router 7, Tailwind CSS v4, and Lucide icons. Versions and dependency declarations live in [package.json](package.json).
+
+Preferences and favorites use localStorage/Zustand persistence. `idb-keyval` is referenced by legacy journal code; it does not provide active quick-trading persistence or Replay recording.
+
+## Documentation and contribution
+
+- [Documentation index](docs.md)
+- [Architecture and known limitations](docs/architecture.md)
+- [Status roadmap](docs/roadmap.md)
+- [Agent rules](AGENTS.md) and [FAST/STANDARD workflow](docs/ai-workflow.md)
+- [Git playbook](git.md)
+- [Historical plan archive](docs/archive/Plan.md)
+
+Use a branch and PR targeting `main`. Bug reports should include reproduction steps and relevant screenshots; feature proposals need a use case and acceptance criteria. New dependencies require explicit approval. Frozen contracts and simulation-only restrictions are defined in AGENTS.md.
 
 ## License
 
-MIT. See LICENSE file.
+MIT. See [LICENSE](LICENSE).
