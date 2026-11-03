@@ -1,6 +1,8 @@
 # Volume basis audit - Slice 2C
 
-Status: audit and diagnostic QA, pending contract decision. Base: `9ffdca1` (`main` after Slice 2B / PR #47), 2026-11-03. Branch: `docs/volume-basis-audit`. Only this report and `src/qa/volumeBasisQa.ts` are added. No production implementation or contract migration is authorized by this report.
+Historical audit snapshot from `799d903`, preserved below. The approved Slice 2C1 implementation and current validation are recorded in [Slice 2C1 implementation](#slice-2c1-implementation---pending-code-review).
+
+Status at audit time: audit and diagnostic QA, pending contract decision. Base: `9ffdca1` (`main` after Slice 2B / PR #47), 2026-11-03. Branch: `docs/volume-basis-audit`. Only this report and `src/qa/volumeBasisQa.ts` are added. No production implementation or contract migration is authorized by this report.
 
 ## Current contract and data flow
 
@@ -188,3 +190,109 @@ Smallest safe proposed slice, pending STANDARD approval:
 The forced cash-cap execution fix and bot fee/PnL correction should be independently scoped if not essential to the approved market-volume routing. No larger execution rewrite, provider, event bus or new abstraction is proposed.
 
 Open decisions: exact holder accounting migration, intentional market-feedback recalibration, UI terminology and treatment of capped collateral states. Deferred: integer AMM parity, fee custody, public reachability of the cash-cap state, complete partial-fill order policy, long-run market distributions, historical data conversion and Replay/Live design. This audit stops before production implementation.
+
+## Slice 2C1 implementation - pending code review
+
+The Human approved fee-exclusive exchanged quote as the market-volume contract. Branch `fix/market-volume-basis` retains audit commit `799d903fc981f079cee1c1c5b2fe0b78569bcc04`, based on `main` at `9ffdca1`. The preceding audit describes pre-change behavior; this section records the implementation. No PR has been created.
+
+### Recording boundary and data-contract migration
+
+`TokenSim.recordTradeTick` now takes separate `marketVolumeUsd` and `walletNotionalUsd` arguments. Market volume goes to all eight candle aggregators, stat entries and tape `notionalUsd`. `vol5mUsd`, published market snapshots and model flow consume those market values through the existing path. `walletNotionalUsd` alone reaches the existing `recordWalletTradeStats` logic.
+
+| Execution branch | Market volume source | Holder-accounting input retained |
+| --- | --- | --- |
+| Pre user BUY | `buy.baseInUsd`, actual used net quote | Existing `filledUsd`, gross used cost |
+| Pre bot BUY | `buy.baseInUsd` | Same net amount as before; known bot cost defect preserved |
+| Pre user SELL | `sell.baseOutUsd / feeFactor`, already computed as `grossOutUsd` | Existing `filledUsd`, net proceeds |
+| Pre bot SELL | `sell.baseOutUsd / feeFactor` | Existing `sell.baseOutUsd`, net proceeds |
+| Post user BUY | `buy.baseInNetUsd` | Existing `filledUsd`, gross cost |
+| Post bot BUY | `buy.baseInNetUsd` | Same net cost as before |
+| Post user SELL | `sell.baseOutGrossUsd` | Existing `filledUsd`, net proceeds |
+| Post bot SELL | `sell.baseOutGrossUsd` | Existing `sell.baseOutNetUsd`, net proceeds |
+
+These are successful execution results, not requested budgets. Capped BUY uses only consumed net input. Pre SELL derives actual gross from the final payout after any cash cap, matching the current execution's virtual quote deduction. The $1 cash-cap fixture records `1.010101010` market USD, not the unconstrained `9.900990099`. Its reserve-model defect remains unchanged. FAILED, invalid and late executions still produce no additional volume.
+
+This is a **semantic data-contract migration** for `SimTapeTrade.notionalUsd`, published market trade notionals, `Candle.volume`, `StatBucket.volUsd` and `TokenRuntime.vol5mUsd`. They now uniformly mean actual fee-exclusive quote exchanged by the pricing model. Their numeric structures are unchanged; neither frozen types file was edited. Normal user BUY market volume decreases by 1%; bot BUY stays unchanged; SELL market volume increases by approximately 1.010101% at the existing 100 bps fee.
+
+`UserTradeFill.filledUsd`, `filledSol`, `feeUsd`, refund/transaction-cost handling, trading position cost, PnL and `QuickTrade.notionalUsd` retain wallet basis. Your Trades and market tape can therefore intentionally show different USD amounts for the same user trade. Holder profiles retain every old per-execution accounting input, including the bot BUY net-cost inconsistency. No fee/PnL correction is bundled into the volume migration.
+
+Start a fresh SIM session when applying this version. Existing in-memory candles, tape and stat windows cannot be mixed across the semantic boundary; they have no basis/version marker. No persisted-state conversion, Replay/Live provider or historical reconstruction was added.
+
+### QA changes and results
+
+The 265 volume expectations and 249 integrity expectations are unchanged. Their results now pass against the approved contract. The model/cash-cap and holder-cost diagnostics retain their original expectations and all six known FAILs. `candidate` remains the historical QA group name for the now-approved volume contract.
+
+The old feedback assertion replaced current stat entries with candidate entries. Those entries are now already on the new basis, so QA instead constructs the legacy basis for the same fixed execution trace, measures it, and restores the actual market entries. It checks both flow strength and synthetic activity change. This temporary fixture comparison is confined to QA; production has no legacy feed or compensating weights.
+
+Ten additional settlement assertions execute a real pending BUY and SELL via the existing registry/store path. They verify Your Trades notional/fee, gross BUY position cost, remaining SELL cost, net-proceeds realized PnL, wallet PnL and actual SOL settlement including transaction costs. Existing capped BUY and FAILED/refund checks remain in the integrity group.
+
+| Check | Audit baseline | Slice 2C1 |
+| --- | --- | --- |
+| Market-volume contract | 83/265, 182 discrepancies | 265/265 PASS |
+| Integrity | 249/249 | 249/249 PASS |
+| Reserve/model | 35/37, 2 cash-cap FAIL | 35/37, same 2 FAIL |
+| Holder accounting | 12/16, 4 bot BUY FAIL | 12/16, same 4 FAIL |
+| Additional wallet settlement | Not present | 10/10 PASS |
+| Overall volume diagnostic exit | 1, 188 discrepancies | 1, only 6 retained diagnostics |
+| Isolated swap differential | Not present | 12/12 identical economics versus `799d903` |
+| Late Tick | 52/52 + 81/81 | 52/52 + 81/81 PASS |
+| Timestamp | 350/350 | 350/350 PASS |
+| BUY exhaustion | 135 | 135 assertions PASS |
+| Trade OHLC diagnostic | 336/413, 77 discrepancies | 335/413, 78 discrepancies; exit 1 |
+| Curve parity diagnostic | 14/18 | 14/18; same 4 discrepancies; exit 1 |
+| Build | PASS | PASS; chunk-size warning |
+| Lint | 0 errors, 7 warnings | Exit 0; 0 errors, 7 existing Hooks warnings |
+
+The original audit QA was rerun in an isolated baseline tree and reproduced its published counts. The unchanged OHLC diagnostic removes three uniform-volume failures but adds four assertions that equate user tape notional/average price with wallet fill amounts. Those identities no longer hold under the approved separation; its oracle also retains the separate OHLC/convention findings. Its net change of one additional FAIL is explained by semantics, not a new swap-accounting failure. No existing QA file outside `volumeBasisQa.ts` was modified, and no diagnostic was added as a CI gate.
+
+### Identical-state single-swap comparison
+
+`volumeBasisQa.ts` emits `ECONOMICS` JSON for 12 isolated cases: all eight actor/side/phase combinations, user and bot exhaustion, partial SELL and cash-cap SELL. Traces contain initial/final curve state, captured migrated reserve context, fills, ledger, holder profiles, final price/mcap/phase, last swap, trade token/price data and RNG state. They deliberately exclude the market-volume fields being migrated. Each case starts from the same explicit fixture and seeded state in both revisions.
+
+The updated harness was run against the old `TokenSim` from `799d903` and the new one. All 12 economic traces matched exactly, including the two known capped-model diagnostics. This establishes equality for those isolated executions; it does not claim identical future market paths after feedback changes. The actual pending settlement checks independently verify the wallet-basis formulas.
+
+Reproduce this comparison after building the current QA bundle using the command in the audit section above:
+
+```sh
+python3 - <<'PY'
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+
+root = tempfile.mkdtemp(prefix='volume-differential-', dir='/tmp')
+shutil.copytree('src', root + '/src')
+shutil.copytree('config', root + '/config')
+os.symlink(os.getcwd() + '/node_modules', root + '/node_modules')
+with open(root + '/src/tokens/tokenSim.ts', 'wb') as file:
+    file.write(subprocess.check_output(['git', 'show', '799d903:src/tokens/tokenSim.ts']))
+subprocess.run([
+    './node_modules/.bin/esbuild', root + '/src/qa/volumeBasisQa.ts', '--bundle',
+    '--platform=node', '--format=esm', '--define:import.meta.env.DEV=true',
+    '--outfile=' + root + '/baseline.mjs',
+], check=True)
+def trace(path):
+    run = subprocess.run(['node', path], capture_output=True, text=True)
+    # Both revisions retain diagnostic FAILs; compare the economic export itself.
+    assert run.returncode == 1
+    return json.loads(next(line[10:] for line in run.stdout.splitlines()
+                           if line.startswith('ECONOMICS ')))
+old = trace(root + '/baseline.mjs')
+new = trace('/tmp/volume-audit-qa/volumeBasisQa.mjs')
+assert len(old) == len(new) == 12
+for before, after in zip(old, new):
+    assert before == after, before['label']
+print('Single-swap differential: 12/12 identical economic traces')
+PY
+```
+
+### Feedback, consumers and limits
+
+For the fixed mixed execution trace, legacy versus market basis changes flow strength from `0.00629548594007734` to `0.006294328305173782` and synthetic activity from `0.1346104164910008` to `0.13459568882785103`. Prices and counts are held fixed during this measurement. Production uses the new `vol5mUsd` directly, with unchanged regime weights and simulation parameters. Later liquidity context, sizing, regime decisions and migration outcomes may diverge as intended; no full multi-tick equality or long-run distribution equivalence is claimed.
+
+Pulse volume filters, sorting and displayed totals now use fee-exclusive market volume. Chart histograms and market tape follow the same basis. Narrative big-trade thresholds/ranking also read the new notionals, so post eligibility may change. Existing UI labels and Your Trades remain unchanged; the market-versus-wallet distinction is documented here rather than introducing UI work into this slice. Count-based BUY/SELL flow has the same immediate counts for a fixed accepted trace; subsequent activity may change through model feedback.
+
+Remaining risks are the separately documented cash-cap SELL accounting defect, bot holder cost defect, in-memory mixed-basis sessions and the synthetic post-migration reserve interpretation. Slice 2B's fan-out invariant alarm still has no rollback for unsupported private-state desynchronization. This change does not alter that admission proof or add recovery behavior.
+
+Both Windows QA launchers were attempted sequentially and exited 127 because PowerShell is unavailable. Full browser/manual lifecycle and trading verification, including the five-minute run, remains unverified on this host. A permitted local Vite launch returned HTTP 200; that proves serving/startup only, not browser execution. Production changes are confined to `tokenSim.ts`; aggregators, frozen types, curve/AMM math, fees, latency/slippage, migration rules, OHLC/genesis conventions, UI/store, dependencies and Replay/Live architecture are unchanged.

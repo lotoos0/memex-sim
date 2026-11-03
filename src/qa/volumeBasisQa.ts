@@ -8,11 +8,12 @@ import { useTradingStore } from '../store/tradingStore';
 import { useWalletStore } from '../store/walletStore';
 
 // Diagnostic, not a CI gate. Private fixture access adds no production seam.
-// Candidate volume is compared separately from propagation and economic invariants.
-type Group = 'integrity' | 'candidate' | 'model' | 'wallet';
-const counts: Record<Group, number> = { integrity: 0, candidate: 0, model: 0, wallet: 0 };
+// Market volume is compared separately from propagation and known economic diagnostics.
+type Group = 'integrity' | 'candidate' | 'model' | 'wallet' | 'settlement';
+const counts: Record<Group, number> = { integrity: 0, candidate: 0, model: 0, wallet: 0, settlement: 0 };
 const failures: Array<{ group: Group; label: string }> = [];
 const traces: unknown[] = [];
+const singleSwapEconomics: unknown[] = [];
 const base = 1_800_000_000_000;
 const feeFactor = 0.99; // Existing 100 bps model, independently specified.
 let now = base;
@@ -55,7 +56,7 @@ function snapshot(sim: TokenSim): string {
     ledger: [...sim['ledger']], profiles: [...sim['walletProfiles']],
     candles: [1, 15, 30, 60].flatMap((tf) => [sim.getCandles(tf), sim.getCandles(tf, 'mcap')]) });
 }
-function verifyProjection(sim: TokenSim, expected: Array<{ tMs: number; quote: number }>, label: string): void {
+function verifyProjection(sim: TokenSim, expected: Array<{ tMs: number; quote: number; legacyVolume?: number }>, label: string): void {
   const recorded = sim['tape'].reduce((sum, row) => sum + row.notionalUsd, 0);
   const quote = expected.reduce((sum, row) => sum + row.quote, 0);
   near('integrity', sim['tape'].length, expected.length, `${label}/one-row-per-execution`);
@@ -78,7 +79,7 @@ function verifyProjection(sim: TokenSim, expected: Array<{ tMs: number; quote: n
   }
 }
 function execute(sim: TokenSim, actor: 'user' | 'bot', side: 'BUY' | 'SELL', amount: number,
-  expected: Array<{ tMs: number; quote: number }>, label: string): UserTradeFill | undefined {
+  expected: Array<{ tMs: number; quote: number; legacyVolume?: number }>, label: string): UserTradeFill | undefined {
   const before = sim.getCurveDebugSnapshot();
   const migrated = sim['hasMigrated'];
   // Migrated reserves are synthesized per call, not persistent balances.
@@ -121,7 +122,17 @@ function execute(sim: TokenSim, actor: 'user' | 'bot', side: 'BUY' | 'SELL', amo
   const profileField = side === 'BUY' ? 'boughtUsd' : 'soldUsd';
   near('wallet', profile[profileField] - (profilesBefore.get(row.walletId)?.[profileField] ?? 0),
     walletQuote, `${label}/holder-profile-wallet-notional`);
-  expected.push({ tMs: row.tMs, quote });
+  expected.push({ tMs: row.tMs, quote,
+    legacyVolume: fill?.ok ? fill.filledUsd : side === 'BUY' ? quote : walletQuote });
+  if (!label.startsWith('mixed/')) {
+    singleSwapEconomics.push({ label, initialCurve: before, reserveContext: reserves ?? null,
+      finalCurve: after, fill: fill ?? null, ledger: [...sim['ledger']],
+      profiles: [...sim['walletProfiles']], price: sim.getLastPriceUsd(),
+      mcap: sim.getLastMcapUsd(), phase: sim.getPhase(), swap: sim['lastCurveSwap'],
+      trade: { tMs: row.tMs, side: row.side, walletId: row.walletId,
+        tokenAmount: row.tokenAmount, priceUsd: row.priceUsd, mcapUsd: row.mcapUsd },
+      rng: JSON.parse(JSON.stringify(sim['rng'])) });
+  }
   verifyProjection(sim, expected, label);
   traces.push({ label, tokens: row.tokenAmount, exchangedQuote: quote, walletQuote, fee,
     recordedVolume: row.notionalUsd, fillUsd: fill?.ok ? fill.filledUsd : null,
@@ -163,7 +174,7 @@ try {
   execute(cashCap, 'user', 'SELL', 1_000_000, [], 'cash-cap/user/SELL');
 
   const mixed = create('mixed');
-  const expected: Array<{ tMs: number; quote: number }> = [];
+  const expected: Array<{ tMs: number; quote: number; legacyVolume?: number }> = [];
   for (const actor of ['user', 'bot'] as const) for (const side of ['BUY', 'SELL'] as const) {
     now += 61_000;
     execute(mixed, actor, side, actor === 'user' ? (side === 'BUY' ? 0.1 : 100_000) : 1,
@@ -186,13 +197,18 @@ try {
     mixed.getRuntime().vol5mUsd, 'published/runtime-volume');
   near('integrity', useTokenStore.getState().marketByTokenId[mixed.meta.id].recentTrades
     .reduce((sum, row) => sum + row.notionalUsd, 0), mixed.getRuntime().vol5mUsd, 'published/tape-volume');
-  const oldStats = mixed['statWindow'].map((row) => ({ ...row }));
-  const oldStrength = mixed['getFlowStrength']();
-  for (let i = 0; i < expected.length; i++) mixed['statWindow'][i]!.volUsd = expected[i]!.quote;
-  const candidateStrength = mixed['getFlowStrength']();
-  mixed['statWindow'] = oldStats;
-  check('model', candidateStrength !== oldStrength, 'candidate-basis/changes-model-input');
-  traces.push({ label: 'feedback-experiment', oldStrength, candidateStrength });
+  // Compare bases on one fixed execution trace, without compensating production flow.
+  const marketStats = mixed['statWindow'].map((row) => ({ ...row }));
+  const marketStrength = mixed['getFlowStrength']();
+  const marketActivity = mixed['getSyntheticTradeActivityFactor']();
+  for (let i = 0; i < expected.length; i++) mixed['statWindow'][i]!.volUsd = expected[i]!.legacyVolume!;
+  const legacyStrength = mixed['getFlowStrength']();
+  const legacyActivity = mixed['getSyntheticTradeActivityFactor']();
+  mixed['statWindow'] = marketStats;
+  check('model', marketStrength !== legacyStrength && marketActivity !== legacyActivity,
+    'market-basis/changes-model-input');
+  traces.push({ label: 'feedback-experiment', legacyStrength, marketStrength, legacyActivity, marketActivity });
+
 
   const capped = create('exhaustion-refund');
   capped['curveRealToken'] = 10_000_000;
@@ -220,6 +236,50 @@ try {
   verifyProjection(capped, [{ tMs: cappedFill.tsMs, quote: usedNet }], 'capped/settled');
   registry['tokens'].delete(capped.meta.id);
 
+  const roundTrip = create('wallet-round-trip');
+  registry['tokens'].set(roundTrip.meta.id, roundTrip);
+  useTokenStore.getState().addToken(roundTrip.meta, roundTrip.getRuntime());
+  useWalletStore.setState({ solBalance: 1_000, realizedPnlSol: 0 });
+  let paidUsd = 0;
+  let boughtTokens = 0;
+  let transactionCosts = 0;
+  for (const side of ['BUY', 'SELL'] as const) {
+    const submit = side === 'BUY'
+      ? useTradingStore.getState().quickBuy(roundTrip.meta.id, 0.1, { slippagePct: 100 })
+      : useTradingStore.getState().quickSell(roundTrip.meta.id, 0.05, { slippagePct: 100 });
+    fixture(submit.ok, `round-trip/${side}/submit`);
+    const order = Object.values(useTradingStore.getState().pendingQuickOrdersById)
+      .find((p) => p.tokenId === roundTrip.meta.id);
+    fixture(order !== undefined, `round-trip/${side}/pending`);
+    now = order.execMs;
+    roundTrip['processPendingUserTrades'](now);
+    const executions = roundTrip.drainUserTradeExecutions();
+    fixture(executions.length === 1 && executions[0]!.status === 'FILLED', `round-trip/${side}/fill`);
+    const fill = executions[0].fill;
+    transactionCosts += order.txCostSol;
+    registry['executions'].process(roundTrip.meta.id, roundTrip, executions);
+    const position = useTradingStore.getState().quickPositionsByTokenId[roundTrip.meta.id];
+    const trades = useTradingStore.getState().quickTradesByTokenId[roundTrip.meta.id];
+    near('settlement', trades[trades.length - 1]!.notionalUsd, fill.filledUsd, `${side}/Your-Trades-wallet-basis`);
+    near('settlement', trades[trades.length - 1]!.feeUsd, fill.feeUsd, `${side}/Your-Trades-fee`);
+    if (side === 'BUY') {
+      paidUsd = fill.filledUsd;
+      boughtTokens = fill.filledToken;
+      near('settlement', position.costBasisUsd, paidUsd, 'BUY/cost-is-gross-wallet');
+      near('settlement', useWalletStore.getState().solBalance,
+        1_000 - fill.filledSol - transactionCosts, 'BUY/wallet-settlement');
+    } else {
+      const soldCost = paidUsd * fill.filledToken / boughtTokens;
+      near('settlement', position.costBasisUsd, paidUsd - soldCost, 'SELL/remaining-cost');
+      near('settlement', position.realizedPnlUsd, fill.filledUsd - soldCost, 'SELL/PnL-net-proceeds');
+      near('settlement', useWalletStore.getState().realizedPnlSol,
+        (fill.filledUsd - soldCost) / SOL_PRICE_USD, 'SELL/wallet-PnL');
+      near('settlement', useWalletStore.getState().solBalance,
+        1_000 - paidUsd / SOL_PRICE_USD + fill.filledSol - transactionCosts, 'SELL/wallet-settlement');
+    }
+  }
+  registry['tokens'].delete(roundTrip.meta.id);
+
   // Real pending-order failure and refund, after another trade worsens the quote.
   const failed = create('failed-refund');
   registry['tokens'].set(failed.meta.id, failed);
@@ -244,9 +304,10 @@ try {
   Date.now = originalNow;
   Math.random = originalRandom;
 }
+console.log(`ECONOMICS ${JSON.stringify(singleSwapEconomics)}`);
 console.log(`TRACES ${JSON.stringify(traces)}`);
 for (const failure of failures) console.error(`FAIL ${failure.group}/${failure.label}`);
-for (const group of ['integrity', 'candidate', 'model', 'wallet'] as const) {
+for (const group of ['integrity', 'candidate', 'model', 'wallet', 'settlement'] as const) {
   const failed = failures.filter((f) => f.group === group).length;
   console.log(`Volume basis ${group}: ${counts[group] - failed}/${counts[group]} passed; ${failed} discrepancies`);
 }
