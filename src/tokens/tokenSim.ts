@@ -933,7 +933,9 @@ export class TokenSim {
 
     for (let i = 0; i < sidePlan.length; i++) {
       const side = sidePlan[i]!;
-      const tsMs = startMs + Math.floor(((i + 1) * windowMs) / (sidePlan.length + 1));
+      const scheduledTsMs = startMs + Math.floor(((i + 1) * windowMs) / (sidePlan.length + 1));
+      // Pending user fills may already have executed at the end of this window.
+      const tsMs = Math.max(scheduledTsMs, this.tape[this.tape.length - 1]?.tMs ?? this.spawnRealMs);
       if (side === 'BUY') {
         const targetUsd = buyParts[buyIdx++] ?? 0;
         const actorGroup = pickActorGroup(this.rng, input.buyMix, 'late_retail');
@@ -963,7 +965,7 @@ export class TokenSim {
       : input.previousPriceUsd;
     const driftPct = this.lastPriceUsd > 0 ? ((expected - this.lastPriceUsd) / this.lastPriceUsd) : 0;
     if (Math.abs(driftPct) > 0.012 && totalUsd > 25) {
-      const steeringTs = input.candleTsMs;
+      const steeringTs = Math.max(input.candleTsMs, this.tape[this.tape.length - 1]?.tMs ?? this.spawnRealMs);
       const steeringNotional = Math.max(8, totalUsd * 0.15);
       if (driftPct > 0) {
         if (this.executeSimBuyTrade(steeringNotional, steeringTs, 'momentum_chasers')) executedTrades += 1;
