@@ -429,14 +429,7 @@ export class TokenSim {
     this.rollMarketRegime(this.getSessionProfile());
 
     // Seed initial flat candle so first dev buy grows from launch baseline.
-    this.aggr1s.pushTick(this.spawnRealMs, startPriceUsd, 0);
-    this.aggr15s.pushTick(this.spawnRealMs, startPriceUsd, 0);
-    this.aggr30s.pushTick(this.spawnRealMs, startPriceUsd, 0);
-    this.aggr1m.pushTick(this.spawnRealMs, startPriceUsd, 0);
-    this.mcapAggr1s.pushTick(this.spawnRealMs, this.lastMcapUsd, 0);
-    this.mcapAggr15s.pushTick(this.spawnRealMs, this.lastMcapUsd, 0);
-    this.mcapAggr30s.pushTick(this.spawnRealMs, this.lastMcapUsd, 0);
-    this.mcapAggr1m.pushTick(this.spawnRealMs, this.lastMcapUsd, 0);
+    this.pushCandleTicks(this.spawnRealMs, 0);
   }
 
   tick(fallbackRealDtSec: number, sessionBucket: SessionBucket = getSessionBucket(Date.now())): TokenChartEvent[] {
@@ -1267,6 +1260,7 @@ export class TokenSim {
   }
 
   private executeSimBuyTrade(targetUsd: number, tsMs: number, actorGroup: TokenActorGroup = 'late_retail'): boolean {
+    if (!this.acceptsTradeTimestamp(tsMs)) return false;
     const grossInUsd = Math.max(0, Number.isFinite(targetUsd) ? targetUsd : 0);
     if (grossInUsd <= 0) return false;
 
@@ -1310,6 +1304,7 @@ export class TokenSim {
   }
 
   private executeSimSellTrade(targetUsd: number, tsMs: number, actorGroup: TokenActorGroup = 'panic_sellers'): boolean {
+    if (!this.acceptsTradeTimestamp(tsMs)) return false;
     const desiredUsd = Math.max(0, Number.isFinite(targetUsd) ? targetUsd : 0);
     if (desiredUsd <= 0) return false;
 
@@ -2201,6 +2196,12 @@ export class TokenSim {
     fill: UserTradeFill;
     events: TokenChartEvent[];
   } {
+    if (!this.acceptsTradeTimestamp(tsMs)) {
+      return {
+        fill: { ok: false, side, requestedAmount: amount, reason: 'Late trade timestamp' },
+        events: [],
+      };
+    }
     if (this.phase === 'RUGGED') this.phase = 'DEAD';
     if (!Number.isFinite(amount) || amount <= 0) {
       return {
@@ -2769,6 +2770,29 @@ export class TokenSim {
     return { reserveBaseUsd, reserveToken };
   }
 
+  private acceptsTradeTimestamp(tsMs: number): boolean {
+    // Every accepted trade reaches tape and all eight aggregators synchronously.
+    return tsMs >= (this.tape[this.tape.length - 1]?.tMs ?? this.spawnRealMs);
+  }
+
+  private pushCandleTicks(tsMs: number, volumeUsd: number): void {
+    for (const [aggregator, price] of [
+      [this.aggr1s, this.lastPriceUsd],
+      [this.aggr15s, this.lastPriceUsd],
+      [this.aggr30s, this.lastPriceUsd],
+      [this.aggr1m, this.lastPriceUsd],
+      [this.mcapAggr1s, this.lastMcapUsd],
+      [this.mcapAggr15s, this.lastMcapUsd],
+      [this.mcapAggr30s, this.lastMcapUsd],
+      [this.mcapAggr1m, this.lastMcapUsd],
+    ] as const) {
+      // Execution admission and genesis keep all eight watermarks synchronized.
+      if (aggregator.pushTick(tsMs, price, volumeUsd).mode === 'rejected') {
+        throw new Error('Candle timestamp invariant violated');
+      }
+    }
+  }
+
   private recordTradeTick(
     candleTsMs: number,
     volumeUsd: number,
@@ -2776,14 +2800,7 @@ export class TokenSim {
     walletId: string,
     tokenAmount: number
   ): void {
-    this.aggr1s.pushTick(candleTsMs, this.lastPriceUsd, volumeUsd);
-    this.aggr15s.pushTick(candleTsMs, this.lastPriceUsd, volumeUsd);
-    this.aggr30s.pushTick(candleTsMs, this.lastPriceUsd, volumeUsd);
-    this.aggr1m.pushTick(candleTsMs, this.lastPriceUsd, volumeUsd);
-    this.mcapAggr1s.pushTick(candleTsMs, this.lastMcapUsd, volumeUsd);
-    this.mcapAggr15s.pushTick(candleTsMs, this.lastMcapUsd, volumeUsd);
-    this.mcapAggr30s.pushTick(candleTsMs, this.lastMcapUsd, volumeUsd);
-    this.mcapAggr1m.pushTick(candleTsMs, this.lastMcapUsd, volumeUsd);
+    this.pushCandleTicks(candleTsMs, volumeUsd);
 
     this.statWindow.push({
       simMs: this.simTimeMs,

@@ -1,9 +1,14 @@
 import type { Candle } from './types';
 
+type PushTickResult =
+  | { mode: 'new' | 'update'; candle: Candle }
+  | { mode: 'rejected'; reason: 'late' };
+
 export class CandleAggregator {
   private tfSec: number;
   private candles: Candle[] = [];
   private maxLen = 3000;
+  private lastAcceptedTimestampMs: number | null = null;
 
   constructor(tfSec: number) {
     this.tfSec = tfSec;
@@ -11,6 +16,7 @@ export class CandleAggregator {
 
   reset() {
     this.candles = [];
+    this.lastAcceptedTimestampMs = null;
   }
 
   private pushCandle(c: Candle) {
@@ -20,7 +26,11 @@ export class CandleAggregator {
     }
   }
 
-  pushTick(tMs: number, price: number, vol: number): { mode: 'new' | 'update'; candle: Candle } {
+  pushTick(tMs: number, price: number, vol: number): PushTickResult {
+    if (this.lastAcceptedTimestampMs !== null && tMs < this.lastAcceptedTimestampMs) {
+      return { mode: 'rejected', reason: 'late' };
+    }
+    this.lastAcceptedTimestampMs = tMs;
     const tSec = Math.floor(tMs / 1000);
     const bucket = Math.floor(tSec / this.tfSec) * this.tfSec;
 
@@ -38,13 +48,6 @@ export class CandleAggregator {
       c.low = Math.min(c.open, c.low, c.close);
       this.pushCandle(c);
       return { mode: 'new', candle: c };
-    } else if (bucket < last.time) {
-      // Out-of-order tick, ignore bucket shift and update latest candle only.
-      last.high = Math.max(last.high, price);
-      last.low = Math.min(last.low, price);
-      last.close = price;
-      last.volume += vol;
-      return { mode: 'update', candle: last };
     } else {
       last.high = Math.max(last.high, price);
       last.low = Math.min(last.low, price);
