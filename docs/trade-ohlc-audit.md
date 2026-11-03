@@ -124,3 +124,51 @@ Proposed first STANDARD vertical slice: make timestamps emitted by the simulatio
 Acceptance: the current real-tick inversion fixture becomes monotonic; each actual trade's volume reaches its timestamp's bucket; chronological projection agrees after explicitly including existing genesis/continuity semantics; no changes to reserve math, fills/refunds, fees, migration rules or chart/store boundaries. Re-run BUY exhaustion, build/lint and supported browser QA. Do not change arbitrary-late-event aggregation, OHLC open, genesis, volume basis and average-price semantics in the same slice.
 
 Next independent decisions: define a common volume basis across actors/sides; choose an explicit late-event policy for imported/replayed data; decide whether the chart remains a continuous reserve-mark chart or becomes transaction-price OHLC. Merely sorting ticks in the aggregator is insufficient to repair backdated execution causality. No fix or PR is included here; implementation awaits approval.
+
+## Authorized timestamp-order slice follow-up
+
+The audit above is preserved as the pre-fix snapshot. The subsequent authorized slice starts from `origin/main` at `0288a0e` and retains the original audit and diagnostic QA from `docs/trade-ohlc-audit` by cherry-picking its documentation commit. `tradeOhlcQa.ts` and its expectations are unchanged.
+
+### Change and scope
+
+`executeMarketFlowAsTape` now bounds each scheduled background timestamp by the most recently executed trade in tape, or spawn time when tape is empty. The final steering trade uses the same lower bound. This happens before executing the swap, so wallet activity, statistics, tape and candle projections receive the same corrected timestamp. There is no post-execution sorting or new public contract.
+
+Pending order processing is unchanged: priority, due time and stable insertion order remain intact. User fills at the tick's `nowMs` make subsequent background timestamps equal to `nowMs`; otherwise the original sub-tick spacing is retained whenever it does not precede an existing execution. Failed swaps do not advance the bound. The last retained tape entry is sufficient even when old entries are pruned. Using spawn time also prevents the initial generated window from predating the genesis candle.
+
+Production changes are limited to `src/tokens/tokenSim.ts` scheduling. There are no changes to aggregator, frozen types, curve/AMM math, migration, fees, volume/price conventions, UI or stores.
+
+### Regression and economic equivalence
+
+New `src/qa/tradeTimestampQa.ts` uses the original real `trade-ohlc-tick` fixture and controlled mixed market flow. It checks public pending USER BUY processing before background trades, mixed background BUY/SELL, a following tick without a user fill, natural timing without pending fills, equal timestamps, stable priority ordering, the 1s boundary, and nondecreasing tape timestamps. An independent chronological bucket oracle includes genesis and continuity opens. It compares OHLCV at 1s/15s/30s/1m for both price and market cap, plus total volume conservation without duplicate addition.
+
+```sh
+./node_modules/.bin/esbuild src/qa/tradeTimestampQa.ts --bundle --platform=node --format=esm --outfile=/tmp/tradeTimestampQa.mjs
+node /tmp/tradeTimestampQa.mjs
+```
+
+Result: **350/350 PASS**. The same test bundled with pre-fix `tokenSim.ts` produces **309/350**, detecting 41 failures. The test emits a timestamp-free `ECONOMICS` trace for differential comparison: curve snapshots, token ledger, execution-order trade quantities/notionals/prices, pending execution notices and a no-user natural-timestamp control. Those traces were exactly equal before/after in all tested fixtures. The baseline source was read from the pre-fix commit and substituted only by an esbuild `onLoad` plugin in `/tmp`; production files were not reverted for this check. These are fixture comparisons, not a claim of universal economic equivalence over arbitrary runs.
+
+### Diagnostic change, with expectations preserved
+
+Trade OHLC diagnostic: **326/413, 87 FAIL before -> 332/413, 81 FAIL after**, both exit 1. Six existing FAIL labels disappeared; no new FAIL label appeared:
+
+- `tick/chronological-insertion`
+- `tick/1s/chronological-projection/bucket0/high`
+- `tick/1s/chronological-projection/bucket0/close`
+- `tick/1s/chronological-projection/bucket0/volume`
+- `tick/1s/chronological-projection/bucket1/high`
+- `tick/1s/chronological-projection/bucket1/volume`
+
+In this real-tick fixture, the historical bucket now correctly contains only genesis with zero volume, while all transactions after the user fill have the execution timestamp and contribute $366.21332886611873 exactly once to the current bucket. This corrects the timestamps to execution order; it does not pretend the earlier bot prices were executed before the user swap. The remaining two `tick/1s` open/low FAIL are the unchanged continuity-open convention. The other 79 FAIL are unchanged unit late-arrival behavior, continuity/genesis conventions, actor/side fee bases and reserve-mark versus average-price comparisons. Arbitrary out-of-order input to `CandleAggregator` is deliberately not fixed here.
+
+### Validation and limits
+
+- `npm run build`: PASS, existing bundle-size and Node deprecation warnings.
+- `npm run lint`: PASS, 0 errors and 7 existing UI warnings.
+- Timestamp regression: 350/350 PASS; independent before/after economic trace comparison PASS.
+- BUY exhaustion regression: 135 assertions PASS, including actual wallet refund and migration boundary cases.
+- Trade OHLC diagnostic: 332/413, 81 known diagnostic FAIL; not a mandatory CI gate.
+- Curve parity diagnostic: unchanged 14/18, four known BUY fee/OHLC FAIL.
+- Browser QA launchers attempted sequentially; unavailable because PowerShell is missing. Browser/manual rendering and five-minute lifecycle checks remain unrun.
+
+Risk: background trades can now share a timestamp with user executions, intentionally reducing artificial intra-tick spacing when necessary. Timestamp-derived tape IDs and wallet activity times consequently change; economic trace fields remain equal in the tested runs. No claim is made about system clock rollback, arbitrary private calls with future timestamps, imported late events or complete Replay behavior. The standalone regression uses private fixture access and does not mount the chart or run the registry timer. No PR was created; this slice awaits review.
