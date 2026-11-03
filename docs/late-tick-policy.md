@@ -1,6 +1,8 @@
 # Late tick policy - Slice 2B
 
-Status: proposal and diagnostic QA only. Audited local `main`: `dbd6820` after PR #46, 2026-11-03. No production code, frozen types, dependencies, package scripts or CI gates changed. Implementation requires STANDARD plan review and explicit Human approval.
+Historical audit snapshot (commit `174c078`); implementation and current results are recorded below.
+
+Status at audit time: proposal and diagnostic QA only. Audited local `main`: `dbd6820` after PR #46, 2026-11-03. No production code, frozen types, dependencies, package scripts or CI gates changed. Implementation requires STANDARD plan review and explicit Human approval.
 
 ## Current behavior and consumers
 
@@ -101,3 +103,62 @@ Live event time can arrive out of order. Applying the SIM drop rule directly cou
 4. Retire the pre-fix characterization assertions, require all proposed-contract assertions to pass, rerun timestamp and BUY exhaustion regressions, build and lint. Add integration coverage proving no partial fan-out or post-execution record loss. Run the required sequential Windows lifecycle/trading QA and manual checks on a supported host for production changes.
 
 Acceptance: late ticks are detectable and cannot mutate any candle or watermark; equal timestamps retain execution order; reset permits earlier time; chronological volume is conserved across both metrics and all TFs; no tape/statistics divergence is introduced for supported SIM execution paths. Production implementation stops here pending Human + ChatGPT review and explicit Human approval.
+
+
+## Slice 2B implementation - pending code review
+
+The approved implementation on `fix/late-tick-policy` retains the audit commit above. The preceding proposal/results describe the pre-fix snapshot; this section describes the current code. No PR was created.
+
+Changed files:
+
+- `src/engine/aggregator.ts`: nullable `lastAcceptedTimestampMs`, rejection before mutation, reset clears watermark, local result union with `rejected`/`late`. Accepted ticks keep existing OHLCV behavior.
+- `src/tokens/tokenSim.ts`: shared timestamp admission at the start of all three execution methods and checked candle fan-out for both genesis and trades.
+- `src/qa/lateTickQa.ts`: replaces historical bug characterization with contract regression and economic consistency/refund coverage.
+- `docs/late-tick-policy.md`: preserves the audit and adds implementation evidence and migration details.
+
+### Execution admission and consistency
+
+`executeUserTradeImmediate`, `executeSimBuyTrade` and `executeSimSellTrade` accept explicit timestamps. The market-flow caller clamps background time after PR #46, but the methods themselves previously allowed backdated execution. Pending users execute at `max(order.execMs, nowMs)`, which is not itself a check against the latest trade. All five call sites of `recordTradeTick` are inside these three guarded methods.
+
+`acceptsTradeTimestamp` requires `tsMs >= last tape timestamp`, or `spawnRealMs` before any trade. Tape trimming preserves its latest entry. No extra TokenSim watermark is needed: genesis seeds all eight aggregators at spawn, and every successful trade synchronously updates all eight before appending tape. No production code independently resets or feeds these private aggregators. Thus their watermarks match the tape boundary under supported execution. Equal timestamps pass. The guard runs before phase normalization, reserve mutation, wallet selection, ledger changes or RNG consumption.
+
+Late bot BUY/SELL returns the existing `false`. Late user execution returns `fill.ok: false` with reason `Late trade timestamp` and no events. Pending processing emits its existing FAILED notice; settlement releases the reserved principal and retains the existing transaction cost. No store/refund code was changed. The QA exercises that actual pending/settlement path, rather than simulating a refund.
+
+`pushCandleTicks` performs the existing eight pushes and checks every result, including constructor genesis. An unexpected `rejected` throws `Candle timestamp invariant violated`; this is an invariant alarm, not normal late-input handling or rollback. Supported late input is rejected before execution. If future code feeds/resets an aggregator independently, the synchronization proof no longer holds: the alarm could occur after economic mutation or partway through fan-out. Such a new path requires revisiting admission and atomicity before shipping. This patch does not claim recovery from arbitrary private-state corruption.
+
+The integration snapshots compare curve state, phase, price, last swap, ledger, holder wallet profiles/activity, RNG state, tape, stat window and all eight candle series. Late user/bot BUY and SELL are checked before genesis and after accepted trades, in pre-migration and migrated branches. Migrated fixtures set the existing private phase flags solely to isolate that execution branch. Accepted equal-time executions verify volume conservation across tape, stats and both metrics. The standalone eight-aggregator stream verifies identical admission decisions and reset.
+
+### Local validation before and after
+
+Baseline diagnostics were rerun from `174c078` source copied to an isolated temporary directory; production files in the working branch were not reverted. Timestamp and BUY baseline results were also recorded during the audit.
+
+| Check | Before | After |
+| --- | --- | --- |
+| Late tick contract | 28/52; exit 1 | 52/52; exit 0 |
+| Historical bug characterization | 16/16 | Removed; preserved in `174c078` |
+| New SIM integration | Not present | 81/81; exit 0 |
+| Trade timestamp | 350/350 | 350/350; exit 0 |
+| BUY exhaustion | 135 assertions | 135 assertions; exit 0 |
+| Trade OHLC diagnostic | 332/413; 81 discrepancies | 336/413; 77 discrepancies; exit 1 |
+| Curve parity diagnostic | 14/18 | 14/18; 4 discrepancies; exit 1 |
+| Build | PASS | PASS; chunk-size warning |
+| Lint | 0 errors, 7 warnings | 0 errors, 7 existing Hooks warnings |
+
+The OHLC diagnostic's oracle sorts all input trades, including late trades now rejected. Its result therefore remains diagnostic, not the acceptance criterion for this policy. Remaining differences also include genesis, continuity-open, price and volume conventions. Curve parity still reports two integer/fee-model differences and two continuity-open differences. Neither diagnostic's expectations were changed.
+
+Reproduce the current standalone QA bundles with the existing esbuild dependency:
+
+```sh
+./node_modules/.bin/esbuild src/qa/lateTickQa.ts src/qa/tradeTimestampQa.ts src/qa/buyExhaustionQa.ts src/qa/tradeOhlcQa.ts src/qa/curveParityQa.ts --bundle --platform=node --format=esm --define:import.meta.env.DEV=true --out-extension:.js=.mjs --outdir=/tmp/late-impl-qa
+node /tmp/late-impl-qa/lateTickQa.mjs
+node /tmp/late-impl-qa/tradeTimestampQa.mjs
+node /tmp/late-impl-qa/buyExhaustionQa.mjs
+node /tmp/late-impl-qa/tradeOhlcQa.mjs
+node /tmp/late-impl-qa/curveParityQa.mjs
+npm run build
+npm run lint
+```
+
+No mandatory CI gate or dependency was added. Frozen types, bonding curve math, fees, volume basis, marginal-price convention, migration, continuity-open, genesis, UI, stores and registry/store boundaries remain unchanged. Replay/Live ordering remains a separate design decision. Valid finite timestamps remain the aggregator's input assumption; this is not a general timestamp-validation migration.
+
+Additional host checks: `npm run qa:sim:dead-floor` then `npm run qa:sim:quick-limit` were attempted sequentially; both exited 127 because `powershell` is unavailable. Full browser/manual lifecycle and trading checks, including the five-minute run, remain unverified on this Linux host. Vite initially failed sandbox port binding (`EPERM`); a permitted local launch then started and returned HTTP 200. This checks startup/serving only, not browser execution. Startup also emitted Node's `module.register()` deprecation warning.
