@@ -2544,10 +2544,11 @@ export class TokenSim {
     let tokensOut = y - newY;
     let netBaseUsed = netBaseIn;
     const maxTokensOut = Math.max(0, Math.min(this.curveRealToken, y - CURVE_TOKEN_EPS));
+    const inputExceedsAvailableTokens = tokensOut > maxTokensOut;
     tokensOut = clamp(tokensOut, 0, maxTokensOut);
 
-    if (tokensOut > this.curveRealToken) {
-      tokensOut = this.curveRealToken;
+    if (inputExceedsAvailableTokens) {
+      // Charge only the input required by the capped output, preserving constant product.
       const cappedY = y - tokensOut;
       const cappedX = k / Math.max(CURVE_TOKEN_EPS, cappedY);
       netBaseUsed = Math.max(0, cappedX - x);
@@ -2615,10 +2616,11 @@ export class TokenSim {
     let tokensOut = y - newY;
     let netBaseUsed = netBaseIn;
     const maxTokensOut = Math.max(0, Math.min(this.curveRealToken, y - CURVE_TOKEN_EPS));
+    const inputExceedsAvailableTokens = tokensOut > maxTokensOut;
     tokensOut = clamp(tokensOut, 0, maxTokensOut);
 
-    if (tokensOut > this.curveRealToken) {
-      tokensOut = this.curveRealToken;
+    if (inputExceedsAvailableTokens) {
+      // Charge only the input required by the capped output, preserving constant product.
       const cappedY = y - tokensOut;
       const cappedX = k / Math.max(CURVE_TOKEN_EPS, cappedY);
       netBaseUsed = Math.max(0, cappedX - x);
