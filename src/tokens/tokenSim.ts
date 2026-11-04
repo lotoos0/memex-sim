@@ -358,6 +358,47 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/**
+ * Spread `sampled` arrivals across the buy and sell notionals without adding
+ * a print. Overlay or rug-fold USD on a side that receives no slot is carried
+ * onto the side that did, so a one-arrival tick stays one print.
+ */
+function allocateArrivalSlots(sampled: number, buyUsd: number, sellUsd: number): {
+  buySlots: number;
+  sellSlots: number;
+  buyUsd: number;
+  sellUsd: number;
+} {
+  const buy = Math.max(0, buyUsd);
+  const sell = Math.max(0, sellUsd);
+  const slots = Math.max(0, Math.floor(sampled));
+  if (slots <= 0 || buy + sell <= 0) {
+    return { buySlots: 0, sellSlots: 0, buyUsd: 0, sellUsd: 0 };
+  }
+
+  let buySlots = 0;
+  let sellSlots = 0;
+  if (sell <= 0) buySlots = slots;
+  else if (buy <= 0) sellSlots = slots;
+  else {
+    buySlots = Math.round(slots * (buy / (buy + sell)));
+    buySlots = clamp(buySlots, 0, slots);
+    sellSlots = slots - buySlots;
+  }
+
+  let nextBuy = buy;
+  let nextSell = sell;
+  if (buySlots === 0 && nextBuy > 0) {
+    nextSell += nextBuy;
+    nextBuy = 0;
+  }
+  if (sellSlots === 0 && nextSell > 0) {
+    nextBuy += nextSell;
+    nextSell = 0;
+  }
+  return { buySlots, sellSlots, buyUsd: nextBuy, sellUsd: nextSell };
+}
+
 export class TokenSim {
   readonly meta: TokenMeta;
 
@@ -1028,23 +1069,17 @@ export class TokenSim {
     }
 
     const minTradeUsd = this.getMinSyntheticTradeUsd();
-    // Counts come from stepMarket's Poisson(λ Δt). No per-tick floor: a quiet
-    // interval must be allowed to print nothing, and a long tick must be able
-    // to print more than a short one.
-    let buyTrades = Math.max(0, Math.floor(input.marketBuys ?? 0));
-    let sellTrades = Math.max(0, Math.floor(input.marketSells ?? 0));
+    // Counts come from stepMarket's Poisson(λ Δt). Overlays may move notional
+    // between sides, but they must not mint a print the sample did not draw.
+    let sampled = Math.max(0, Math.floor(input.marketBuys ?? 0)) + Math.max(0, Math.floor(input.marketSells ?? 0));
     if (input.marketBuys == null || input.marketSells == null) {
-      const share = targetBuyUsd / Math.max(1e-9, totalUsd);
-      const n = this.rng.poisson(Math.max(0, this.arrivalLambdaPerSec(1, input.candleTsMs) * input.simDtSec));
-      buyTrades = 0;
-      sellTrades = 0;
-      for (let i = 0; i < n; i++) {
-        if (this.rng.next() < share) buyTrades += 1;
-        else sellTrades += 1;
-      }
+      sampled = this.rng.poisson(Math.max(0, this.arrivalLambdaPerSec(1, input.candleTsMs) * input.simDtSec));
     }
-    if (buyTrades === 0 && targetBuyUsd > 0) buyTrades = 1;
-    if (sellTrades === 0 && targetSellUsd > 0) sellTrades = 1;
+    const allocated = allocateArrivalSlots(sampled, targetBuyUsd, targetSellUsd);
+    targetBuyUsd = allocated.buyUsd;
+    targetSellUsd = allocated.sellUsd;
+    const buyTrades = allocated.buySlots;
+    const sellTrades = allocated.sellSlots;
     if (buyTrades + sellTrades === 0) return;
 
     const buyParts = this.splitNotional(targetBuyUsd, buyTrades, minTradeUsd);

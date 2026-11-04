@@ -116,20 +116,89 @@ function runTickIndependence(): void {
   let fine = 0;
   let coarse = 0;
   const n = 20;
+  const simSec = durationMs / 1000;
   for (let i = 0; i < n; i++) {
     const fate = FATES[i % FATES.length]!;
     fine += runToken(`tick-${i}`, fate, 200, durationMs, 1_700_000_000_000).length;
     coarse += runToken(`tick-${i}`, fate, 1000, durationMs, 1_700_000_000_000).length;
   }
-  const mean = (fine + coarse) / 2;
-  const gap = Math.abs(fine - coarse) / Math.max(1, mean);
-  check(mean > n * 5, `tick/tokens-actually-trade fine=${fine} coarse=${coarse}`);
-  check(gap < 0.4, `tick/rate-independent gap=${(gap * 100).toFixed(1)}% fine=${fine} coarse=${coarse}`);
-  console.log(`arrival ticks: 200ms ${fine} trades, 1000ms ${coarse} trades, gap ${(gap * 100).toFixed(1)}%`);
+  const finePerSec = fine / (n * simSec);
+  const coarsePerSec = coarse / (n * simSec);
+  const gap = Math.abs(finePerSec - coarsePerSec) / Math.max(finePerSec, coarsePerSec);
+  check(finePerSec > 0.05 && coarsePerSec > 0.05, `tick/tokens-actually-trade fine=${finePerSec.toFixed(3)}/s coarse=${coarsePerSec.toFixed(3)}/s`);
+  check(gap < 0.35, `tick/prints-per-sec-match gap=${(gap * 100).toFixed(1)}% fine=${finePerSec.toFixed(3)}/s coarse=${coarsePerSec.toFixed(3)}/s`);
+  console.log(`arrival ticks: 200ms ${finePerSec.toFixed(3)}/s, 1000ms ${coarsePerSec.toFixed(3)}/s, gap ${(gap * 100).toFixed(1)}%`);
+}
+
+function printsFromFlow(sim: TokenSim, sampledBuys: number | undefined, sampledSells: number | undefined, buyUsd: number, sellUsd: number): number {
+  const before = sim['tape'].length;
+  const now = sim['spawnRealMs'] + sim['simTimeMs'];
+  const input: {
+    candleTsMs: number;
+    simDtSec: number;
+    targetBuyUsd: number;
+    targetSellUsd: number;
+    previousPriceUsd: number;
+    expectedNextPriceUsd: number;
+    buyMix: [];
+    sellMix: [];
+    marketBuys?: number;
+    marketSells?: number;
+  } = {
+    candleTsMs: now,
+    simDtSec: 0.2,
+    targetBuyUsd: buyUsd,
+    targetSellUsd: sellUsd,
+    previousPriceUsd: sim.getLastPriceUsd(),
+    expectedNextPriceUsd: sim.getLastPriceUsd(),
+    buyMix: [],
+    sellMix: [],
+  };
+  if (sampledBuys != null && sampledSells != null) {
+    input.marketBuys = sampledBuys;
+    input.marketSells = sampledSells;
+  }
+  sim['executeMarketFlowAsTape'](input);
+  return sim['tape'].length - before;
+}
+
+function runOverlayPreservesSample(): void {
+  let now = 1_800_000_000_000;
+  const previous = Date.now;
+  Date.now = () => now;
+  try {
+    const sim = new TokenSim(meta('overlay-sample', 'NORMAL'), 2_000, 60 * 60_000);
+    sim['ledger'].set('h_seed', 80_000_000);
+    const bothSides = printsFromFlow(sim, 1, 0, 80, 40);
+    check(bothSides <= 1, `overlay/one-sample-both-notionals prints=${bothSides}`);
+
+    sim['ruggedAtSimMs'] = 1;
+    sim['lastMcapUsd'] = 20_000;
+    now += 1_000;
+    sim['simTimeMs'] = 1_000;
+    const rugFold = printsFromFlow(sim, 1, 0, 100, 0);
+    check(rugFold <= 1, `overlay/rug-fold-keeps-sample prints=${rugFold}`);
+
+    sim['ruggedAtSimMs'] = null;
+    sim['flowSilentAfterSimMs'] = 0;
+    sim['deadUserReboundMs'] = 0;
+    sim['simTimeMs'] = 30_000;
+    let fallbackPrints = 0;
+    for (let i = 0; i < 40; i++) {
+      now += 200;
+      sim['simTimeMs'] += 200;
+      fallbackPrints += printsFromFlow(sim, undefined, undefined, 90, 60);
+    }
+    check(fallbackPrints === 0, `overlay/silent-fallback-mints-nothing prints=${fallbackPrints}`);
+    console.log(`arrival overlay: both-sides ${bothSides}, rug-fold ${rugFold}, silent-fallback ${fallbackPrints}`);
+  } finally {
+    Date.now = previous;
+  }
 }
 
 runDecayAndDeath();
 runTickIndependence();
+runOverlayPreservesSample();
 runQuickRugStillDumps();
 
 for (const failure of failures) console.error(`FAIL ${failure}`);
