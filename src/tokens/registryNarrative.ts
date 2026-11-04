@@ -1,4 +1,4 @@
-import { getTokenAvatarUrl } from '../lib/tokenAvatar';
+import { getAuthorAvatarUrl } from '../lib/tokenImagePool';
 import type { TokenPost } from '../store/postStore';
 import { usePostStore } from '../store/postStore';
 import type { NarrativeEvent, NarrativePost, TokenNarrativeState } from '../narrative/narrativeTypes';
@@ -99,7 +99,7 @@ function mapNarrativePost(post: NarrativePost): TokenPost {
     author: post.authorHandle,
     authorName: post.authorName,
     authorHandle: post.authorHandle,
-    authorAvatar: getTokenAvatarUrl(`author:${post.authorId}`),
+    authorAvatar: getAuthorAvatarUrl(post.authorId),
     text: post.text,
     createdAtMs: post.simNowMs,
     simNowMs: post.simNowMs,

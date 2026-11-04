@@ -20,6 +20,12 @@ export interface TokenMeta {
   name: string;
   ticker: string;
   logoColor: string;   // hex color for logo placeholder
+  /**
+   * Themed launch image assigned once at spawn (`/token-images/...`), or null
+   * when no pool image matches and the SVG avatar is used.
+   * Additive metadata (2026-11): does not change trading, supply, or market constants.
+   */
+  imageUrl: string | null;
   supply: number;      // always SUPPLY constant
   createdAtSimMs: number;
   fate: TokenFate;

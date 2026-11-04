@@ -77,6 +77,7 @@ export default function SubHeaderBar() {
       return {
         tokenId,
         label,
+        imageUrl: token?.imageUrl,
         qty: position?.qty ?? null,
         pnlPct,
       };
@@ -87,7 +88,7 @@ export default function SubHeaderBar() {
     return favoritePreviewIds.map((tokenId) => {
       const token = tokensById[tokenId];
       const label = token?.ticker || token?.name || shortId(tokenId);
-      return { tokenId, label, qty: null, pnlPct: null };
+      return { tokenId, label, imageUrl: token?.imageUrl, qty: null, pnlPct: null };
     });
   }, [favoritePreviewIds, tokensById]);
 
@@ -125,6 +126,7 @@ export default function SubHeaderBar() {
               key={`${mode}-${item.tokenId}`}
               tokenId={item.tokenId}
               name={item.label}
+              imageUrl={item.imageUrl}
               remainingQty={mode === 'open' ? item.qty : undefined}
               pnlPct={mode === 'open' ? item.pnlPct : undefined}
               showPositionMetrics={mode === 'open'}

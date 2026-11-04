@@ -21,7 +21,7 @@ function fixture(condition: boolean, label: string): asserts condition {
 }
 function create(id: string): TokenSim {
   const meta: TokenMeta = {
-    id, name: 'Timestamp QA', ticker: 'TIME', logoColor: '#ffffff',
+    id, name: 'Timestamp QA', ticker: 'TIME', logoColor: '#ffffff', imageUrl: null,
     supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
     metrics: { topHoldersPct: 10, devHoldingsPct: 2, snipersPct: 1,
       lpBurnedPct: 100, insidersPct: 1, bundlersPct: 1 },

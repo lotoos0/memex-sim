@@ -31,7 +31,7 @@ function fixture(condition: boolean, label: string): asserts condition {
 }
 function create(id: string, migrated = false): TokenSim {
   const meta: TokenMeta = {
-    id, name: 'Volume Basis QA', ticker: 'VOL', logoColor: '#ffffff', supply: SUPPLY,
+    id, name: 'Volume Basis QA', ticker: 'VOL', logoColor: '#ffffff', imageUrl: null, supply: SUPPLY,
     createdAtSimMs: 0, fate: 'NORMAL', metrics: { topHoldersPct: 10, devHoldingsPct: 2,
       snipersPct: 1, lpBurnedPct: 100, insidersPct: 1, bundlersPct: 1 },
   };

@@ -194,6 +194,7 @@ export default function TokenPage() {
 
         <TokenAvatar
           tokenId={token.id}
+          imageUrl={token.imageUrl}
           label={`${token.ticker} avatar`}
           size={28}
           className="h-7 w-7"

@@ -1,4 +1,5 @@
 import { RNG } from '../engine/rng';
+import { pickTokenImageUrl } from '../lib/tokenImagePool';
 import type { TokenFate, TokenMeta, TokenMetrics } from './types';
 import { SUPPLY } from './types';
 
@@ -15,6 +16,7 @@ const NOUNS = [
   'MAGA', 'POPCAT', 'BOME', 'BILLY', 'JESUS', 'ELON', 'GROK', 'TURBO',
   'SANTA', 'LAMBO', 'SEND', 'QUANT', 'NEIRO', 'CHILLY', 'KING', 'SIGMA',
   'HARAMBE', 'SMOL', 'BOZO', 'CLOWN', 'COPIUM', 'HOPIUM', 'BOBO', 'KEKE',
+  'PIZZA', 'BURGER', 'RAMEN',
 ];
 
 const LOGO_COLORS = [
@@ -50,6 +52,7 @@ export function generateToken(rng: RNG, simTimeMs: number, fateOverride?: TokenF
 
   return {
     id, name, ticker, logoColor,
+    imageUrl: pickTokenImageUrl({ id, name, ticker }),
     supply: SUPPLY,
     createdAtSimMs: simTimeMs,
     fate,
