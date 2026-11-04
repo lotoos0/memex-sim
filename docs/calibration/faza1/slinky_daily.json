@@ -1,0 +1,450 @@
+{
+ "daily": [
+  {
+   "day": "2026-06-05T00:00:00.000",
+   "launches": 10089,
+   "launches_per_min": 7.00625,
+   "graduated": 0,
+   "grad_rate": 0.0,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 29.8560486556,
+   "dev_initial_buy_sol_median": 0.250000001,
+   "trades_per_token_median": 8.0
+  },
+  {
+   "day": "2026-06-06T00:00:00.000",
+   "launches": 11087,
+   "launches_per_min": 7.6993055556,
+   "graduated": 0,
+   "grad_rate": 0.0,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 29.54574823,
+   "dev_initial_buy_sol_median": 0.200000001,
+   "trades_per_token_median": 1.0
+  },
+  {
+   "day": "2026-06-07T00:00:00.000",
+   "launches": 21917,
+   "launches_per_min": 15.2201388889,
+   "graduated": 1,
+   "grad_rate": 4.56267e-05,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 30.1014180541,
+   "dev_initial_buy_sol_median": 0.200000001,
+   "trades_per_token_median": 11.0
+  },
+  {
+   "day": "2026-06-08T00:00:00.000",
+   "launches": 26135,
+   "launches_per_min": 18.1493055556,
+   "graduated": 2,
+   "grad_rate": 7.65257e-05,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 29.4159709701,
+   "dev_initial_buy_sol_median": 0.197530863,
+   "trades_per_token_median": 8.0
+  },
+  {
+   "day": "2026-06-09T00:00:00.000",
+   "launches": 29100,
+   "launches_per_min": 20.2083333333,
+   "graduated": 2,
+   "grad_rate": 6.87285e-05,
+   "ttg_median_s": 1.7050189972,
+   "peak_mcap_sol_median": 28.491806627,
+   "dev_initial_buy_sol_median": 0.100000001,
+   "trades_per_token_median": 6.0
+  },
+  {
+   "day": "2026-06-10T00:00:00.000",
+   "launches": 24031,
+   "launches_per_min": 16.6881944444,
+   "graduated": 1,
+   "grad_rate": 4.16129e-05,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 29.1266662609,
+   "dev_initial_buy_sol_median": 0.100000001,
+   "trades_per_token_median": 7.0
+  },
+  {
+   "day": "2026-06-11T00:00:00.000",
+   "launches": 27802,
+   "launches_per_min": 19.3069444444,
+   "graduated": 0,
+   "grad_rate": 0.0,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 29.4764363274,
+   "dev_initial_buy_sol_median": 0.168500001,
+   "trades_per_token_median": 6.0
+  },
+  {
+   "day": "2026-06-12T00:00:00.000",
+   "launches": 27906,
+   "launches_per_min": 19.3791666667,
+   "graduated": 0,
+   "grad_rate": 0.0,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 31.46282931,
+   "dev_initial_buy_sol_median": 0.282220132,
+   "trades_per_token_median": 8.0
+  },
+  {
+   "day": "2026-06-13T00:00:00.000",
+   "launches": 22040,
+   "launches_per_min": 15.3055555556,
+   "graduated": 0,
+   "grad_rate": 0.0,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 31.5981776012,
+   "dev_initial_buy_sol_median": 0.247647349,
+   "trades_per_token_median": 10.0
+  },
+  {
+   "day": "2026-06-14T00:00:00.000",
+   "launches": 25333,
+   "launches_per_min": 17.5923611111,
+   "graduated": 0,
+   "grad_rate": 0.0,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 30.3252708925,
+   "dev_initial_buy_sol_median": 0.148125,
+   "trades_per_token_median": 9.0
+  },
+  {
+   "day": "2026-06-15T00:00:00.000",
+   "launches": 28514,
+   "launches_per_min": 19.8013888889,
+   "graduated": 2,
+   "grad_rate": 7.0141e-05,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 30.5785064555,
+   "dev_initial_buy_sol_median": 0.200000001,
+   "trades_per_token_median": 8.0
+  },
+  {
+   "day": "2026-06-16T00:00:00.000",
+   "launches": 30575,
+   "launches_per_min": 21.2326388889,
+   "graduated": 1,
+   "grad_rate": 3.27065e-05,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 29.9810531762,
+   "dev_initial_buy_sol_median": 0.201342282,
+   "trades_per_token_median": 6.0
+  },
+  {
+   "day": "2026-06-17T00:00:00.000",
+   "launches": 14989,
+   "launches_per_min": 10.4090277778,
+   "graduated": 0,
+   "grad_rate": 0.0,
+   "ttg_median_s": null,
+   "peak_mcap_sol_median": 29.2376184844,
+   "dev_initial_buy_sol_median": 0.197530863,
+   "trades_per_token_median": 5.0
+  },
+  {
+   "day": "2026-06-19T00:00:00.000",
+   "launches": 7023,
+   "launches_per_min": 4.8770833333,
+   "graduated": 15,
+   "grad_rate": 0.0021358394,
+   "ttg_median_s": 34.4166369438,
+   "peak_mcap_sol_median": 31.397176161,
+   "dev_initial_buy_sol_median": 0.5,
+   "trades_per_token_median": 10.0
+  },
+  {
+   "day": "2026-06-20T00:00:00.000",
+   "launches": 17997,
+   "launches_per_min": 12.4979166667,
+   "graduated": 57,
+   "grad_rate": 0.0031671945,
+   "ttg_median_s": 9.6706684828,
+   "peak_mcap_sol_median": 31.9194919348,
+   "dev_initial_buy_sol_median": 0.5,
+   "trades_per_token_median": 10.0
+  },
+  {
+   "day": "2026-06-21T00:00:00.000",
+   "launches": 11015,
+   "launches_per_min": 7.6493055556,
+   "graduated": 17,
+   "grad_rate": 0.00154335,
+   "ttg_median_s": 3.1391851902,
+   "peak_mcap_sol_median": 29.6376762999,
+   "dev_initial_buy_sol_median": 0.345679011,
+   "trades_per_token_median": 7.0
+  },
+  {
+   "day": "2026-06-22T00:00:00.000",
+   "launches": 29452,
+   "launches_per_min": 20.4527777778,
+   "graduated": 97,
+   "grad_rate": 0.0032934945,
+   "ttg_median_s": 4.8694010973,
+   "peak_mcap_sol_median": 29.735217452,
+   "dev_initial_buy_sol_median": 0.252918518,
+   "trades_per_token_median": 7.0
+  },
+  {
+   "day": "2026-06-23T00:00:00.000",
+   "launches": 25465,
+   "launches_per_min": 17.6840277778,
+   "graduated": 125,
+   "grad_rate": 0.0049086982,
+   "ttg_median_s": 4.8415520191,
+   "peak_mcap_sol_median": 29.064206755,
+   "dev_initial_buy_sol_median": 0.197530863,
+   "trades_per_token_median": 5.0
+  },
+  {
+   "day": "2026-06-24T00:00:00.000",
+   "launches": 13270,
+   "launches_per_min": 9.2152777778,
+   "graduated": 26,
+   "grad_rate": 0.0019593067,
+   "ttg_median_s": 0.0925405025,
+   "peak_mcap_sol_median": 29.0342251528,
+   "dev_initial_buy_sol_median": 0.1975,
+   "trades_per_token_median": 5.0
+  },
+  {
+   "day": "2026-06-25T00:00:00.000",
+   "launches": 8062,
+   "launches_per_min": 5.5986111111,
+   "graduated": 21,
+   "grad_rate": 0.0026048127,
+   "ttg_median_s": 0.0801775455,
+   "peak_mcap_sol_median": 27.959177566,
+   "dev_initial_buy_sol_median": 0.197530862,
+   "trades_per_token_median": 2.0
+  },
+  {
+   "day": "2026-06-26T00:00:00.000",
+   "launches": 28542,
+   "launches_per_min": 19.8208333333,
+   "graduated": 84,
+   "grad_rate": 0.0029430313,
+   "ttg_median_s": 0.1042279005,
+   "peak_mcap_sol_median": 29.7352174539,
+   "dev_initial_buy_sol_median": 0.29625,
+   "trades_per_token_median": 7.0
+  },
+  {
+   "day": "2026-06-27T00:00:00.000",
+   "launches": 25844,
+   "launches_per_min": 17.9472222222,
+   "graduated": 68,
+   "grad_rate": 0.0026311716,
+   "ttg_median_s": 0.0916280746,
+   "peak_mcap_sol_median": 29.8303464421,
+   "dev_initial_buy_sol_median": 0.250000001,
+   "trades_per_token_median": 7.0
+  },
+  {
+   "day": "2026-06-28T00:00:00.000",
+   "launches": 32938,
+   "launches_per_min": 22.8736111111,
+   "graduated": 145,
+   "grad_rate": 0.0044022102,
+   "ttg_median_s": 0.1398749352,
+   "peak_mcap_sol_median": 27.9774057181,
+   "dev_initial_buy_sol_median": 0.098765431,
+   "trades_per_token_median": 2.0
+  },
+  {
+   "day": "2026-06-29T00:00:00.000",
+   "launches": 28415,
+   "launches_per_min": 19.7326388889,
+   "graduated": 124,
+   "grad_rate": 0.0043638923,
+   "ttg_median_s": 0.1023800373,
+   "peak_mcap_sol_median": 28.7666487877,
+   "dev_initial_buy_sol_median": 0.149238661,
+   "trades_per_token_median": 4.0
+  },
+  {
+   "day": "2026-06-30T00:00:00.000",
+   "launches": 29016,
+   "launches_per_min": 20.15,
+   "graduated": 398,
+   "grad_rate": 0.0137165702,
+   "ttg_median_s": 0.1037700176,
+   "peak_mcap_sol_median": 28.3059700495,
+   "dev_initial_buy_sol_median": 0.140449439,
+   "trades_per_token_median": 3.0
+  },
+  {
+   "day": "2026-07-01T00:00:00.000",
+   "launches": 32066,
+   "launches_per_min": 22.2680555556,
+   "graduated": 99,
+   "grad_rate": 0.0030873823,
+   "ttg_median_s": 0.0945549011,
+   "peak_mcap_sol_median": 30.1388470595,
+   "dev_initial_buy_sol_median": 0.250000001,
+   "trades_per_token_median": 6.0
+  },
+  {
+   "day": "2026-07-02T00:00:00.000",
+   "launches": 13436,
+   "launches_per_min": 9.3305555556,
+   "graduated": 37,
+   "grad_rate": 0.0027537958,
+   "ttg_median_s": 0.0864903927,
+   "peak_mcap_sol_median": 29.1481711486,
+   "dev_initial_buy_sol_median": 0.197530863,
+   "trades_per_token_median": 6.0
+  },
+  {
+   "day": "2026-07-04T00:00:00.000",
+   "launches": 3493,
+   "launches_per_min": 2.4256944444,
+   "graduated": 96,
+   "grad_rate": 0.0274835385,
+   "ttg_median_s": 4.5707099438,
+   "peak_mcap_sol_median": 29.8301474971,
+   "dev_initial_buy_sol_median": 0.300000001,
+   "trades_per_token_median": 6.0
+  },
+  {
+   "day": "2026-07-05T00:00:00.000",
+   "launches": 18441,
+   "launches_per_min": 12.80625,
+   "graduated": 492,
+   "grad_rate": 0.0266796811,
+   "ttg_median_s": 56.3999501467,
+   "peak_mcap_sol_median": 29.6650562062,
+   "dev_initial_buy_sol_median": 0.200000001,
+   "trades_per_token_median": 7.0
+  },
+  {
+   "day": "2026-07-06T00:00:00.000",
+   "launches": 31079,
+   "launches_per_min": 21.5826388889,
+   "graduated": 676,
+   "grad_rate": 0.0217510216,
+   "ttg_median_s": 70.1872669458,
+   "peak_mcap_sol_median": 28.7836812773,
+   "dev_initial_buy_sol_median": 0.245000001,
+   "trades_per_token_median": 5.0
+  },
+  {
+   "day": "2026-07-07T00:00:00.000",
+   "launches": 30763,
+   "launches_per_min": 21.3631944444,
+   "graduated": 726,
+   "grad_rate": 0.023599779,
+   "ttg_median_s": 74.4420320988,
+   "peak_mcap_sol_median": 29.0725454347,
+   "dev_initial_buy_sol_median": 0.200000001,
+   "trades_per_token_median": 5.0
+  },
+  {
+   "day": "2026-07-08T00:00:00.000",
+   "launches": 18857,
+   "launches_per_min": 13.0951388889,
+   "graduated": 487,
+   "grad_rate": 0.0258259532,
+   "ttg_median_s": 108.0941119194,
+   "peak_mcap_sol_median": 30.1924569824,
+   "dev_initial_buy_sol_median": 0.250000001,
+   "trades_per_token_median": 8.0
+  },
+  {
+   "day": "2026-07-09T00:00:00.000",
+   "launches": 27519,
+   "launches_per_min": 19.1104166667,
+   "graduated": 503,
+   "grad_rate": 0.0182782805,
+   "ttg_median_s": 192.9675550461,
+   "peak_mcap_sol_median": 30.2413442229,
+   "dev_initial_buy_sol_median": 0.250000001,
+   "trades_per_token_median": 8.0
+  },
+  {
+   "day": "2026-07-10T00:00:00.000",
+   "launches": 20645,
+   "launches_per_min": 14.3368055556,
+   "graduated": 420,
+   "grad_rate": 0.0203439089,
+   "ttg_median_s": 229.5332129002,
+   "peak_mcap_sol_median": 30.1546275742,
+   "dev_initial_buy_sol_median": 0.200000001,
+   "trades_per_token_median": 9.0
+  },
+  {
+   "day": "2026-07-11T00:00:00.000",
+   "launches": 17403,
+   "launches_per_min": 12.0854166667,
+   "graduated": 368,
+   "grad_rate": 0.0211457795,
+   "ttg_median_s": 229.4715681076,
+   "peak_mcap_sol_median": 29.5152741754,
+   "dev_initial_buy_sol_median": 0.150000001,
+   "trades_per_token_median": 8.0
+  },
+  {
+   "day": "2026-07-13T00:00:00.000",
+   "launches": 16050,
+   "launches_per_min": 11.1458333333,
+   "graduated": 313,
+   "grad_rate": 0.0195015576,
+   "ttg_median_s": 263.4042999744,
+   "peak_mcap_sol_median": 30.2902763638,
+   "dev_initial_buy_sol_median": 0.232477676,
+   "trades_per_token_median": 9.0
+  },
+  {
+   "day": "2026-07-14T00:00:00.000",
+   "launches": 12121,
+   "launches_per_min": 8.4173611111,
+   "graduated": 286,
+   "grad_rate": 0.0235954129,
+   "ttg_median_s": 251.4512200356,
+   "peak_mcap_sol_median": 29.2624870247,
+   "dev_initial_buy_sol_median": 0.197530863,
+   "trades_per_token_median": 8.0
+  }
+ ],
+ "summary_days_with_gt5000_launches": {
+  "launches_per_min": {
+   "mean": 15.334432870370371,
+   "min": 4.877083333333333,
+   "max": 22.87361111111111,
+   "cv": 0.34966813485125725
+  },
+  "grad_rate": {
+   "mean": 0.007071318481898365,
+   "min": 0.0,
+   "max": 0.026679681145274116,
+   "cv": 1.32287438941986
+  },
+  "ttg_median_s": {
+   "mean": 63.97872184216976,
+   "min": 0.08017754554748535,
+   "max": 263.4042999744415,
+   "cv": 1.4706593382630335
+  },
+  "peak_mcap_sol_median": {
+   "mean": 29.69514106353743,
+   "min": 27.959177566006634,
+   "max": 31.91949193484595,
+   "cv": 0.03160647331973082
+  },
+  "dev_initial_buy_sol_median": {
+   "mean": 0.22198051922222223,
+   "min": 0.098765431,
+   "max": 0.5,
+   "cv": 0.3905837491494937
+  },
+  "trades_per_token_median": {
+   "mean": 6.694444444444445,
+   "min": 1.0,
+   "max": 11.0,
+   "cv": 0.3531661165419535
+  },
+  "days_used": 36
+ }
+}

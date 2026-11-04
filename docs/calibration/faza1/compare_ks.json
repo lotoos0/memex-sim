@@ -1,0 +1,24 @@
+{
+ "ks_trade_size_log": {
+  "D": 0.29564999999999997,
+  "p": 0.0,
+  "note": "real: curve trades age<30min; sim: all, USD/150"
+ },
+ "ks_interarrival_ms": {
+  "D": 0.5478979390672041,
+  "p": 0.0,
+  "note": "real gap in slots x 216.28 ms"
+ },
+ "ttg_organic": {
+  "n": 451,
+  "q": [
+   96.0,
+   166.5,
+   309.0,
+   872.0,
+   3465.0
+  ],
+  "rate": 0.015489233094068758
+ },
+ "instant_grad_le1s": 299
+}
