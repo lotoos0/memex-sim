@@ -78,7 +78,8 @@ function marketFlow(sim: TokenSim): SimTapeTrade[] {
   const start = sim['tape'].length;
   sim['executeMarketFlowAsTape']({ candleTsMs: now, simDtSec: 0.2,
     targetBuyUsd: 200, targetSellUsd: 100, previousPriceUsd: sim.getLastPriceUsd(),
-    expectedNextPriceUsd: sim.getLastPriceUsd(), buyMix: [], sellMix: [] });
+    expectedNextPriceUsd: sim.getLastPriceUsd(), buyMix: [], sellMix: [],
+    marketBuys: 3, marketSells: 2 });
   const rows = sim['tape'].slice(start);
   fixture(rows.length > 2 && rows.some((row) => row.side === 'BUY') && rows.some((row) => row.side === 'SELL'),
     'multiple background BUY and SELL');

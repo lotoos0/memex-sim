@@ -62,7 +62,7 @@ These stay on the wall clock on purpose, and they line up with the simulation cl
 
 The legacy PriceEngine clock is not on this path.
 
-The 5-minute volume window, fate timeouts, flow and dev warmups, and `MIN_MIGRATION_AGE_SEC` are durations on this clock. They were not retuned when the scale changed from 60 to 1; a value of 90 seconds is 90 seconds of the one clock. Curve completion, not that age gate, still latches migration. The age gate only feeds the pre-completion readiness penalty.
+The 5-minute volume window, fate timeouts, flow and dev warmups, and `MIN_MIGRATION_AGE_SEC` are durations on this clock. Curve completion, not that age gate, still latches migration. Readiness (age, real quote in the curve, holder count, and trades over five minutes) only eases the pre-completion approach friction.
 
 [PulsePage](../src/pages/PulsePage.tsx) builds its initial New Pairs list from the newest 20 non-migrated tokens, including eligible dead/rugged entries. Its Final Stretch list uses bonding progress of at least 80% and below 100%, excluding MIGRATED/DEAD/RUGGED; its Migrated list uses phase MIGRATED. User column selections, filters and sorting further shape displayed rows.
 

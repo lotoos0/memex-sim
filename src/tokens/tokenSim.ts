@@ -1,6 +1,6 @@
 import { RNG } from '../engine/rng';
 import { CandleAggregator } from '../engine/aggregator';
-import type { TokenMeta, TokenRuntime, TokenPhase } from './types';
+import type { TokenFate, TokenMeta, TokenRuntime, TokenPhase } from './types';
 import {
   SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SOL_PRICE_USD,
 } from './types';
@@ -16,7 +16,13 @@ import {
   MIGRATION_APPROACH_FRICTION_START_PCT,
   MIN_MIGRATION_AGE_SEC,
   MIN_MIGRATION_HOLDERS,
-  MIN_MIGRATION_TX_60S,
+  MIN_MIGRATION_READY_PROGRESS,
+  MIN_MIGRATION_REAL_BASE_USD,
+  MIN_MIGRATION_TX_IN_WINDOW,
+  MIN_MIGRATION_TX_WINDOW_MS,
+  FINISH_STRETCH_MIN_PER_SEC,
+  FINISH_STRETCH_MIN_PROGRESS,
+  MIGRATION_READY_FRICTION_SCALE,
   computeBaseQualityScore,
   computeFlowStrength,
   decideMigrationOutcome,
@@ -308,9 +314,89 @@ const LONG_RUNNER_SOFT_MCAP_USD = 220_000;
 const QUICK_RUG_SOFT_MCAP_USD = 1_500_000;
 const FLOW_WARMUP_SIM_MS = 90_000;
 const DEV_WARMUP_SIM_MS = 60_000;
+// Organic prints per second at age 5s, before the regime/actor shape (`lambdaMul`).
+// That shape is well below 1 in the first minute (flow warmup). Age decay then
+// takes over on the sim clock.
+const ARRIVAL_RATE_AT_5S = 6.2;
+const ARRIVAL_AGE_FLOOR_SEC = 5;
+const ARRIVAL_AGE_DECAY = 0.85;
+// One organic print should stay near the existing bucket scale. The old tape
+// split a large stepMarket notional into many bucket fills; the notional per
+// arrival has to match a single fill now that the count is the arrival count.
+const ARRIVAL_PRINT_USD = 0.35 * SOL_PRICE_USD;
+// Rare enough that a coin silent by 5 min usually records no later trade inside a 30 min run.
+const FLOW_STRAY_PER_SEC = 0.00008;
+const RUG_DUMP_PER_SEC = 1.1;
+
+function sampleExpSimMs(rng: RNG, meanSec: number): number {
+  return -Math.log(Math.max(1e-9, rng.next())) * meanSec * 1000;
+}
+
+/**
+ * Sim-time after which crowd flow goes quiet. Drawn once so the hazard does
+ * not depend on tick length. QUICK_RUG dies faster; LONG_RUNNER survives more
+ * often. Infinity means the coin never goes silent from this draw.
+ */
+function rollFlowSilenceSimMs(rng: RNG, fate: TokenFate): number {
+  const u = rng.next();
+  if (fate === 'LONG_RUNNER') {
+    if (u < 0.30) return sampleExpSimMs(rng, 75);
+    if (u < 0.50) return sampleExpSimMs(rng, 520);
+    return Number.POSITIVE_INFINITY;
+  }
+  if (fate === 'QUICK_RUG') {
+    if (u < 0.72) return sampleExpSimMs(rng, 40);
+    if (u < 0.92) return sampleExpSimMs(rng, 180);
+    return sampleExpSimMs(rng, 420);
+  }
+  if (u < 0.56) return sampleExpSimMs(rng, 50);
+  if (u < 0.80) return sampleExpSimMs(rng, 260);
+  return Number.POSITIVE_INFINITY;
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+/**
+ * Spread `sampled` arrivals across the buy and sell notionals without adding
+ * a print. Overlay or rug-fold USD on a side that receives no slot is carried
+ * onto the side that did, so a one-arrival tick stays one print.
+ */
+function allocateArrivalSlots(sampled: number, buyUsd: number, sellUsd: number): {
+  buySlots: number;
+  sellSlots: number;
+  buyUsd: number;
+  sellUsd: number;
+} {
+  const buy = Math.max(0, buyUsd);
+  const sell = Math.max(0, sellUsd);
+  const slots = Math.max(0, Math.floor(sampled));
+  if (slots <= 0 || buy + sell <= 0) {
+    return { buySlots: 0, sellSlots: 0, buyUsd: 0, sellUsd: 0 };
+  }
+
+  let buySlots = 0;
+  let sellSlots = 0;
+  if (sell <= 0) buySlots = slots;
+  else if (buy <= 0) sellSlots = slots;
+  else {
+    buySlots = Math.round(slots * (buy / (buy + sell)));
+    buySlots = clamp(buySlots, 0, slots);
+    sellSlots = slots - buySlots;
+  }
+
+  let nextBuy = buy;
+  let nextSell = sell;
+  if (buySlots === 0 && nextBuy > 0) {
+    nextSell += nextBuy;
+    nextBuy = 0;
+  }
+  if (sellSlots === 0 && nextSell > 0) {
+    nextBuy += nextSell;
+    nextSell = 0;
+  }
+  return { buySlots, sellSlots, buyUsd: nextBuy, sellUsd: nextSell };
 }
 
 export class TokenSim {
@@ -345,7 +431,7 @@ export class TokenSim {
   private marketRegime: TokenMarketRegime = 'LAUNCH_CHAOS';
   private marketRegimeTtlSec = 0;
   private attention = 1;
-  private baseLambda = 10;
+  private flowSilentAfterSimMs = Number.POSITIVE_INFINITY;
   private baseLiquidityUsd = 25_000;
   private baseTradeSizeUsd = 350;
   private tradeSigma = 0.95;
@@ -404,7 +490,9 @@ export class TokenSim {
     this.rng = new RNG(meta.id);
 
     // Token-specific baseline params.
-    this.baseLambda = 8 + this.rng.next() * 16;
+    // Historical draw. Arrival rate no longer uses it; dropping the call would
+    // shift every later roll (curve, archetype, dev).
+    this.rng.next();
     this.baseLiquidityUsd = startMcapUsd * (1.2 + this.rng.next() * 1.0);
     this.baseTradeSizeUsd = (120 + this.rng.next() * 680) * BASE_TRADE_SIZE_SCALE;
     this.tradeSigma = 0.75 + this.rng.next() * 0.45;
@@ -435,6 +523,8 @@ export class TokenSim {
 
     // Seed initial flat candle so first dev buy grows from launch baseline.
     this.pushCandleTicks(this.spawnRealMs, 0);
+    // Separate stream so the silence draw does not shift curve / dev rolls.
+    this.flowSilentAfterSimMs = rollFlowSilenceSimMs(new RNG(`${meta.id}:flow`), meta.fate);
   }
 
   tick(fallbackRealDtSec: number, sessionBucket: SessionBucket = getSessionBucket(Date.now()),
@@ -653,9 +743,11 @@ export class TokenSim {
       volMul *= Math.max(0.45, 1 - 0.35 * heatRatio);
     }
 
+    let migrationReady = false;
     if (this.phase !== 'MIGRATED' && this.phase !== 'DEAD') {
       const progressToMigration = this.getCurveProgress();
-      const migrationReady = this.isMigrationRuntimeReady(marketTsMs);
+      migrationReady = this.isMigrationRuntimeReady(marketTsMs);
+      const frictionScale = migrationReady ? MIGRATION_READY_FRICTION_SCALE : 1;
       if (progressToMigration >= MIGRATION_APPROACH_FRICTION_START_PCT) {
         const frictionProgress = clamp(
           (progressToMigration - MIGRATION_APPROACH_FRICTION_START_PCT)
@@ -663,7 +755,7 @@ export class TokenSim {
           0,
           1
         );
-        const friction = MIGRATION_APPROACH_FRICTION_MAX * frictionProgress;
+        const friction = MIGRATION_APPROACH_FRICTION_MAX * frictionProgress * frictionScale;
         driftPerSec -= friction * 0.035;
         effectiveBuyBias = clamp(effectiveBuyBias - friction * 0.08, 0.18, 0.82);
         lambdaMul *= Math.max(0.55, 1 - friction * 0.28);
@@ -685,7 +777,7 @@ export class TokenSim {
             (1 - quality) * 0.72 + Math.max(0, 0.16 - flowStrength) * 1.15,
             0,
             1.25
-          );
+          ) * frictionScale;
           driftPerSec -= finalStretchPressure * stallBias * 0.032;
           effectiveBuyBias = clamp(
             effectiveBuyBias - finalStretchPressure * stallBias * 0.1,
@@ -695,6 +787,21 @@ export class TokenSim {
           lambdaMul *= Math.max(0.42, 1 - finalStretchPressure * stallBias * 0.26);
           volMul *= 1 + finalStretchPressure * stallBias * 0.14;
         }
+      }
+      // Same prints, more of them on the bid, once the coin has already raised
+      // real quote. The dense-tape stall was selling this stretch back down.
+      if (migrationReady && progressToMigration >= FINISH_STRETCH_MIN_PROGRESS) {
+        effectiveBuyBias = 0.98;
+      } else if (migrationReady && progressToMigration >= 0.8) {
+        effectiveBuyBias = clamp(effectiveBuyBias + 0.1, 0.4, 0.75);
+      } else if (
+        !migrationReady
+        && this.simTimeMs < MIN_MIGRATION_AGE_SEC * 1000
+        && progressToMigration >= 0.92
+      ) {
+        // Launch flow can empty the curve in the first minute. Hold the last
+        // sliver until the raise has aged; completion itself is unchanged.
+        effectiveBuyBias = clamp(effectiveBuyBias - 0.35, 0.08, 0.32);
       }
     }
 
@@ -770,6 +877,7 @@ export class TokenSim {
     });
     const prevPriceUsd = this.lastPriceUsd;
     const burstDirectionalUsd = this.consumeMicroburstDirectionalUsd(simDtSec);
+    const appliedBurstUsd = this.isFlowSilent() ? 0 : burstDirectionalUsd;
 
     // Minimal warm-up only for launch tick (avoid scripted behavior).
     if (isLaunchTick) {
@@ -779,13 +887,15 @@ export class TokenSim {
       lambdaMul *= 0.1;
     }
 
+    const arrivalPerSec = this.arrivalLambdaPerSec(lambdaMul, marketTsMs) * (isLaunchTick ? 0.15 : 1);
     const market = stepMarket(this.rng, {
       dtSec: simDtSec,
       priceUsd: prevPriceUsd,
       liquidityUsd,
       attention: this.attention,
-      baseLambda: this.baseLambda * lambdaMul * (isLaunchTick ? 0.15 : 1),
-      baseTradeSizeUsd: this.baseTradeSizeUsd * tradeSizeMul,
+      // stepMarket multiplies by attention again; cancel that so the sim-clock rate is the rate.
+      baseLambda: arrivalPerSec / Math.max(this.attention, 0.05),
+      baseTradeSizeUsd: ARRIVAL_PRINT_USD * tradeSizeMul,
       tradeSigma: this.tradeSigma * regimeBehavior.tradeSigmaMul * regimeBehavior.wickinessMultiplier,
       driftPerSec,
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
@@ -806,7 +916,11 @@ export class TokenSim {
       1.25
     );
     const actorBuyBoostUsd = actorOverlay.buyBoostUsd * actorActivityScale;
-    const actorSellBoostUsd = actorOverlay.sellBoostUsd * actorActivityScale;
+    // Near-migration actor sells were sized to fade a dense tape. Once the
+    // coin has earned the gate, that overlay no longer gets to unwind the raise.
+    const finishStretch = this.finishStretchActive();
+    const actorSellScale = finishStretch ? 0 : migrationReady ? MIGRATION_READY_FRICTION_SCALE : 1;
+    const actorSellBoostUsd = actorOverlay.sellBoostUsd * actorActivityScale * actorSellScale;
     const actorDirectionalUsd = actorBuyBoostUsd - actorSellBoostUsd;
 
     if (actorBuyBoostUsd > 0) targetBuyUsd += actorBuyBoostUsd;
@@ -820,19 +934,19 @@ export class TokenSim {
       );
     }
 
-    if (burstDirectionalUsd > 0) {
-      targetBuyUsd += burstDirectionalUsd;
+    if (appliedBurstUsd > 0) {
+      targetBuyUsd += appliedBurstUsd;
       expectedNextPriceUsd = this.adjustExpectedPriceForDirectionalUsd(
         expectedNextPriceUsd,
-        burstDirectionalUsd,
+        appliedBurstUsd,
         liquidityUsd,
         this.impactK * impactMul
       );
-    } else if (burstDirectionalUsd < 0) {
-      targetSellUsd += Math.abs(burstDirectionalUsd);
+    } else if (appliedBurstUsd < 0) {
+      targetSellUsd += Math.abs(appliedBurstUsd);
       expectedNextPriceUsd = this.adjustExpectedPriceForDirectionalUsd(
         expectedNextPriceUsd,
-        burstDirectionalUsd,
+        appliedBurstUsd,
         liquidityUsd,
         this.impactK * impactMul
       );
@@ -864,6 +978,8 @@ export class TokenSim {
       previousPriceUsd: prevPriceUsd,
       buyMix: actorOverlay.buyMix,
       sellMix: actorOverlay.sellMix,
+      marketBuys: market.buys,
+      marketSells: market.sells,
     });
     this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - simDtSec * 1000);
 
@@ -884,6 +1000,47 @@ export class TokenSim {
     return events;
   }
 
+  /**
+   * Crowd intensity in trades per sim-second. Regime, phase, session, and
+   * actor shape arrive as `shape` (the existing lambdaMul). Age decay and
+   * silence are on the sim clock, so a 1s tick and five 0.2s ticks share
+   * the same expected count.
+   */
+  private arrivalLambdaPerSec(shape: number, nowMs: number): number {
+    const organic = this.organicArrivalPerSec(shape, nowMs);
+    if (this.finishStretchActive()) return Math.max(organic, FINISH_STRETCH_MIN_PER_SEC);
+    if (this.simTimeMs < this.flowSilentAfterSimMs) return organic;
+    if (this.rugDumpActive()) return Math.max(organic, RUG_DUMP_PER_SEC);
+    if (this.deadUserReboundMs > 0) return Math.max(organic, 0.8);
+    return FLOW_STRAY_PER_SEC;
+  }
+
+  private organicArrivalPerSec(shape: number, nowMs: number): number {
+    const ageSec = Math.max(0, this.simTimeMs / 1000);
+    const t = Math.max(ageSec, ARRIVAL_AGE_FLOOR_SEC);
+    const ageDecay = Math.pow(t / ARRIVAL_AGE_FLOOR_SEC, -ARRIVAL_AGE_DECAY);
+    const attentionMul = clamp(this.attention / 1.05, 0.65, 1.65);
+    return Math.max(0, ARRIVAL_RATE_AT_5S * ageDecay * Math.max(0, shape) * attentionMul * this.arrivalExcitement(nowMs));
+  }
+
+  private arrivalExcitement(nowMs: number): number {
+    const lastMs = this.tape[this.tape.length - 1]?.tMs;
+    if (lastMs == null) return 1;
+    const gapSec = (nowMs - lastMs) / 1000;
+    if (!Number.isFinite(gapSec) || gapSec < 0 || gapSec > 12) return 1;
+    return 1 + 0.18 * Math.exp(-gapSec / 2.5);
+  }
+
+  private isFlowSilent(): boolean {
+    return this.simTimeMs >= this.flowSilentAfterSimMs && !this.rugDumpActive() && this.deadUserReboundMs <= 0;
+  }
+
+  private rugDumpActive(): boolean {
+    if (this.ruggedAtSimMs == null || this.phase === 'DEAD') return false;
+    // Keep selling until a print actually tags the floor and phase can flip to DEAD.
+    return this.lastMcapUsd > MCAP_FLOOR_USD;
+  }
+
   private executeMarketFlowAsTape(input: {
     candleTsMs: number;
     simDtSec: number;
@@ -893,30 +1050,37 @@ export class TokenSim {
     previousPriceUsd: number;
     buyMix: TokenActorMixEntry[];
     sellMix: TokenActorMixEntry[];
+    marketBuys?: number;
+    marketSells?: number;
   }): void {
-    const targetBuyUsd = Math.max(0, Number.isFinite(input.targetBuyUsd) ? input.targetBuyUsd : 0);
-    const targetSellUsd = Math.max(0, Number.isFinite(input.targetSellUsd) ? input.targetSellUsd : 0);
+    let targetBuyUsd = Math.max(0, Number.isFinite(input.targetBuyUsd) ? input.targetBuyUsd : 0);
+    let targetSellUsd = Math.max(0, Number.isFinite(input.targetSellUsd) ? input.targetSellUsd : 0);
+    // Collapse drift used to be applied as an extra steering print. During a rug
+    // dump, fold that sell pressure into the notionals the arrival process already drew.
+    if (this.rugDumpActive() && targetBuyUsd > 0) {
+      const nearFloor = this.lastMcapUsd < MCAP_FLOOR_USD * 3;
+      const moved = targetBuyUsd * (nearFloor ? 1 : 0.7);
+      targetBuyUsd -= moved;
+      targetSellUsd += moved;
+    }
     const totalUsd = targetBuyUsd + targetSellUsd;
     if (totalUsd <= 1e-6) {
       return;
     }
 
     const minTradeUsd = this.getMinSyntheticTradeUsd();
-    const targetTrades = clamp(
-      Math.round(3 + Math.sqrt(totalUsd / Math.max(20, this.baseTradeSizeUsd)) * 3.05 + this.rng.next() * 3.6),
-      2,
-      Math.max(2, Math.min(24, Math.floor(totalUsd / Math.max(1, minTradeUsd)) || 2))
-    );
-    let buyTrades = targetBuyUsd > 0
-      ? Math.max(1, Math.round(targetTrades * (targetBuyUsd / Math.max(1e-9, totalUsd))))
-      : 0;
-    let sellTrades = targetSellUsd > 0
-      ? Math.max(1, targetTrades - buyTrades)
-      : 0;
-    if (buyTrades > 0 && sellTrades > 0 && buyTrades + sellTrades > targetTrades) {
-      if (buyTrades > sellTrades) buyTrades -= 1;
-      else sellTrades -= 1;
+    // Counts come from stepMarket's Poisson(λ Δt). Overlays may move notional
+    // between sides, but they must not mint a print the sample did not draw.
+    let sampled = Math.max(0, Math.floor(input.marketBuys ?? 0)) + Math.max(0, Math.floor(input.marketSells ?? 0));
+    if (input.marketBuys == null || input.marketSells == null) {
+      sampled = this.rng.poisson(Math.max(0, this.arrivalLambdaPerSec(1, input.candleTsMs) * input.simDtSec));
     }
+    const allocated = allocateArrivalSlots(sampled, targetBuyUsd, targetSellUsd);
+    targetBuyUsd = allocated.buyUsd;
+    targetSellUsd = allocated.sellUsd;
+    const buyTrades = allocated.buySlots;
+    const sellTrades = allocated.sellSlots;
+    if (buyTrades + sellTrades === 0) return;
 
     const buyParts = this.splitNotional(targetBuyUsd, buyTrades, minTradeUsd);
     const sellParts = this.splitNotional(targetSellUsd, sellTrades, minTradeUsd);
@@ -956,26 +1120,13 @@ export class TokenSim {
         executedTrades += 1;
         continue;
       }
-      // If inventory is exhausted, keep tape alive by converting the slot to a small buy.
-      if (targetUsd > 0 && this.executeSimBuyTrade(
+      // A failed sell used to be rewritten as a buy so the tape never went quiet.
+      // That fights a rug dump and revives a coin the arrival process has silenced.
+      if (!this.rugDumpActive() && !this.isFlowSilent() && targetUsd > 0 && this.executeSimBuyTrade(
         targetUsd * (0.65 + this.rng.next() * 0.35),
         tsMs,
         'dip_buyers'
       )) {
-        executedTrades += 1;
-      }
-    }
-
-    const expected = Number.isFinite(input.expectedNextPriceUsd)
-      ? clamp(input.expectedNextPriceUsd, input.previousPriceUsd * 0.25, input.previousPriceUsd * 4)
-      : input.previousPriceUsd;
-    const driftPct = this.lastPriceUsd > 0 ? ((expected - this.lastPriceUsd) / this.lastPriceUsd) : 0;
-    if (Math.abs(driftPct) > 0.012 && totalUsd > 25) {
-      const steeringTs = Math.max(input.candleTsMs, this.tape[this.tape.length - 1]?.tMs ?? this.spawnRealMs);
-      const steeringNotional = Math.max(8, totalUsd * 0.15);
-      if (driftPct > 0) {
-        if (this.executeSimBuyTrade(steeringNotional, steeringTs, 'momentum_chasers')) executedTrades += 1;
-      } else if (this.executeSimSellTrade(steeringNotional, steeringTs, 'panic_sellers')) {
         executedTrades += 1;
       }
     }
@@ -2544,15 +2695,25 @@ export class TokenSim {
     return this.getHolderWalletIds(false).length;
   }
 
+  private finishStretchActive(): boolean {
+    if (this.meta.fate === 'QUICK_RUG' || this.phase === 'MIGRATED' || this.phase === 'DEAD') return false;
+    if (this.simTimeMs < MIN_MIGRATION_AGE_SEC * 1000) return false;
+    if (this.getCurveProgress() < FINISH_STRETCH_MIN_PROGRESS) return false;
+    if (this.curveRealBase < MIN_MIGRATION_REAL_BASE_USD) return false;
+    if (this.getEligibleHolderCount() < MIN_MIGRATION_HOLDERS) return false;
+    return true;
+  }
+
   private isMigrationRuntimeReady(nowMs: number): boolean {
+    if (this.meta.fate === 'QUICK_RUG') return false;
+    if (this.isFlowSilent() && !this.finishStretchActive()) return false;
     const ageSec = this.simTimeMs / 1000;
-    const tx60s = this.getRecentTradeStats(60_000, nowMs).tx;
-    const holders = this.getEligibleHolderCount();
-    return (
-      ageSec >= MIN_MIGRATION_AGE_SEC
-      && tx60s >= MIN_MIGRATION_TX_60S
-      && holders >= MIN_MIGRATION_HOLDERS
-    );
+    if (ageSec < MIN_MIGRATION_AGE_SEC) return false;
+    if (this.getCurveProgress() < MIN_MIGRATION_READY_PROGRESS) return false;
+    if (this.curveRealBase < MIN_MIGRATION_REAL_BASE_USD) return false;
+    if (this.getEligibleHolderCount() < MIN_MIGRATION_HOLDERS) return false;
+    const recentTx = this.getRecentTradeStats(MIN_MIGRATION_TX_WINDOW_MS, nowMs).tx;
+    return recentTx >= MIN_MIGRATION_TX_IN_WINDOW;
   }
 
   private getFlowPowerMul(): number {
