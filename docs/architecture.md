@@ -53,12 +53,12 @@ There is one simulation clock. `SIM_TIME_MULTIPLIER` in [tokens/types.ts](../src
 
 Each token measures the wall gap since its previous tick, falls back to the callback's 200 ms when that gap is not positive, and clamps the wall gap to 0.05-1.5 seconds before scaling it. The same scaled step updates token age and the absolute timestamp `spawnWallMs + simTimeMs` used for candles and tape. At scale 1, an on-time 200 ms callback keeps that timestamp on the wall clock. A stalled callback does not dump the whole stall into one market step; age and the chart lag the wall together until later ticks. The registry spawn epoch starts at two hours and advances by the nominal 200 ms callback scaled once. It orders births. Displayed age is the token's own `simTimeMs`, not that epoch.
 
-Bootstrap fast-forward seeks the same clock in steps of 0.2-1.2 seconds. It stops when the token matches its column (and is at least as old as that column's minimum) or can no longer match, and otherwise stops at the rolled age cap. The head of that clock is then aligned to the wall, so candle history ends at "now" and spans the simulated age. It does not run a second, faster lifecycle clock.
+Bootstrap fast-forward seeks the same clock in steps of 0.2-1.2 seconds. It stops when the token matches its column (and is at least as old as that column's minimum) or can no longer match, and otherwise stops at the rolled age cap. The head of that clock is then shifted onto the wall, to the nearest second, without rebuilding candles from the capped trade tape. Candle history ends at "now" and spans the simulated age. It does not run a second, faster lifecycle clock.
 
 These stay on the wall clock on purpose, and they line up with the simulation clock only while the scale is 1:
 
 - Market session (EU/NA hour) is civil time.
-- Player order latency (about 80-320 ms) is how long a click waits. The fill is stamped on the simulation clock if that clock is ahead of the wall, so a faster scale cannot mark the fill late.
+- Player order latency (about 80-320 ms) is how long a click waits. Due-ness uses that wall wait. The fill timestamp is the simulation clock, including when a clamped stall leaves that clock behind the wall.
 
 The legacy PriceEngine clock is not on this path.
 

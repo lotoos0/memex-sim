@@ -470,7 +470,9 @@ export class TokenSim {
     const simDtSec = simDtMs / 1000;
     this.simTimeMs += simDtMs;
     const marketTsMs = this.marketNowMs();
-    const queuedEvents = this.processPendingUserTrades(nowMs, publishExecution);
+    // Due-ness uses wall time. The fill itself is stamped on this clock so a
+    // clamped stall cannot pin the tape to a future wall timestamp.
+    const queuedEvents = this.processPendingUserTrades(nowMs, publishExecution, marketTsMs);
     const inDeadMode = this.phase === 'DEAD';
     const inCollapseMode = !inDeadMode && this.ruggedAtSimMs != null;
     const hasUserBuyEvent = queuedEvents.some((ev) => ev.type === 'USER_BUY');
@@ -1929,53 +1931,33 @@ export class TokenSim {
     this.alignMarketClockToWall();
   }
 
-  /** Move birth, tape, and candles so the head of this clock matches wall now. */
+  /**
+   * Move birth, tape, and the candle series so the head of this clock matches
+   * wall now. Candles are shifted in place: the tape only keeps the latest
+   * 2,000 trades, so rebuilding from it would drop earlier history.
+   */
   private alignMarketClockToWall(): void {
     const deltaMs = Date.now() - this.marketNowMs();
-    if (deltaMs === 0) return;
-    this.spawnRealMs += deltaMs;
-    if (this.lastDevEventRealMs > 0) this.lastDevEventRealMs += deltaMs;
-    for (let i = 0; i < this.tape.length; i++) this.tape[i]!.tMs += deltaMs;
+    const shiftMs = Math.round(deltaMs / 1000) * 1000;
+    if (shiftMs === 0) return;
+    this.spawnRealMs += shiftMs;
+    if (this.lastDevEventRealMs > 0) this.lastDevEventRealMs += shiftMs;
+    for (let i = 0; i < this.tape.length; i++) this.tape[i]!.tMs += shiftMs;
     for (const profile of this.walletProfiles.values()) {
-      profile.firstSeenMs += deltaMs;
-      profile.lastActiveMs += deltaMs;
+      profile.firstSeenMs += shiftMs;
+      profile.lastActiveMs += shiftMs;
     }
     for (const [walletId, seenMs] of this.walletLastActiveMs) {
-      this.walletLastActiveMs.set(walletId, seenMs + deltaMs);
+      this.walletLastActiveMs.set(walletId, seenMs + shiftMs);
     }
-    this.rebuildCandlesFromTape();
-  }
-
-  private rebuildCandlesFromTape(): void {
-    this.aggr1s.reset();
-    this.aggr15s.reset();
-    this.aggr30s.reset();
-    this.aggr1m.reset();
-    this.mcapAggr1s.reset();
-    this.mcapAggr15s.reset();
-    this.mcapAggr30s.reset();
-    this.mcapAggr1m.reset();
-    const birth = this.spawnRealMs;
-    const launchMcap = this.priceAtSpawn * SUPPLY;
-    this.aggr1s.pushTick(birth, this.priceAtSpawn, 0);
-    this.aggr15s.pushTick(birth, this.priceAtSpawn, 0);
-    this.aggr30s.pushTick(birth, this.priceAtSpawn, 0);
-    this.aggr1m.pushTick(birth, this.priceAtSpawn, 0);
-    this.mcapAggr1s.pushTick(birth, launchMcap, 0);
-    this.mcapAggr15s.pushTick(birth, launchMcap, 0);
-    this.mcapAggr30s.pushTick(birth, launchMcap, 0);
-    this.mcapAggr1m.pushTick(birth, launchMcap, 0);
-    for (let i = 0; i < this.tape.length; i++) {
-      const trade = this.tape[i]!;
-      this.aggr1s.pushTick(trade.tMs, trade.priceUsd, trade.notionalUsd);
-      this.aggr15s.pushTick(trade.tMs, trade.priceUsd, trade.notionalUsd);
-      this.aggr30s.pushTick(trade.tMs, trade.priceUsd, trade.notionalUsd);
-      this.aggr1m.pushTick(trade.tMs, trade.priceUsd, trade.notionalUsd);
-      this.mcapAggr1s.pushTick(trade.tMs, trade.mcapUsd, trade.notionalUsd);
-      this.mcapAggr15s.pushTick(trade.tMs, trade.mcapUsd, trade.notionalUsd);
-      this.mcapAggr30s.pushTick(trade.tMs, trade.mcapUsd, trade.notionalUsd);
-      this.mcapAggr1m.pushTick(trade.tMs, trade.mcapUsd, trade.notionalUsd);
-    }
+    this.aggr1s.shift(shiftMs);
+    this.aggr15s.shift(shiftMs);
+    this.aggr30s.shift(shiftMs);
+    this.aggr1m.shift(shiftMs);
+    this.mcapAggr1s.shift(shiftMs);
+    this.mcapAggr15s.shift(shiftMs);
+    this.mcapAggr30s.shift(shiftMs);
+    this.mcapAggr1m.shift(shiftMs);
   }
   getCurveDebugSnapshot(): CurveDebugSnapshot {
     const k = this.curveVirtualBase * this.curveVirtualToken;
@@ -2119,7 +2101,8 @@ export class TokenSim {
   }
 
   private processPendingUserTrades(nowMs: number,
-    publishExecution?: (execution: UserTradeExecutionNotice) => void): TokenChartEvent[] {
+    publishExecution?: (execution: UserTradeExecutionNotice) => void,
+    stampMs: number = nowMs): TokenChartEvent[] {
     const publish = (notice: UserTradeExecutionNotice): void => {
       if (publishExecution) publishExecution(notice);
       else this.userTradeExecutions.push(notice);
@@ -2145,9 +2128,9 @@ export class TokenSim {
     const outEvents: TokenChartEvent[] = [];
     for (let i = 0; i < due.length; i++) {
       const order = due[i]!;
-      // Due-ness stays on the wall clock (player wait). The stamp joins the
-      // simulation clock when that clock is ahead, so the fill is not late.
-      const execTsMs = Math.max(order.execMs, nowMs, this.marketNowMs());
+      // `nowMs` decides which orders are due. `stampMs` is the simulation
+      // clock, used even when a clamped stall has left it behind the wall.
+      const execTsMs = stampMs;
       const actualQuote = this.quoteUserTrade(order.side, order.amountIn, order.slippageBps);
       if (!actualQuote.ok) {
         publish({
