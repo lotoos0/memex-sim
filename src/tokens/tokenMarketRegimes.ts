@@ -28,8 +28,34 @@ export const IMPACT_SATURATION_FLOOR_USD = 8_000;
 export const LOW_LIQUIDITY_BOOST = 1.25;
 export const HIGH_LIQUIDITY_DAMPING = 0.72;
 export const MIN_MIGRATION_AGE_SEC = 90;
-export const MIN_MIGRATION_TX_60S = 30;
-export const MIN_MIGRATION_HOLDERS = 120;
+/**
+ * Participation is counted over five minutes. A 60-second window of 30 prints
+ * was the dense-tape bar; sparse arrivals cannot hold half a trade per second
+ * that long, but a coin that is still trading can clear this.
+ */
+export const MIN_MIGRATION_TX_WINDOW_MS = 5 * 60_000;
+export const MIN_MIGRATION_TX_IN_WINDOW = 12;
+/**
+ * Holder bar scaled to wallet counts under the age-decayed tape
+ * (median about 11, active tail about 6–15), not the old 120-wallet tape.
+ */
+export const MIN_MIGRATION_HOLDERS = 5;
+/** Real quote already in the curve. Price alone does not earn the last stretch. */
+export const MIN_MIGRATION_REAL_BASE_USD = 3_500;
+/** Curve progress already banked before approach friction may ease. */
+export const MIN_MIGRATION_READY_PROGRESS = 0.7;
+/**
+ * Share of the dense-tape approach stall kept once the gate above is met,
+ * so a raised coin can finish instead of being sold off at ~90%.
+ */
+export const MIGRATION_READY_FRICTION_SCALE = 0.15;
+/**
+ * While a coin is in the last 10% and has already raised real quote, keep at
+ * least this many prints per second so age-decay and silence cannot freeze it
+ * one buy short of completion.
+ */
+export const FINISH_STRETCH_MIN_PER_SEC = 0.35;
+export const FINISH_STRETCH_MIN_PROGRESS = 0.9;
 export const MIN_MIGRATION_SUSTAIN_CANDLES = 8;
 export const POST_MIGRATION_RETEST_CHANCE = 0.45;
 export const POST_MIGRATION_REJECTION_CHANCE = 0.35;

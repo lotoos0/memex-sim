@@ -16,7 +16,13 @@ import {
   MIGRATION_APPROACH_FRICTION_START_PCT,
   MIN_MIGRATION_AGE_SEC,
   MIN_MIGRATION_HOLDERS,
-  MIN_MIGRATION_TX_60S,
+  MIN_MIGRATION_READY_PROGRESS,
+  MIN_MIGRATION_REAL_BASE_USD,
+  MIN_MIGRATION_TX_IN_WINDOW,
+  MIN_MIGRATION_TX_WINDOW_MS,
+  FINISH_STRETCH_MIN_PER_SEC,
+  FINISH_STRETCH_MIN_PROGRESS,
+  MIGRATION_READY_FRICTION_SCALE,
   computeBaseQualityScore,
   computeFlowStrength,
   decideMigrationOutcome,
@@ -696,9 +702,11 @@ export class TokenSim {
       volMul *= Math.max(0.45, 1 - 0.35 * heatRatio);
     }
 
+    let migrationReady = false;
     if (this.phase !== 'MIGRATED' && this.phase !== 'DEAD') {
       const progressToMigration = this.getCurveProgress();
-      const migrationReady = this.isMigrationRuntimeReady(marketTsMs);
+      migrationReady = this.isMigrationRuntimeReady(marketTsMs);
+      const frictionScale = migrationReady ? MIGRATION_READY_FRICTION_SCALE : 1;
       if (progressToMigration >= MIGRATION_APPROACH_FRICTION_START_PCT) {
         const frictionProgress = clamp(
           (progressToMigration - MIGRATION_APPROACH_FRICTION_START_PCT)
@@ -706,7 +714,7 @@ export class TokenSim {
           0,
           1
         );
-        const friction = MIGRATION_APPROACH_FRICTION_MAX * frictionProgress;
+        const friction = MIGRATION_APPROACH_FRICTION_MAX * frictionProgress * frictionScale;
         driftPerSec -= friction * 0.035;
         effectiveBuyBias = clamp(effectiveBuyBias - friction * 0.08, 0.18, 0.82);
         lambdaMul *= Math.max(0.55, 1 - friction * 0.28);
@@ -728,7 +736,7 @@ export class TokenSim {
             (1 - quality) * 0.72 + Math.max(0, 0.16 - flowStrength) * 1.15,
             0,
             1.25
-          );
+          ) * frictionScale;
           driftPerSec -= finalStretchPressure * stallBias * 0.032;
           effectiveBuyBias = clamp(
             effectiveBuyBias - finalStretchPressure * stallBias * 0.1,
@@ -738,6 +746,21 @@ export class TokenSim {
           lambdaMul *= Math.max(0.42, 1 - finalStretchPressure * stallBias * 0.26);
           volMul *= 1 + finalStretchPressure * stallBias * 0.14;
         }
+      }
+      // Same prints, more of them on the bid, once the coin has already raised
+      // real quote. The dense-tape stall was selling this stretch back down.
+      if (migrationReady && progressToMigration >= FINISH_STRETCH_MIN_PROGRESS) {
+        effectiveBuyBias = 0.98;
+      } else if (migrationReady && progressToMigration >= 0.8) {
+        effectiveBuyBias = clamp(effectiveBuyBias + 0.1, 0.4, 0.75);
+      } else if (
+        !migrationReady
+        && this.simTimeMs < MIN_MIGRATION_AGE_SEC * 1000
+        && progressToMigration >= 0.92
+      ) {
+        // Launch flow can empty the curve in the first minute. Hold the last
+        // sliver until the raise has aged; completion itself is unchanged.
+        effectiveBuyBias = clamp(effectiveBuyBias - 0.35, 0.08, 0.32);
       }
     }
 
@@ -852,7 +875,11 @@ export class TokenSim {
       1.25
     );
     const actorBuyBoostUsd = actorOverlay.buyBoostUsd * actorActivityScale;
-    const actorSellBoostUsd = actorOverlay.sellBoostUsd * actorActivityScale;
+    // Near-migration actor sells were sized to fade a dense tape. Once the
+    // coin has earned the gate, that overlay no longer gets to unwind the raise.
+    const finishStretch = this.finishStretchActive();
+    const actorSellScale = finishStretch ? 0 : migrationReady ? MIGRATION_READY_FRICTION_SCALE : 1;
+    const actorSellBoostUsd = actorOverlay.sellBoostUsd * actorActivityScale * actorSellScale;
     const actorDirectionalUsd = actorBuyBoostUsd - actorSellBoostUsd;
 
     if (actorBuyBoostUsd > 0) targetBuyUsd += actorBuyBoostUsd;
@@ -940,6 +967,7 @@ export class TokenSim {
    */
   private arrivalLambdaPerSec(shape: number, nowMs: number): number {
     const organic = this.organicArrivalPerSec(shape, nowMs);
+    if (this.finishStretchActive()) return Math.max(organic, FINISH_STRETCH_MIN_PER_SEC);
     if (this.simTimeMs < this.flowSilentAfterSimMs) return organic;
     if (this.rugDumpActive()) return Math.max(organic, RUG_DUMP_PER_SEC);
     if (this.deadUserReboundMs > 0) return Math.max(organic, 0.8);
@@ -2632,15 +2660,25 @@ export class TokenSim {
     return this.getHolderWalletIds(false).length;
   }
 
+  private finishStretchActive(): boolean {
+    if (this.meta.fate === 'QUICK_RUG' || this.phase === 'MIGRATED' || this.phase === 'DEAD') return false;
+    if (this.simTimeMs < MIN_MIGRATION_AGE_SEC * 1000) return false;
+    if (this.getCurveProgress() < FINISH_STRETCH_MIN_PROGRESS) return false;
+    if (this.curveRealBase < MIN_MIGRATION_REAL_BASE_USD) return false;
+    if (this.getEligibleHolderCount() < MIN_MIGRATION_HOLDERS) return false;
+    return true;
+  }
+
   private isMigrationRuntimeReady(nowMs: number): boolean {
+    if (this.meta.fate === 'QUICK_RUG') return false;
+    if (this.isFlowSilent() && !this.finishStretchActive()) return false;
     const ageSec = this.simTimeMs / 1000;
-    const tx60s = this.getRecentTradeStats(60_000, nowMs).tx;
-    const holders = this.getEligibleHolderCount();
-    return (
-      ageSec >= MIN_MIGRATION_AGE_SEC
-      && tx60s >= MIN_MIGRATION_TX_60S
-      && holders >= MIN_MIGRATION_HOLDERS
-    );
+    if (ageSec < MIN_MIGRATION_AGE_SEC) return false;
+    if (this.getCurveProgress() < MIN_MIGRATION_READY_PROGRESS) return false;
+    if (this.curveRealBase < MIN_MIGRATION_REAL_BASE_USD) return false;
+    if (this.getEligibleHolderCount() < MIN_MIGRATION_HOLDERS) return false;
+    const recentTx = this.getRecentTradeStats(MIN_MIGRATION_TX_WINDOW_MS, nowMs).tx;
+    return recentTx >= MIN_MIGRATION_TX_IN_WINDOW;
   }
 
   private getFlowPowerMul(): number {
