@@ -19,12 +19,10 @@ import {
   sortPulseTokensForBucket,
   type PulseSortsByBucket,
 } from '../components/pulse/pulseSorts';
+import { capPulseColumn, pulseColumnCandidates } from '../components/pulse/pulseColumns';
 import type { TokenState } from '../tokens/types';
 import {
   FINAL_STRETCH_MAX_ITEMS,
-  getTokenAgeMs,
-  isFinalStretchToken,
-  isMigratedToken,
   MIGRATED_MAX_ITEMS,
   NEW_PAIRS_MAX_ITEMS,
 } from '../tokens/tokenBuckets';
@@ -181,12 +179,10 @@ export default function PulsePage() {
 
   const buckets = useMemo(() => {
     const all = Object.values(tokensById);
-    const byMcapDesc = (a: (typeof all)[number], b: (typeof all)[number]) => b.mcapUsd - a.mcapUsd;
-    const byNewestDesc = (a: (typeof all)[number], b: (typeof all)[number]) => getTokenAgeMs(a) - getTokenAgeMs(b);
     return {
-      newPairs: all.filter((token) => token.phase !== 'MIGRATED').sort(byNewestDesc).slice(0, NEW_PAIRS_MAX_ITEMS),
-      finalStretch: all.filter(isFinalStretchToken).sort(byMcapDesc).slice(0, FINAL_STRETCH_MAX_ITEMS),
-      migrated: all.filter(isMigratedToken).sort(byMcapDesc).slice(0, MIGRATED_MAX_ITEMS),
+      newPairs: pulseColumnCandidates(all, 'newPairs'),
+      finalStretch: pulseColumnCandidates(all, 'finalStretch'),
+      migrated: pulseColumnCandidates(all, 'migrated'),
     };
   }, [tokensById]);
 
@@ -206,15 +202,24 @@ export default function PulsePage() {
     sortPulseTokensForBucket(rows, bucket, pulseSortsByBucket[bucket], tradeFlowByTokenId);
 
   const newPairs = useMemo(
-    () => sortTokensForBucket('newPairs', filterTokensForBucket('newPairs', selectPulseBucketRows(columnFilters.newPairs, buckets))),
+    () => capPulseColumn(
+      sortTokensForBucket('newPairs', filterTokensForBucket('newPairs', selectPulseBucketRows(columnFilters.newPairs, buckets))),
+      NEW_PAIRS_MAX_ITEMS,
+    ),
     [buckets, columnFilters.newPairs, compiledFiltersByBucket, pulseSortsByBucket, tradeFlowByTokenId]
   );
   const finalStretch = useMemo(
-    () => sortTokensForBucket('finalStretch', filterTokensForBucket('finalStretch', selectPulseBucketRows(columnFilters.finalStretch, buckets))),
+    () => capPulseColumn(
+      sortTokensForBucket('finalStretch', filterTokensForBucket('finalStretch', selectPulseBucketRows(columnFilters.finalStretch, buckets))),
+      FINAL_STRETCH_MAX_ITEMS,
+    ),
     [buckets, columnFilters.finalStretch, compiledFiltersByBucket, pulseSortsByBucket, tradeFlowByTokenId]
   );
   const migrated = useMemo(
-    () => sortTokensForBucket('migrated', filterTokensForBucket('migrated', selectPulseBucketRows(columnFilters.migrated, buckets))),
+    () => capPulseColumn(
+      sortTokensForBucket('migrated', filterTokensForBucket('migrated', selectPulseBucketRows(columnFilters.migrated, buckets))),
+      MIGRATED_MAX_ITEMS,
+    ),
     [buckets, columnFilters.migrated, compiledFiltersByBucket, pulseSortsByBucket, tradeFlowByTokenId]
   );
 

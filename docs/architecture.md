@@ -65,9 +65,9 @@ The legacy PriceEngine clock is not on this path.
 
 The 5-minute volume window, fate timeouts, flow and dev warmups, and `MIN_MIGRATION_AGE_SEC` are durations on this clock. Curve completion, not that age gate, still latches migration. Readiness (age, real quote in the curve, holder count, and trades over five minutes) only eases the pre-completion approach friction.
 
-[PulsePage](../src/pages/PulsePage.tsx) builds its initial New Pairs list from the newest 20 non-migrated tokens, including eligible dead/rugged entries. Its Final Stretch list uses bonding progress of at least 80% and below 100%, excluding MIGRATED/DEAD/RUGGED; its Migrated list uses phase MIGRATED. User column selections, filters and sorting further shape displayed rows.
+[PulsePage](../src/pages/PulsePage.tsx) builds New Pairs from non-migrated tokens, Final Stretch from bonding progress of at least 80% and below 100% (excluding MIGRATED/DEAD/RUGGED), and Migrated from phase MIGRATED. Filters and the selected sort run before the render cap (20 / 16 / 20). The 60-second buy/sell counts on a quiet coin advance when the oldest trade in that window ages out, without rebuilding its holder list.
 
-[isNewPairsToken](../src/tokens/tokenBuckets.ts) still applies a maximum age of three minutes. Pulse itself lists the newest 20 non-migrated tokens, the top 16 Final Stretch rows, and the top 20 Migrated rows. Bootstrap targets are not per-column display limits. Dormant tokens are evicted during a running session; pinned tokens (open position, open order, or the selected token) are not.
+[isNewPairsToken](../src/tokens/tokenBuckets.ts) still applies a maximum age of three minutes. That age gate is separate from the Pulse render cap. Bootstrap targets are not per-column display limits. Dormant tokens are evicted during a running session; pinned tokens (open position, open order, or the selected token) are not.
 
 [Market sessions](../src/market/session.ts) use wall time: EU is 06:00-15:00 at fixed UTC+2; NA is 08:00-17:00 in America/New_York. Overlap and off-hours select different synthetic behavior profiles. TokenPage offers a development-only session override and curve debug overlay (`?debug=curve`).
 

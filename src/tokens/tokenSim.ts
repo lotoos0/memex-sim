@@ -2129,6 +2129,17 @@ export class TokenSim {
     return true;
   }
 
+  private nextTradeFlowExpiryMs = 0;
+
+  armTradeFlowExpiry(nextExpiryMs: number): void {
+    this.nextTradeFlowExpiryMs = nextExpiryMs;
+  }
+
+  /** True once `nowMs` is past the last instant the current 60s flow count is valid. */
+  tradeFlowDue(nowMs: number): boolean {
+    return nowMs > this.nextTradeFlowExpiryMs;
+  }
+
   /** Absolute simulation timestamp. Age and this clock advance by the same delta. */
   private marketNowMs(): number {
     return this.spawnRealMs + this.simTimeMs;

@@ -61,6 +61,7 @@ interface TokenStoreState {
   batchUpdateTokens: (updates: Record<string, TokenRuntime>) => void;
   setTokenMarketSnapshot: (tokenId: string, snapshot: TokenMarketSnapshot) => void;
   batchUpdateTokenMarketSnapshots: (updates: Record<string, TokenMarketSnapshot>) => void;
+  batchUpdateTradeFlows: (updates: Record<string, TokenTradeFlowSnapshot>) => void;
   setMarketSessionBucket: (bucket: SessionBucket) => void;
   setMarketSessionBucketOverride: (bucket: SessionBucket | null) => void;
   removeToken: (id: string) => void;
@@ -118,6 +119,25 @@ export const useTokenStore = create<TokenStoreState>((set) => ({
         nextFlow[id] = computeTradeFlow60s(snapshot);
       }
       return { marketByTokenId: next, tradeFlowByTokenId: nextFlow };
+    }),
+
+  batchUpdateTradeFlows: (updates) =>
+    set((s) => {
+      let changed = false;
+      const nextFlow = { ...s.tradeFlowByTokenId };
+      for (const [id, flow] of Object.entries(updates)) {
+        if (!s.tokensById[id]) continue;
+        const prev = nextFlow[id];
+        if (
+          prev
+          && prev.buys60s === flow.buys60s
+          && prev.sells60s === flow.sells60s
+          && prev.tx60s === flow.tx60s
+        ) continue;
+        nextFlow[id] = flow;
+        changed = true;
+      }
+      return changed ? { tradeFlowByTokenId: nextFlow } : s;
     }),
 
   setMarketSessionBucket: (bucket) =>
@@ -187,25 +207,44 @@ export const selectTokenAgeLabel = (tokenId: string) => (s: TokenStoreState): st
 export const selectMarketSessionBucket = (s: TokenStoreState) => s.marketSessionBucket;
 export const selectMarketSessionBucketOverride = (s: TokenStoreState) => s.marketSessionBucketOverride;
 
-const FLOW_WINDOW_MS = 60_000;
+export const TRADE_FLOW_WINDOW_MS = 60_000;
 const EMPTY_TRADE_FLOW: TokenTradeFlowSnapshot = Object.freeze({ buys60s: 0, sells60s: 0, tx60s: 0 });
 
-function computeTradeFlow60s(snapshot: TokenMarketSnapshot): TokenTradeFlowSnapshot {
-  const rows = snapshot.recentTrades ?? [];
-  if (rows.length === 0) return EMPTY_TRADE_FLOW;
+export type TradeFlowRoll = {
+  flow: TokenTradeFlowSnapshot;
+  /**
+   * Last `nowMs` at which the oldest in-window trade is still counted.
+   * The next millisecond drops it. Infinity when the window is empty.
+   */
+  nextExpiryMs: number;
+};
 
-  const cutoff = snapshot.updatedAtMs - FLOW_WINDOW_MS;
+/** Count buys and sells in the last 60s of `nowMs`, and when the next one ages out. */
+export function tradeFlowFromTrades(
+  trades: readonly { tMs: number; side: 'BUY' | 'SELL' }[],
+  nowMs: number,
+): TradeFlowRoll {
+  const cutoff = nowMs - TRADE_FLOW_WINDOW_MS;
   let buys = 0;
   let sells = 0;
-  for (let i = 0; i < rows.length; i++) {
-    const trade = rows[i]!;
-    if (trade.tMs < cutoff) continue;
+  let oldestMs = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < trades.length; i++) {
+    const trade = trades[i]!;
+    if (!(trade.tMs >= cutoff)) continue;
+    if (trade.tMs < oldestMs) oldestMs = trade.tMs;
     if (trade.side === 'BUY') buys += 1;
     else sells += 1;
   }
   const tx = buys + sells;
-  if (tx === 0) return EMPTY_TRADE_FLOW;
-  return { buys60s: buys, sells60s: sells, tx60s: tx };
+  if (tx === 0) return { flow: EMPTY_TRADE_FLOW, nextExpiryMs: Number.POSITIVE_INFINITY };
+  return {
+    flow: { buys60s: buys, sells60s: sells, tx60s: tx },
+    nextExpiryMs: oldestMs + TRADE_FLOW_WINDOW_MS,
+  };
+}
+
+function computeTradeFlow60s(snapshot: TokenMarketSnapshot): TokenTradeFlowSnapshot {
+  return tradeFlowFromTrades(snapshot.recentTrades ?? [], snapshot.updatedAtMs).flow;
 }
 
 function formatTokenAgeLabel(simTimeMs: number, createdAtSimMs: number): string {
