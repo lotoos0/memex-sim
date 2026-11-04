@@ -1282,7 +1282,8 @@ export class TokenSim {
         simMs: this.simTimeMs,
       };
       this.applyWalletDelta(walletId, buy.tokensOut, tsMs);
-      this.recordTradeTick(tsMs, buy.baseInUsd, buy.baseInUsd, 'BUY', walletId, buy.tokensOut);
+      this.recordTradeTick(tsMs, buy.baseInUsd, buy.baseInUsd / (1 - CURVE_FEE_BPS / 10_000),
+        'BUY', walletId, buy.tokensOut);
       return true;
     }
 
@@ -1299,7 +1300,7 @@ export class TokenSim {
       simMs: this.simTimeMs,
     };
     this.applyWalletDelta(walletId, buy.tokensOut, tsMs);
-    this.recordTradeTick(tsMs, buy.baseInNetUsd, buy.baseInNetUsd, 'BUY', walletId, buy.tokensOut);
+    this.recordTradeTick(tsMs, buy.baseInNetUsd, buy.baseInGrossUsd, 'BUY', walletId, buy.tokensOut);
     return true;
   }
 
@@ -2817,7 +2818,7 @@ export class TokenSim {
     });
     this.pruneStatWindow();
 
-    // Holder accounting keeps its existing notional, including bot BUY net cost.
+    // Holder cost/proceeds include the fee effect; market volume excludes fees.
     this.recordWalletTradeStats(
       walletId,
       side,

@@ -9,11 +9,12 @@ import { useWalletStore } from '../store/walletStore';
 
 // Diagnostic, not a CI gate. Private fixture access adds no production seam.
 // Market volume is compared separately from propagation and known economic diagnostics.
-type Group = 'integrity' | 'candidate' | 'model' | 'wallet' | 'settlement';
-const counts: Record<Group, number> = { integrity: 0, candidate: 0, model: 0, wallet: 0, settlement: 0 };
+type Group = 'integrity' | 'candidate' | 'model' | 'wallet' | 'settlement' | 'holderCycle';
+const counts: Record<Group, number> = { integrity: 0, candidate: 0, model: 0, wallet: 0, settlement: 0, holderCycle: 0 };
 const failures: Array<{ group: Group; label: string }> = [];
 const traces: unknown[] = [];
 const singleSwapEconomics: unknown[] = [];
+const holderCycles: unknown[] = [];
 const base = 1_800_000_000_000;
 const feeFactor = 0.99; // Existing 100 bps model, independently specified.
 let now = base;
@@ -86,7 +87,16 @@ function execute(sim: TokenSim, actor: 'user' | 'bot', side: 'BUY' | 'SELL', amo
   // Capture only the execution context; solve constant product independently below.
   const reserves = migrated ? sim['getMigratedReserves'](side) : undefined;
   const profilesBefore = new Map([...sim['walletProfiles']].map(([id, p]) =>
-    [id, { boughtUsd: p.boughtUsd, soldUsd: p.soldUsd }]));
+    [id, { ...p }]));
+  const readProfile = sim['getOrCreateWalletProfile'].bind(sim);
+  if (actor === 'bot' && side === 'BUY') {
+    sim['getOrCreateWalletProfile'] = (id, ts) => {
+      const profile = readProfile(id, ts);
+      if (!profilesBefore.has(id)) profilesBefore.set(id, { ...profile });
+      return profile;
+    };
+  }
+  const ledgerBefore = new Map(sim['ledger']);
   const start = sim['tape'].length;
   let fill: UserTradeFill | undefined;
   if (actor === 'user') {
@@ -94,6 +104,7 @@ function execute(sim: TokenSim, actor: 'user' | 'bot', side: 'BUY' | 'SELL', amo
     fixture(fill.ok, label);
   } else fixture(side === 'BUY' ? sim['executeSimBuyTrade'](amount, now)
     : sim['executeSimSellTrade'](amount, now), label);
+  sim['getOrCreateWalletProfile'] = readProfile;
   fixture(sim['tape'].length === start + 1, `${label}/one execution`);
   const row = sim['tape'][start]!;
   const after = sim.getCurveDebugSnapshot();
@@ -122,6 +133,17 @@ function execute(sim: TokenSim, actor: 'user' | 'bot', side: 'BUY' | 'SELL', amo
   const profileField = side === 'BUY' ? 'boughtUsd' : 'soldUsd';
   near('wallet', profile[profileField] - (profilesBefore.get(row.walletId)?.[profileField] ?? 0),
     walletQuote, `${label}/holder-profile-wallet-notional`);
+  if (actor === 'bot' && side === 'BUY') {
+    const previous = profilesBefore.get(row.walletId)!;
+    fixture(previous !== undefined, `${label}/profile-before-debit`);
+    near('holderCycle', profile.openCostBasisUsd - previous.openCostBasisUsd, walletQuote,
+      `${label}/gross-open-cost-increment`);
+    near('holderCycle', profile.avgBuyUsd, profile.boughtUsd / profile.boughtTokens, `${label}/gross-avg-buy`);
+    near('holderCycle', profile.solBalance, Math.max(0, previous.solBalance - walletQuote / SOL_PRICE_USD),
+      `${label}/gross-SOL-debit`);
+    near('holderCycle', profile.realizedPnlUsd, previous.realizedPnlUsd, `${label}/BUY-no-realized-PnL`);
+    near('holderCycle', sim['ledger'].get(row.walletId) ?? 0, (ledgerBefore.get(row.walletId) ?? 0) + row.tokenAmount, `${label}/inventory-from-fills`);
+  }
   expected.push({ tMs: row.tMs, quote,
     legacyVolume: fill?.ok ? fill.filledUsd : side === 'BUY' ? quote : walletQuote });
   if (!label.startsWith('mixed/')) {
@@ -131,7 +153,10 @@ function execute(sim: TokenSim, actor: 'user' | 'bot', side: 'BUY' | 'SELL', amo
       mcap: sim.getLastMcapUsd(), phase: sim.getPhase(), swap: sim['lastCurveSwap'],
       trade: { tMs: row.tMs, side: row.side, walletId: row.walletId,
         tokenAmount: row.tokenAmount, priceUsd: row.priceUsd, mcapUsd: row.mcapUsd },
-      rng: JSON.parse(JSON.stringify(sim['rng'])) });
+      rng: JSON.parse(JSON.stringify(sim['rng'])),
+      market: { tape: [...sim['tape']], stats: [...sim['statWindow']],
+        candles: [1, 15, 30, 60].flatMap((tf) => [sim.getCandles(tf), sim.getCandles(tf, 'mcap')]) },
+      userWallet: { sol: useWalletStore.getState().solBalance, pnl: useWalletStore.getState().realizedPnlSol } });
   }
   verifyProjection(sim, expected, label);
   traces.push({ label, tokens: row.tokenAmount, exchangedQuote: quote, walletQuote, fee,
@@ -139,6 +164,90 @@ function execute(sim: TokenSim, actor: 'user' | 'bot', side: 'BUY' | 'SELL', amo
     virtualQuoteDelta: migrated ? null : Math.abs(after.vBase - before.vBase),
     realQuoteDelta: migrated ? null : Math.abs(after.rBase - before.rBase) });
   return fill;
+}
+
+function holderCycle(migrated: boolean): void {
+  const label = `holder-cycle/${migrated ? 'post' : 'pre'}`;
+  const sim = create(label, migrated);
+  sim['ledger'].clear();
+  sim['walletProfiles'].clear();
+  sim['curveRealToken'] = sim['curveInitialRealToken'];
+  // Observe creation before the first debit, without replacing wallet selection.
+  const readProfile = sim['getOrCreateWalletProfile'].bind(sim);
+  let initialSol: number | undefined;
+  sim['getOrCreateWalletProfile'] = (id, ts) => {
+    const profile = readProfile(id, ts);
+    if (initialSol === undefined) initialSol = profile.solBalance;
+    return profile;
+  };
+  const before = sim.getCurveDebugSnapshot();
+  const reserves = migrated ? sim['getMigratedReserves']('BUY') : undefined;
+  fixture(sim['executeSimBuyTrade'](30, now), `${label}/BUY`);
+  sim['getOrCreateWalletProfile'] = readProfile;
+  const buy = sim['tape'][0]!;
+  const walletId = buy.walletId;
+  const tokensBought = buy.tokenAmount;
+  const x = reserves?.reserveBaseUsd ?? before.vBase;
+  const y = reserves?.reserveToken ?? before.vTok;
+  const netUsed = x * tokensBought / (y - tokensBought);
+  const grossCost = netUsed / feeFactor;
+  fixture(initialSol !== undefined && initialSol > grossCost / SOL_PRICE_USD, `${label}/unclamped-SOL`);
+  let tokensSold = 0;
+  let netProceeds = 0;
+  let grossProceeds = 0;
+  const stages: unknown[] = [];
+  for (const stage of ['BUY', 'partial-SELL', 'full-SELL'] as const) {
+    if (stage !== 'BUY') {
+      const remaining = sim['ledger'].get(walletId) ?? 0;
+      const curveBefore = sim.getCurveDebugSnapshot();
+      const sellReserves = migrated ? sim['getMigratedReserves']('SELL') : undefined;
+      const targetUsd = stage === 'partial-SELL' ? remaining * sim.getLastPriceUsd() * 0.25 : 1_000_000;
+      fixture(sim['executeSimSellTrade'](targetUsd, now), `${label}/${stage}`);
+      const sell = sim['tape'][sim['tape'].length - 1]!;
+      check('holderCycle', sell.walletId === walletId, `${label}/${stage}/same-wallet`);
+      const quote = (sellReserves?.reserveBaseUsd ?? curveBefore.vBase) * sell.tokenAmount
+        / ((sellReserves?.reserveToken ?? curveBefore.vTok) + sell.tokenAmount);
+      tokensSold += sell.tokenAmount;
+      grossProceeds += quote;
+      netProceeds += quote * feeFactor;
+      near('holderCycle', sell.notionalUsd, quote, `${label}/${stage}/market-gross-output`);
+    }
+    const profile = sim['walletProfiles'].get(walletId)!;
+    const remaining = sim['ledger'].get(walletId) ?? 0;
+    const remainingCost = grossCost * (1 - tokensSold / tokensBought);
+    near('holderCycle', profile.boughtUsd, grossCost, `${label}/${stage}/gross-bought`);
+    near('holderCycle', profile.boughtTokens, tokensBought, `${label}/${stage}/bought-tokens`);
+    near('holderCycle', profile.avgBuyUsd, grossCost / tokensBought, `${label}/${stage}/avg-buy`);
+    near('holderCycle', profile.soldUsd, netProceeds, `${label}/${stage}/net-sold`);
+    near('holderCycle', profile.soldTokens, tokensSold, `${label}/${stage}/sold-tokens`);
+    near('holderCycle', profile.avgSellUsd, tokensSold > 0 ? netProceeds / tokensSold : 0,
+      `${label}/${stage}/avg-sell`);
+    near('holderCycle', profile.openCostBasisUsd, remainingCost, `${label}/${stage}/remaining-cost`);
+    near('holderCycle', profile.realizedPnlUsd, netProceeds - (grossCost - remainingCost),
+      `${label}/${stage}/realized-PnL`);
+    near('holderCycle', profile.solBalance, initialSol - grossCost / SOL_PRICE_USD + netProceeds / SOL_PRICE_USD,
+      `${label}/${stage}/profile-SOL`);
+    near('holderCycle', remaining, tokensBought - tokensSold, `${label}/${stage}/token-inventory`);
+    near('holderCycle', buy.notionalUsd, netUsed, `${label}/${stage}/BUY-volume-stays-net`);
+    const recorded = sim['tape'].reduce((sum, row) => sum + row.notionalUsd, 0);
+    near('holderCycle', recorded, netUsed + grossProceeds, `${label}/${stage}/market-once`);
+    near('holderCycle', sim.getRuntime().vol5mUsd, recorded, `${label}/${stage}/stats-once`);
+    for (const tf of [1, 15, 30, 60]) for (const metric of ['price', 'mcap'] as const) {
+      near('holderCycle', sim.getCandles(tf, metric).reduce((sum, c) => sum + c.volume, 0),
+        recorded, `${label}/${stage}/${tf}/${metric}/volume`);
+    }
+    if (stage === 'partial-SELL') check('holderCycle', remaining > 0 && remaining < tokensBought,
+      `${label}/partial-leaves-position`);
+    if (stage === 'full-SELL') near('holderCycle', remaining, 0, `${label}/full-closes-position`);
+    stages.push(JSON.parse(JSON.stringify({ stage, profile, remaining,
+      curve: sim.getCurveDebugSnapshot(), price: sim.getLastPriceUsd(), mcap: sim.getLastMcapUsd(),
+      tape: sim['tape'], stats: sim['statWindow'], rng: sim['rng'],
+      candles: [1, 15, 30, 60].flatMap((tf) => [sim.getCandles(tf), sim.getCandles(tf, 'mcap')]),
+      userWallet: { sol: useWalletStore.getState().solBalance, pnl: useWalletStore.getState().realizedPnlSol } })));
+  }
+  near('holderCycle', grossCost - netUsed, grossCost * 0.01, `${label}/BUY-fee`);
+  near('holderCycle', grossProceeds - netProceeds, grossProceeds * 0.01, `${label}/SELL-fee`);
+  holderCycles.push({ label, walletId, initialSol, tokensBought, grossCost, netUsed, stages });
 }
 
 const originalNow = Date.now;
@@ -280,6 +389,8 @@ try {
   }
   registry['tokens'].delete(roundTrip.meta.id);
 
+  for (const migrated of [false, true]) holderCycle(migrated);
+
   // Real pending-order failure and refund, after another trade worsens the quote.
   const failed = create('failed-refund');
   registry['tokens'].set(failed.meta.id, failed);
@@ -304,10 +415,11 @@ try {
   Date.now = originalNow;
   Math.random = originalRandom;
 }
+console.log(`HOLDER_CYCLES ${JSON.stringify(holderCycles)}`);
 console.log(`ECONOMICS ${JSON.stringify(singleSwapEconomics)}`);
 console.log(`TRACES ${JSON.stringify(traces)}`);
 for (const failure of failures) console.error(`FAIL ${failure.group}/${failure.label}`);
-for (const group of ['integrity', 'candidate', 'model', 'wallet', 'settlement'] as const) {
+for (const group of ['integrity', 'candidate', 'model', 'wallet', 'settlement', 'holderCycle'] as const) {
   const failed = failures.filter((f) => f.group === group).length;
   console.log(`Volume basis ${group}: ${counts[group] - failed}/${counts[group]} passed; ${failed} discrepancies`);
 }
