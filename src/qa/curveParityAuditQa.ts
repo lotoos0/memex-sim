@@ -28,7 +28,7 @@ try {
   for (const scenario of ['normal', 'exact', 'exhaustion', 'below-migration', 'above-migration'] as const) {
     const meta: TokenMeta = {
       id: `exhaustion-${scenario}`, name: 'Exhaustion QA', ticker: 'QA',
-      logoColor: '#ffffff', supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
+      logoColor: '#ffffff', imageUrl: null, supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
       metrics: { topHoldersPct: 10, devHoldingsPct: 2, snipersPct: 1,
         lpBurnedPct: 100, insidersPct: 1, bundlersPct: 1 },
     };
@@ -131,7 +131,7 @@ try {
   Date.now = () => 1_800_000_000_000;
   for (const budget of [0n, 1n, 1000n, 100_000_000n, 1_000_000_000n]) {
     const meta: TokenMeta = { id: `curve-parity-fixed`, name: 'Parity Audit', ticker: 'QA',
-      logoColor: '#ffffff', supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
+      logoColor: '#ffffff', imageUrl: null, supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
       metrics: { topHoldersPct: 10, devHoldingsPct: 2, snipersPct: 1, lpBurnedPct: 100, insidersPct: 1, bundlersPct: 1 } };
     const sim = new TokenSim(meta, 5000, 1_000_000);
     const before = sim.getCurveDebugSnapshot();
