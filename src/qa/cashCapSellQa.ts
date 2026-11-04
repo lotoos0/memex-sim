@@ -25,7 +25,7 @@ function check(condition: boolean, label: string, control = false): void {
   else checks++;
   if (condition) return;
   if (control) controlFailures++;
-  failures.push(`${control ? 'control-model' : 'invariant'}/${label}`);
+  failures.push(`${control ? 'control-guard' : 'invariant'}/${label}`);
 }
 function near(a: number, b: number, tolerance: number, label: string): void {
   check(Number.isFinite(a) && Math.abs(a - b) <= tolerance, `${label}: actual=${a}, expected=${b}, tol=${tolerance}`);
@@ -62,6 +62,11 @@ function observe(sim: TokenSim, label: string, tier: Tier) {
       // Retain the complete command prefix and swap states if an unforced hit appears.
       console.log(`CASH_CAP_REPRO ${JSON.stringify({ label, tier, initial, actions, swaps })}`);
     }
+    if (tier === 'forced') {
+      check(tokens === 0 && quote === 0, 'cash-cap/rejected-output', true);
+      check(JSON.stringify(before) === JSON.stringify(after), 'cash-cap/no-reserve-mutation', true);
+      return;
+    }
     if (tokens <= 0) {
       check(JSON.stringify(before) === JSON.stringify(after), `${label}/failed-helper-no-reserve-mutation`);
       return;
@@ -79,12 +84,6 @@ function observe(sim: TokenSim, label: string, tier: Tier) {
     const maximumNetRedemption = after.vBase * allTokens / (after.vTok + allTokens) * f;
     const margin = after.rBase - maximumNetRedemption;
     minimumMargin = Math.min(minimumMargin, margin);
-    if (tier === 'forced') {
-      check(Math.abs((before.vBase - after.vBase) - gross) <= roundoff * before.vBase,
-        'cash-cap/quote-matches-unconstrained-constant-product', true);
-      check(kStep <= roundoff, 'cash-cap/constant-product', true);
-      return;
-    }
     check(!capped, `${label}/no-cash-cap`);
     check(kStep <= roundoff, `${label}/step-K-drift=${kStep}`);
     check(kTotal <= roundoff * Math.max(1, swaps.length), `${label}/cumulative-K-drift=${kTotal}`);
@@ -232,9 +231,13 @@ try {
   forced['curveRealToken'] = 90_000_000;
   forced['curveRealBase'] = 1;
   const audit = observe(forced, 'forced/cash-cap', 'forced');
+  const before = forced.getCurveDebugSnapshot();
+  const estimate = forced['estimateCurveSellOut'](1_000_000);
+  check(estimate.tokenIn === 0 && estimate.baseOutUsd === 0, 'control/estimate-rejected');
+  check(JSON.stringify(before) === JSON.stringify(forced.getCurveDebugSnapshot()), 'control/estimate-no-mutation');
   audit.actions.push({ helper: 'executeCurveSell', tokens: 1_000_000 });
   const result = forced['executeCurveSell'](1_000_000);
-  check(result.tokenIn === 1_000_000 && result.baseOutUsd === 1, 'control/detects-actual-capped-output');
+  check(result.tokenIn === estimate.tokenIn && result.baseOutUsd === estimate.baseOutUsd, 'control/estimate-execution-agree');
   check(audit.finish().caps === 1, 'control/observer-detects-cap');
   check(archetypes.size === 4, `coverage/all-archetypes: ${[...archetypes]}`);
 } finally {
@@ -262,5 +265,5 @@ console.log(`SCENARIOS ${JSON.stringify([...groups].map(([label, rows]) => ({
 console.log(`COVERAGE ${JSON.stringify({ archetypes: [...archetypes], phases: [...phases] })}`);
 for (const failure of failures) console.error(`FAIL ${failure}`);
 console.log(`Cash-cap reachability: ${checks - (failures.length - controlFailures)}/${checks} invariant checks passed`);
-console.log(`Forced control model: ${controlChecks - controlFailures}/${controlChecks} passed; ${controlFailures} diagnostic discrepancies`);
+console.log(`Forced guard policy: ${controlChecks - controlFailures}/${controlChecks} passed; ${controlFailures} diagnostic discrepancies`);
 if (failures.length) throw new Error(`Cash-cap diagnostic: ${failures.length} discrepancies (not a CI gate)`);
