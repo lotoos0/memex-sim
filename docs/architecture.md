@@ -47,13 +47,26 @@ Current scheduling comes from [registry.ts](../src/tokens/registry.ts):
 | Spawn check | Rescheduled with a random delay of 6,000-12,000 ms; conditionally adds one or two fresh tokens according to counts. It does not guarantee a token every interval. |
 | Bootstrap | Creates 17 tokens with requested groups of 10 New Pairs, 3 Final Stretch, 2 Migrated and 2 weak/dead. Each group uses simulated advancement and retry/fallback logic, so resulting bucket counts can differ. |
 
-Registry time starts at two simulated hours and advances by a fixed 200 ms multiplied by 60 per callback. TokenSim instead measures wall-clock elapsed time, falls back to the supplied delta when needed, clamps it to 0.05-1.5 seconds, and multiplies that delta by 60 for lifecycle age. Trade generation/regime timing also uses real-time deltas; order submission/execution latency and tape timestamps use wall time. Narrative post timing uses published simulation time.
+### Time base
 
-Consequently, the multiplier does not make every clock, candle, order, or session run at 60x. Delayed callbacks can make registry and token clocks diverge. Bootstrap advances simulated age but still uses wall-clock-sensitive logic. The runtime is not a fully deterministic replay system.
+There is one simulation clock. `SIM_TIME_MULTIPLIER` in [tokens/types.ts](../src/tokens/types.ts) is the scale: simulation milliseconds advanced per wall-clock millisecond. The default is **1** (real time), so in-app ages and durations match wall time the way they do on pump.fun. [simClock.ts](../src/tokens/simClock.ts) is the only code that reads the constant. A different scale, if set later, speeds or slows age, fate and dev timers, migration-readiness age, regime and attention timing, market steps, cooldown decay, candle timestamps, and tape timestamps together. Do not multiply by the constant again at a call site.
+
+Each token measures the wall gap since its previous tick, falls back to the callback's 200 ms when that gap is not positive, and clamps the wall gap to 0.05-1.5 seconds before scaling it. The same scaled step updates token age and the absolute timestamp `spawnWallMs + simTimeMs` used for candles and tape. At scale 1, an on-time 200 ms callback keeps that timestamp on the wall clock. A stalled callback does not dump the whole stall into one market step; age and the chart lag the wall together until later ticks. The registry spawn epoch starts at two hours and advances by the nominal 200 ms callback scaled once. It orders births. Displayed age is the token's own `simTimeMs`, not that epoch.
+
+Bootstrap fast-forward seeks the same clock in steps of 0.2-1.2 seconds. It stops when the token matches its column (and is at least as old as that column's minimum) or can no longer match, and otherwise stops at the rolled age cap. The head of that clock is then aligned to the wall, so candle history ends at "now" and spans the simulated age. It does not run a second, faster lifecycle clock.
+
+These stay on the wall clock on purpose, and they line up with the simulation clock only while the scale is 1:
+
+- Market session (EU/NA hour) is civil time.
+- Player order latency (about 80-320 ms) is how long a click waits. The fill is stamped on the simulation clock if that clock is ahead of the wall, so a faster scale cannot mark the fill late.
+
+The legacy PriceEngine clock is not on this path.
+
+The 5-minute volume window, fate timeouts, flow and dev warmups, and `MIN_MIGRATION_AGE_SEC` are durations on this clock. They were not retuned when the scale changed from 60 to 1; a value of 90 seconds is 90 seconds of the one clock. Curve completion, not that age gate, still latches migration. The age gate only feeds the pre-completion readiness penalty.
 
 [PulsePage](../src/pages/PulsePage.tsx) builds its initial New Pairs list from the newest 20 non-migrated tokens, including eligible dead/rugged entries. Its Final Stretch list uses bonding progress of at least 80% and below 100%, excluding MIGRATED/DEAD/RUGGED; its Migrated list uses phase MIGRATED. User column selections, filters and sorting further shape displayed rows.
 
-The registry's replenishment logic uses [isNewPairsToken](../src/tokens/tokenBuckets.ts), which applies a maximum age of three simulated minutes. That differs from the UI's newest-20 rule. Bootstrap targets are not per-column display limits. Tokens are not automatically evicted from the registry during a running session.
+The registry's replenishment logic uses [isNewPairsToken](../src/tokens/tokenBuckets.ts), which applies a maximum age of three minutes on the simulation clock. That differs from the UI's newest-20 rule. Bootstrap targets are not per-column display limits. Tokens are not automatically evicted from the registry during a running session.
 
 [Market sessions](../src/market/session.ts) use wall time: EU is 06:00-15:00 at fixed UTC+2; NA is 08:00-17:00 in America/New_York. Overlap and off-hours select different synthetic behavior profiles. TokenPage offers a development-only session override and curve debug overlay (`?debug=curve`).
 
@@ -65,16 +78,20 @@ The frozen contracts are [tokens/types.ts](../src/tokens/types.ts) and [engine/t
 | --- | --- |
 | Supply | `SUPPLY = 1_000_000_000` in tokens/types.ts. |
 | Floor / cap | `MCAP_FLOOR_USD = 2_000`, `MCAP_CAP_USD = 10_000_000` in tokens/types.ts. |
-| Lifecycle multiplier | `SIM_TIME_MULTIPLIER = 60` in tokens/types.ts; timing qualifications above apply. |
+| Time scale | `SIM_TIME_MULTIPLIER = 1` in tokens/types.ts. Applied only through simClock.ts. See the migration note below. |
 | Simulated SOL reference | `SOL_PRICE_USD = 150` in tokens/types.ts. A separate `SOL_PRICE_USD_REFERENCE = 150` exists in tokenMarketRegimes.ts. Neither is a live feed. |
 | Runtime/chart migration threshold | `getMigrationThresholdUsd()` in [tokenMarketRegimes.ts](../src/tokens/tokenMarketRegimes.ts) returns `MIGRATION_TARGET_SOL` (228) times its SOL reference (150): $34,200. |
 | Frozen legacy/public threshold | `MIGRATION_THRESHOLD_USD = 69_000` remains in tokens/types.ts; it has no active source consumer. It is not the runtime trigger or current chart line. |
 
 These are observations, not approval to reconcile constants or change contracts.
 
+### Migration note: `SIM_TIME_MULTIPLIER` 60 → 1
+
+Until this change the constant advanced only token age, fate, dev/flow warmups, and age gates. `stepMarket`, regime decay, candle time, and tape timestamps used the unscaled wall delta. A 90-second gate therefore elapsed in about 1.5 wall seconds, and the chart's one-second buckets did not match the age label. The constant is now the single scale, default 1, applied only in `simClock.ts`. Numeric gates, warmups, fate ranges, lambdas, trade-size clips, and curve constants are unchanged; they are read on the unified clock. `MIGRATION_THRESHOLD_USD` was not reconciled.
+
 [generator.ts](../src/tokens/generator.ts) defines fates and timeout ranges. The registry supplies fate overrides for bootstrap/fresh tokens; the generator's default fate probabilities are not the live feed's guaranteed distribution. Fresh tokens start at $2,000 mcap; bootstrapped tokens are advanced before registration.
 
-TokenSim enters FINAL through bonding progress and migrates when its mcap reaches the runtime threshold. Fate timeout starts collapse handling; non-migrated tokens become DEAD when at the floor under that handling. The contract retains RUGGED, but current TokenSim logic normalizes that state to DEAD rather than providing the historical 60-120-second RUGGED display interval. DEAD does not remove the token or prohibit user BUY execution.
+TokenSim enters FINAL through bonding progress and migrates when a BUY empties the curve's real-token inventory. Fate timeout starts collapse handling; non-migrated tokens become DEAD when at the floor under that handling. The contract retains RUGGED, but current TokenSim logic normalizes that state to DEAD rather than providing the historical 60-120-second RUGGED display interval. DEAD does not remove the token or prohibit user BUY execution.
 
 ## Trading and chart flow
 
@@ -98,7 +115,7 @@ Current UI limitations include:
 
 - Dev Tokens is a placeholder, and Discover/Trackers/Perpetuals/Portfolio header labels are not registered routes.
 - [TokenColumn](../src/components/pulse/TokenColumn.tsx) and [InstantTradePanel](../src/components/floating/InstantTradePanel.tsx) duplicate settings and save shared localStorage keys using separate component state. RPC, MEV, auto-fee and max-fee controls do not affect submitted orders; slippage, priority and bribe do.
-- [SearchOverlay](../src/components/layout/SearchOverlay.tsx) labels a sort as 1hr volume but compares `vol5mUsd` (a simulated-time window).
+- [SearchOverlay](../src/components/layout/SearchOverlay.tsx) labels a sort as 1hr volume but compares `vol5mUsd` (five minutes on the simulation clock).
 - [TokenCard](../src/components/pulse/TokenCard.tsx) copies synthetic tokenId as CA and constructs a Solscan link from it. This does not make it a real contract address.
 
 ## QA coverage and limitations

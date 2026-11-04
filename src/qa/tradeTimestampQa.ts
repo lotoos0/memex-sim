@@ -76,7 +76,7 @@ function verify(label: string, sim: TokenSim): void {
 }
 function marketFlow(sim: TokenSim): SimTapeTrade[] {
   const start = sim['tape'].length;
-  sim['executeMarketFlowAsTape']({ candleTsMs: now, realDtSec: 0.2,
+  sim['executeMarketFlowAsTape']({ candleTsMs: now, simDtSec: 0.2,
     targetBuyUsd: 200, targetSellUsd: 100, previousPriceUsd: sim.getLastPriceUsd(),
     expectedNextPriceUsd: sim.getLastPriceUsd(), buyMix: [], sellMix: [] });
   const rows = sim['tape'].slice(start);
