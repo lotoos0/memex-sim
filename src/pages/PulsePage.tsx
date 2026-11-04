@@ -20,7 +20,14 @@ import {
   type PulseSortsByBucket,
 } from '../components/pulse/pulseSorts';
 import type { TokenState } from '../tokens/types';
-import { getTokenAgeMs, isFinalStretchToken, isMigratedToken, NEW_PAIRS_MAX_ITEMS } from '../tokens/tokenBuckets';
+import {
+  FINAL_STRETCH_MAX_ITEMS,
+  getTokenAgeMs,
+  isFinalStretchToken,
+  isMigratedToken,
+  MIGRATED_MAX_ITEMS,
+  NEW_PAIRS_MAX_ITEMS,
+} from '../tokens/tokenBuckets';
 
 type ColumnKey = 'newPairs' | 'finalStretch' | 'migrated';
 type PulseDisplayMode = 'comfortable' | 'dense';
@@ -178,8 +185,8 @@ export default function PulsePage() {
     const byNewestDesc = (a: (typeof all)[number], b: (typeof all)[number]) => getTokenAgeMs(a) - getTokenAgeMs(b);
     return {
       newPairs: all.filter((token) => token.phase !== 'MIGRATED').sort(byNewestDesc).slice(0, NEW_PAIRS_MAX_ITEMS),
-      finalStretch: all.filter(isFinalStretchToken).sort(byMcapDesc),
-      migrated: all.filter(isMigratedToken).sort(byMcapDesc),
+      finalStretch: all.filter(isFinalStretchToken).sort(byMcapDesc).slice(0, FINAL_STRETCH_MAX_ITEMS),
+      migrated: all.filter(isMigratedToken).sort(byMcapDesc).slice(0, MIGRATED_MAX_ITEMS),
     };
   }, [tokensById]);
 

@@ -2,6 +2,8 @@ import type { TokenState } from './types';
 
 export const NEW_PAIRS_MAX_AGE_MS = 3 * 60_000;
 export const NEW_PAIRS_MAX_ITEMS = 20;
+export const FINAL_STRETCH_MAX_ITEMS = 16;
+export const MIGRATED_MAX_ITEMS = 20;
 export const FINAL_STRETCH_MIN_BONDING_PCT = 80;
 
 export function getTokenAgeMs(token: Pick<TokenState, 'simTimeMs' | 'createdAtSimMs'>): number {

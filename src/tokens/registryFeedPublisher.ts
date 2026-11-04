@@ -9,14 +9,17 @@ export function publishRegistryFeed(
   const marketUpdates: Record<string, MarketMicroSnapshot> = {};
 
   for (const [tokenId, sim] of tokens) {
-    const runtime = sim.getRuntime();
+    updates[tokenId] = sim.getRuntime();
+    // Dormant births do not rebuild holder lists every second.
+    if (!sim.takeMarketDirty()) continue;
     const market = sim.getMarketSnapshot();
-    updates[tokenId] = runtime;
     marketUpdates[tokenId] = market;
     onSnapshot?.(tokenId, sim, market);
   }
 
   const store = useTokenStore.getState();
   store.batchUpdateTokens(updates);
-  store.batchUpdateTokenMarketSnapshots(marketUpdates);
+  if (Object.keys(marketUpdates).length > 0) {
+    store.batchUpdateTokenMarketSnapshots(marketUpdates);
+  }
 }

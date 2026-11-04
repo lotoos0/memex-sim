@@ -20,6 +20,11 @@ export class RegistryNarrativeRelay {
     this.narrativeByTokenId.clear();
   }
 
+  forgetToken(tokenId: string): void {
+    this.lastProcessedTradeMsByToken.delete(tokenId);
+    this.narrativeByTokenId.delete(tokenId);
+  }
+
   emitLaunch(sim: TokenSim): void {
     const runtime = sim.getRuntime();
     this.emit({

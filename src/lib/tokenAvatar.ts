@@ -64,6 +64,10 @@ function buildSvg(tokenId: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
+export function releaseTokenAvatar(tokenId: string): void {
+  svgCache.delete(tokenId || 'token');
+}
+
 export function getTokenAvatarUrl(tokenId: string): string {
   const key = tokenId || 'token';
   const cached = svgCache.get(key);
