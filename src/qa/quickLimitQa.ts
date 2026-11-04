@@ -26,6 +26,8 @@ export async function runQuickLimitQa() {
     return Object.keys(tokenState.tokensById).length > 0 ? true : null;
   }, 12_000, 'token store hydration');
 
+  // Live 60s counts age out, so a coin that just qualified can dip under 4 prints.
+  // Give a fresh active launch time to clear mcap, volume, and tx60s together.
   const tokenId = await waitFor(() => {
     const tokenState = useTokenStore.getState();
     const rows = Object.values(tokenState.tokensById);
@@ -63,7 +65,7 @@ export async function runQuickLimitQa() {
       });
     const token = ranked[0];
     return token?.id ?? null;
-  }, 15_000, 'token runtime');
+  }, 35_000, 'token runtime');
 
   const getLastPriceUsd = () => useTokenStore.getState().tokensById[tokenId]?.lastPriceUsd ?? 0;
   const getWalletSol = () => useWalletStore.getState().solBalance;
