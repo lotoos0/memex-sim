@@ -92,3 +92,77 @@ node /tmp/buyExhaustionQa.mjs
 ```
 
 Validation after the fix: build passed; lint passed with the same seven UI warnings. The original parity QA remains 14/18 with the same four fee/OHLC discrepancies. Browser QA launchers were attempted sequentially but PowerShell is absent. Dev startup was attempted and blocked by sandbox `listen EPERM`; manual browser and five-minute lifecycle checks remain unrun. Post-migration execution was not changed or covered by this slice. No PR was created.
+
+---
+
+## Slice 2E — current curve parity audit (2026-11-04)
+
+Base: `d58a9aa`, main after OHLC audit PR #52. This section supersedes historical findings only where explicitly stated; all text above remains a historical record. Scope: this report and `src/qa/curveParityAuditQa.ts`. No production or existing QA changes.
+
+### Economic contract versus external fidelity
+
+README and docs/architecture.md describe a synthetic, simulation-only constant-product market with simulated SOL fixed at USD 150. They do not promise parity with a particular deployed protocol or version of the SDK. The historical SDK comparison is an explicitly named reference convention, not normative simulator economics. No fresh external SDK retrieval is used here: the integer reference formula is the one already embedded in curveParityQa.ts, attributed there to retrieval on 2026-11-03. Mutable historical URLs above cannot establish a pinned protocol specification.
+
+The current simulator contract has stronger internal evidence than implementation alone: buyExhaustionQa independently solves inverse constant product using a 0.99 budget factor; volumeBasisQa independently checks gross BUY cost, net SELL proceeds, holder cost and PnL, and wallet settlement. These tests specify the current model. This does not establish that the original product decision intended fidelity to any particular protocol; a future protocol-fidelity goal would require an explicit economic decision.
+
+With gross budget G and fee rate f=0.01, simulator net reserve input N=G*(1-f). Fee is G*f. The reference instead interprets fee as a surcharge on net input, approximately N=G/(1+f), then applies integer rounding and a one-lamport subtraction. At 100 bps, 0.99 versus 1/1.01 differs by 1/10100 of gross budget. Both are coherent conventions with different fee bases.
+
+### Four original discrepancies, reproduced unchanged
+
+| Label | Actual | Expected | Tolerance | Verdict |
+|---|---:|---:|---:|---|
+| BUY 100000000 lamports | 2960638.6712926626 | 2960933.801911 | 0.06000200000055094 | CONVENTION |
+| BUY 1000000000 lamports | 28789690.482637286 | 28792481.42806 | 0.06000200000055094 | CONVENTION |
+| trade OHLC new bucket open | 12 | 20 | 0 | CONVENTION |
+| trade OHLC new bucket low | 12 | 20 | 0 | CONVENTION |
+
+Count: **4 CONVENTION, 0 BUG, 0 STALE_QA, 0 UNKNOWN** among these four comparisons. The legacy QA remains useful as a diagnostic comparison, so its intentional external/trade-only expectations are not silently rewritten. If used as an internal correctness gate, those same expectations would be inappropriate.
+
+OPEN/LOW reuse Slice 2D: prices 10 then 12 in the first bucket, then 20 after a sparse gap, produce OPEN=12 and LOW=12. The previous close participates in the next candle's range. This is only a representative confirmation of the approved convention, not another OHLC audit.
+
+### Independent calculations and quantization
+
+The new QA computes continuous output as min(R, Y*N/(X+N)), and capped net cost as X*T/(Y-T), independently of production quote helpers. The integer reference uses floor((budget-1)*10000/10100), then floors token output in six-decimal units, starting from lamport-quantized reserves. Budget zero is handled explicitly.
+
+| Budget lamports | Simulator continuous tokens | SDK continuous tokens | SDK integer tokens | Fee-basis difference | Quantization difference |
+|---|---:|---:|---:|---:|---:|
+| 0 | 0 | 0 | 0 | 0 | 0 |
+| 1 | 0.02969999999906091 | 0.029702970296090425 | 0 | 0.0000029702970295 | -0.029702970296090425 |
+| 1000 | 29.699999060907164 | 29.702969357749026 | 29.669999 | 0.002970296841862563 | -0.03297035774902568 |
+| 100000000 | 2960638.671292505 | 2960933.8314003972 | 2960933.801911 | 295.16010789200664 | -0.029489397071301937 |
+| 1000000000 | 28789690.48263721 | 28792481.481391672 | 28792481.42806 | 2790.9987544603646 | -0.05333167314529419 |
+
+Fee-basis difference is SDK continuous minus simulator continuous. Quantization difference includes the one-lamport subtraction, intermediate integer division, reserve normalization and token-unit floor, not just final token rounding. Ordinary-budget mismatches exceed the original tolerance by orders of magnitude; rounding does not explain them. Dust parity is deliberately absent: continuous simulation can quote fractional output for one lamport when the reference quotes zero. Production subtracts two reserve-sized floats; the new independent stable formula allows a bound of four machine epsilons times virtual token reserves for cancellation error, separate from SDK comparison differences.
+
+### Quote, execution, exhaustion and accounting evidence
+
+The new QA has 181 passing assertions. Five independent inverse-K fixtures cover normal, exact exhaustion, oversize budget exhaustion, and terminal prices just below/above migration threshold. It checks quote output and required input, quote read-only behavior, actual filled amount, gross charged cost, fee, real and virtual reserve deltas, K, reserve price, migration event, exhausted retries, upfront wallet reservation, unused-budget refund including transaction cost, position quantity/cost, holder gross bought USD/tokens and zero realized BUY PnL. Ordinary 0.1 and 1 SOL trades additionally compare actual execution against the independent gross-fee formula.
+
+Current exhaustion charging uses the inverse curve cost for capped output. Thus the historical exhaustion overcharge finding above is no longer current. BUY increases real and virtual quote by net input and decreases real and virtual tokens by filled output. Gross charge is net input/0.99 and unused gross budget is returned by settlement. K remains constant within floating tolerance. A large unused budget is not a fee or realized loss.
+
+PnL and SELL accounting are checked by existing independent volumeBasisQa: the holderCycle group (162 checks) includes BUY/partial SELL/full SELL accounting, remaining basis, and realized PnL from net proceeds minus allocated gross cost; settlement (10 checks) checks position and wallet PnL. The new QA adds holder BUY cost checks rather than duplicating that full cycle. Mark-to-market PnL can immediately be negative because gross purchase cost includes fees and the displayed price is a marginal reserve price, not average execution price. That difference is not evidence of a fill-accounting defect.
+
+Real SELL reserves currently decrease by net wallet proceeds while virtual reserves decrease by gross exchanged quote, leaving the fee residual in real reserves. volumeBasisQa explicitly characterizes this model; the old report's concern about an untracked fee reserve remains a separate economic-design issue, not demonstrated by either BUY parity mismatch. Defensive insufficient-real-quote rejection is covered by cashCapSellQa. This audit does not certify protocol account mutation semantics.
+
+### Validation and reproducibility
+
+Bundle standalone QA entries with the installed esbuild using `--bundle --platform=node --format=esm --define:import.meta.env.DEV=true`, then run each generated `.mjs` in a fresh Node process. No dependencies or CI gate were added.
+
+| Command / diagnostic | Result |
+|---|---|
+| curveParityQa | 14/18; four preserved FAILs, exit 1 |
+| curveParityAuditQa | 181 assertions PASS, exit 0 |
+| volumeBasisQa | integrity 249/249, candidate 265/265, model 37/37, wallet 16/16, settlement 10/10, holderCycle 162/162, guard 14/14 |
+| buyExhaustionQa | 135 assertions PASS |
+| cashCapSellQa | 2,314,439 invariant checks PASS; forced guard 2/2 |
+| tradeOhlcQa | 335/413; 78 preserved discrepancies, exit 1 |
+| npm run build | PASS; existing bundle-size warning |
+| npm run lint | exit 0; 0 errors, 7 existing UI warnings |
+
+Fixtures use private access for deterministic isolation and do not constitute universal lifecycle or on-chain fidelity proof. The initial five scenarios reproduce the independent exhaustion fixtures used by the existing regression, extending them with holder assertions; the external comparison uses a separate fixed constructor fixture.
+
+### Recommendation and migration cost
+
+No production correction is justified by these four FAILs. Keep the current model for internal simulation development and label the reference comparison as protocol-specific diagnostic parity. First formalize whether fee is a fraction of gross budget or a surcharge on net curve input before requesting any migration.
+
+If SDK fidelity becomes an explicit product requirement, a separate minimal vertical slice should target BUY fee inversion consistently in estimate and execution, capped inverse-cost/refund calculations, and all downstream wallet/holder cost and PnL expectations. Validate dust/rounding policy separately; changing only 0.99 to 1/1.01 would not provide integer parity. That change would buy more tokens for a fixed ordinary budget, reduce gross cost for a fixed capped output, alter reserves, marginal price, migration timing, volume and subsequent PnL. Deterministic trajectories and existing economic fixtures would need versioned expectations. SELL fees and the retained real-reserve fee residual require an explicit accounting decision of their own. None of those economic changes are implemented or authorized by this audit.
