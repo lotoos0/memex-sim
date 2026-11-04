@@ -25,6 +25,7 @@ function pnlClass(pnlPct: number | null | undefined): string {
 type SubHeaderTokenPillProps = {
   tokenId: string;
   name: string;
+  imageUrl?: string | null;
   onClick: () => void;
   remainingQty?: number | null;
   pnlPct?: number | null;
@@ -34,12 +35,13 @@ type SubHeaderTokenPillProps = {
 export default function SubHeaderTokenPill({
   tokenId,
   name,
+  imageUrl,
   onClick,
   remainingQty,
   pnlPct,
   showPositionMetrics = false,
 }: SubHeaderTokenPillProps) {
-  const avatarSrc = getTokenAvatarUrl(tokenId);
+  const avatarSrc = imageUrl || getTokenAvatarUrl(tokenId);
   const remaining = fmtQty(remainingQty);
   const pnl = fmtPct(pnlPct);
   const pnlToneClass = pnlClass(pnlPct);

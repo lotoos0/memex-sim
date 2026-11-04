@@ -79,7 +79,7 @@ const base = 1_800_000_000_000;
 let now = base;
 function create(id: string): TokenSim {
   const meta: TokenMeta = {
-    id, name: 'Late Tick QA', ticker: 'LATE', logoColor: '#ffffff',
+    id, name: 'Late Tick QA', ticker: 'LATE', logoColor: '#ffffff', imageUrl: null,
     supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
     metrics: { topHoldersPct: 10, devHoldingsPct: 2, snipersPct: 1,
       lpBurnedPct: 100, insidersPct: 1, bundlersPct: 1 },

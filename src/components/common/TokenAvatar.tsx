@@ -8,6 +8,7 @@ type PreviewMode = 'none' | 'click' | 'hover';
 interface Props {
   tokenId: string;
   label: string;
+  imageUrl?: string | null;
   size?: number;
   className?: string;
   previewMode?: PreviewMode;
@@ -16,6 +17,7 @@ interface Props {
 export default function TokenAvatar({
   tokenId,
   label,
+  imageUrl,
   size = 28,
   className = '',
   previewMode = 'none',
@@ -23,7 +25,10 @@ export default function TokenAvatar({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [openPreview, setOpenPreview] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<{ x: number; y: number } | null>(null);
-  const src = useMemo(() => getTokenAvatarUrl(tokenId), [tokenId]);
+  const src = useMemo(
+    () => (imageUrl ? imageUrl : getTokenAvatarUrl(tokenId)),
+    [imageUrl, tokenId],
+  );
 
   useEffect(() => {
     if (!hoverPreview) return;

@@ -28,7 +28,7 @@ export function runCurveParityQa(): void {
     Date.now = () => 1_800_000_000_000;
     const meta: TokenMeta = {
       id: 'curve-parity-fixed', name: 'Curve Parity', ticker: 'PARITY',
-      logoColor: '#ffffff', supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
+      logoColor: '#ffffff', imageUrl: null, supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
       metrics: { topHoldersPct: 10, devHoldingsPct: 2, snipersPct: 1,
         lpBurnedPct: 100, insidersPct: 1, bundlersPct: 1 },
     };

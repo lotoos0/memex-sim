@@ -26,7 +26,7 @@ try {
   for (const scenario of ['normal', 'exact', 'exhaustion', 'below-migration', 'above-migration'] as const) {
     const meta: TokenMeta = {
       id: `exhaustion-${scenario}`, name: 'Exhaustion QA', ticker: 'QA',
-      logoColor: '#ffffff', supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
+      logoColor: '#ffffff', imageUrl: null, supply: SUPPLY, createdAtSimMs: 0, fate: 'NORMAL',
       metrics: { topHoldersPct: 10, devHoldingsPct: 2, snipersPct: 1,
         lpBurnedPct: 100, insidersPct: 1, bundlersPct: 1 },
     };

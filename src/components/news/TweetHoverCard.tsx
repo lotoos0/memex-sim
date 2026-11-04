@@ -8,6 +8,7 @@ import { getTokenAvatarUrl } from '../../lib/tokenAvatar';
 interface Props {
   tokenId: string;
   ticker: string;
+  imageUrl?: string | null;
   news: TokenPost;
   simNowMs: number;
   trigger: ReactNode;
@@ -21,7 +22,7 @@ function fmtAgo(nowMs: number, ms: number): string {
   return `${Math.round(d / 86_400_000)}d`;
 }
 
-export default function TweetHoverCard({ tokenId, ticker, news, simNowMs, trigger }: Props) {
+export default function TweetHoverCard({ tokenId, ticker, imageUrl, news, simNowMs, trigger }: Props) {
   const triggerRef = useRef<HTMLSpanElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
@@ -135,7 +136,7 @@ export default function TweetHoverCard({ tokenId, ticker, news, simNowMs, trigge
               {showImage && (
                 <div className="px-3 pb-2">
                   <img
-                    src={getTokenAvatarUrl(`${tokenId}:news-image`)}
+                    src={imageUrl || getTokenAvatarUrl(tokenId)}
                     alt={`${ticker} news`}
                     className="h-[150px] w-full rounded-xl border border-ax-border object-cover"
                     draggable={false}

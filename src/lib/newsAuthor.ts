@@ -1,4 +1,4 @@
-import { getTokenAvatarUrl } from './tokenAvatar';
+import { getAuthorAvatarUrl } from './tokenImagePool';
 
 export interface NewsAuthorProfile {
   name: string;
@@ -33,7 +33,7 @@ export function getNewsAuthorProfile(tokenId: string, ticker: string, overrideAu
       handle: 'you',
       followers: '0',
       joinedLabel: 'Joined now',
-      avatarUrl: getTokenAvatarUrl('user:you'),
+      avatarUrl: getAuthorAvatarUrl('user:you'),
     };
   }
 
@@ -50,7 +50,7 @@ export function getNewsAuthorProfile(tokenId: string, ticker: string, overrideAu
     handle: `${ticker.toLowerCase()}${num}`,
     followers: compactFollowers(followers),
     joinedLabel: `Joined ${monthIdx.toString().padStart(2, '0')}/${year}`,
-    avatarUrl: getTokenAvatarUrl(`${tokenId}:news-author`),
+    avatarUrl: getAuthorAvatarUrl(`news:${tokenId}:${ticker}`),
   };
 }
 

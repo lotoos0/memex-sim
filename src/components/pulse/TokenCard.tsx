@@ -166,6 +166,7 @@ export default function TokenCard({
         <div className="flex items-center gap-2">
           <TokenAvatar
             tokenId={token.id}
+            imageUrl={token.imageUrl}
             label={`${token.ticker} avatar`}
             size={22}
             className="h-[22px] w-[22px]"
@@ -270,6 +271,7 @@ export default function TokenCard({
       <div className="flex items-center gap-2">
         <TokenAvatar
           tokenId={token.id}
+          imageUrl={token.imageUrl}
           label={`${token.ticker} avatar`}
           size={30}
           className="h-[30px] w-[30px]"
@@ -386,6 +388,7 @@ export default function TokenCard({
           <TweetHoverCard
             tokenId={token.id}
             ticker={token.ticker}
+            imageUrl={token.imageUrl}
             news={latestNews}
             simNowMs={token.simTimeMs}
             trigger={(

@@ -59,7 +59,7 @@ The registry's replenishment logic uses [isNewPairsToken](../src/tokens/tokenBuc
 
 ## Contracts, constants and lifecycle
 
-The frozen contracts are [tokens/types.ts](../src/tokens/types.ts) and [engine/types.ts](../src/engine/types.ts). Read them directly rather than copying the historical plan's interfaces. TokenMeta includes `logoColor` and `supply`; TokenRuntime includes simulation time and rug timing. The engine Tick shape is `{ t, p, v }`, not the archived provider example.
+The frozen contracts are [tokens/types.ts](../src/tokens/types.ts) and [engine/types.ts](../src/engine/types.ts). Read them directly rather than copying the historical plan's interfaces. TokenMeta includes `logoColor`, `imageUrl` (themed launch image path or null), and `supply`; TokenRuntime includes simulation time and rug timing. The engine Tick shape is `{ t, p, v }`, not the archived provider example.
 
 | Value | Current source/meaning |
 | --- | --- |
