@@ -2,8 +2,9 @@ import { RNG } from '../engine/rng';
 import { CandleAggregator } from '../engine/aggregator';
 import type { TokenMeta, TokenRuntime, TokenPhase } from './types';
 import {
-  SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SIM_TIME_MULTIPLIER, SOL_PRICE_USD,
+  SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SOL_PRICE_USD,
 } from './types';
+import { toSimDtMs, wallSecForSimMs } from './simClock';
 import { stepMarket } from './marketModel';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
 import { SESSION_SIM_PROFILE, getSessionBucket, type SessionBucket, type SessionSimProfile } from '../market/session';
@@ -317,7 +318,7 @@ export class TokenSim {
 
   private rng: RNG;
 
-  // Candle aggregators for chart TFs (real-time based)
+  // Candle aggregators. Timestamps are the token simulation clock.
   private aggr1s: CandleAggregator;
   private aggr15s: CandleAggregator;
   private aggr30s: CandleAggregator;
@@ -457,16 +458,21 @@ export class TokenSim {
 
     const nowMs = Date.now();
     const measuredDtSec = (nowMs - this.lastTickRealMs) / 1000;
-    const realDtSec = clamp(
+    const wallDtSec = clamp(
       Number.isFinite(measuredDtSec) && measuredDtSec > 0 ? measuredDtSec : fallbackRealDtSec,
       0.05,
       1.5
     );
     this.lastTickRealMs = nowMs;
 
-    const simDtSec = realDtSec * SIM_TIME_MULTIPLIER;
-    this.simTimeMs += simDtSec * 1000;
-    const queuedEvents = this.processPendingUserTrades(nowMs, publishExecution);
+    // One step for age, rates, cooldowns, candles, and tape.
+    const simDtMs = toSimDtMs(Math.round(wallDtSec * 1000));
+    const simDtSec = simDtMs / 1000;
+    this.simTimeMs += simDtMs;
+    const marketTsMs = this.marketNowMs();
+    // Due-ness uses wall time. The fill itself is stamped on this clock so a
+    // clamped stall cannot pin the tape to a future wall timestamp.
+    const queuedEvents = this.processPendingUserTrades(nowMs, publishExecution, marketTsMs);
     const inDeadMode = this.phase === 'DEAD';
     const inCollapseMode = !inDeadMode && this.ruggedAtSimMs != null;
     const hasUserBuyEvent = queuedEvents.some((ev) => ev.type === 'USER_BUY');
@@ -475,19 +481,19 @@ export class TokenSim {
     }
 
     const flowStrength = this.getFlowStrength();
-    this.advanceMarketRegime(realDtSec, sessionProfile, flowStrength);
+    this.advanceMarketRegime(simDtSec, sessionProfile, flowStrength);
     const phaseModel = this.getPhaseModel();
-    this.attention = Math.max(0.12, this.attention * Math.exp(-phaseModel.attentionDecayPerSec * realDtSec));
+    this.attention = Math.max(0.12, this.attention * Math.exp(-phaseModel.attentionDecayPerSec * simDtSec));
 
     const regimeBehavior = this.getMarketBehavior(flowStrength, sessionProfile);
     const inMigrationFreeze = this.migrationFreezeLeftMs > 0;
     const inMigrationShock = this.migrationShockLeftMs > 0;
 
     if (this.marketRegime === 'FIRST_PUMP' || this.marketRegime === 'MIGRATION_SHOCK') {
-      this.attention = Math.min(2.6, this.attention + 0.026 * realDtSec);
+      this.attention = Math.min(2.6, this.attention + 0.026 * simDtSec);
     }
     if (this.marketRegime === 'BLEED_OUT') {
-      this.attention = Math.max(0.1, this.attention - 0.018 * realDtSec);
+      this.attention = Math.max(0.1, this.attention - 0.018 * simDtSec);
     }
 
     let lambdaMul = phaseModel.lambdaMul * regimeBehavior.lambdaMul;
@@ -496,7 +502,7 @@ export class TokenSim {
     let driftPerSec = regimeBehavior.driftPerSec + this.archetypeProfile.driftBiasPerSec;
     let effectiveBuyBias = clamp(regimeBehavior.buyBias + sessionProfile.buyBiasShift, 0.14, 0.86);
 
-    const cadenceBurstActive = this.advanceCadenceBurst(realDtSec, sessionProfile, flowStrength, regimeBehavior);
+    const cadenceBurstActive = this.advanceCadenceBurst(simDtSec, sessionProfile, flowStrength, regimeBehavior);
     if (cadenceBurstActive) {
       const cadenceHeat = clamp(
         0.9 + Math.max(0, flowStrength) * 0.55 + Math.max(0, this.attention - 1) * 0.18,
@@ -526,17 +532,17 @@ export class TokenSim {
         volMul *= 1 + regimeBehavior.postMigrationPlateauPenalty * contestedBias * 0.55;
         lambdaMul *= 1 + regimeBehavior.postMigrationPlateauPenalty * contestedBias * 0.18;
 
-        if (this.rng.next() < regimeBehavior.postMigrationRetestChance * realDtSec) {
+        if (this.rng.next() < regimeBehavior.postMigrationRetestChance * simDtSec) {
           driftPerSec -= 0.018 + contestedBias * 0.016;
           effectiveBuyBias = clamp(effectiveBuyBias - 0.06, 0.2, 0.74);
           volMul *= 1.12;
         }
-        if (overMigration > 0.08 && this.rng.next() < regimeBehavior.postMigrationRejectionChance * realDtSec) {
+        if (overMigration > 0.08 && this.rng.next() < regimeBehavior.postMigrationRejectionChance * simDtSec) {
           driftPerSec -= 0.028 + contestedBias * 0.02;
           effectiveBuyBias = clamp(effectiveBuyBias - 0.09, 0.18, 0.72);
           volMul *= 1.18;
         }
-        if (overMigration > 0.12 && this.rng.next() < regimeBehavior.postMigrationMeanReversionChance * realDtSec) {
+        if (overMigration > 0.12 && this.rng.next() < regimeBehavior.postMigrationMeanReversionChance * simDtSec) {
           driftPerSec -= regimeBehavior.postMigrationOverextensionPenalty * (0.04 + contestedBias * 0.02);
           effectiveBuyBias = clamp(
             effectiveBuyBias - regimeBehavior.postMigrationOverextensionPenalty * 0.12,
@@ -555,21 +561,21 @@ export class TokenSim {
         lambdaMul *= 1 + regimeBehavior.postMigrationBleedNoise * 0.08;
         volMul *= 1 + regimeBehavior.postMigrationBleedNoise * 0.16;
 
-        if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedRetestChance * realDtSec) {
+        if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedRetestChance * simDtSec) {
           this.queueMicroburst('BUY', this.baseTradeSizeUsd * (1.1 + this.rng.next() * 1.45));
           driftPerSec += 0.006 + reclaimBias * 0.008;
           effectiveBuyBias = clamp(effectiveBuyBias + 0.055, 0.16, 0.72);
           lambdaMul *= 1.06;
         }
 
-        if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedBounceChance * realDtSec) {
+        if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedBounceChance * simDtSec) {
           this.queueMicroburst('BUY', this.baseTradeSizeUsd * (0.7 + this.rng.next() * 1.0));
           driftPerSec += 0.004 + reclaimBias * 0.003;
           volMul *= 1.05;
           effectiveBuyBias = clamp(effectiveBuyBias + 0.03, 0.15, 0.7);
         }
 
-        if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedRejectionChance * realDtSec) {
+        if (!this.microburst && this.rng.next() < regimeBehavior.postMigrationBleedRejectionChance * simDtSec) {
           this.queueMicroburst('SELL', this.baseTradeSizeUsd * (1.35 + this.rng.next() * 1.65));
           driftPerSec -= 0.018 + belowMigration * 0.012;
           effectiveBuyBias = clamp(effectiveBuyBias - 0.085, 0.12, 0.66);
@@ -579,7 +585,7 @@ export class TokenSim {
         if (
           !this.microburst
           && belowMigration > 0.06
-          && this.rng.next() < (0.1 + reclaimBias * 0.16) * realDtSec
+          && this.rng.next() < (0.1 + reclaimBias * 0.16) * simDtSec
         ) {
           this.queueMicroburst('BUY', this.baseTradeSizeUsd * (0.55 + this.rng.next() * 0.65));
           driftPerSec += 0.003 + reclaimBias * 0.004;
@@ -603,7 +609,7 @@ export class TokenSim {
       effectiveBuyBias = clamp(effectiveBuyBias - 0.34, 0.05, 0.28);
 
       if (this.deadUserReboundMs > 0) {
-        this.deadUserReboundMs = Math.max(0, this.deadUserReboundMs - realDtSec * 1000);
+        this.deadUserReboundMs = Math.max(0, this.deadUserReboundMs - simDtSec * 1000);
         lambdaMul *= 1.65;
         volMul *= 1.25;
         driftPerSec += 0.01;
@@ -627,7 +633,7 @@ export class TokenSim {
       }
 
       if (this.deadUserReboundMs > 0) {
-        this.deadUserReboundMs = Math.max(0, this.deadUserReboundMs - realDtSec * 1000);
+        this.deadUserReboundMs = Math.max(0, this.deadUserReboundMs - simDtSec * 1000);
         lambdaMul *= 1.9;
         volMul *= 1.35;
         driftPerSec += 0.012;
@@ -649,7 +655,7 @@ export class TokenSim {
 
     if (this.phase !== 'MIGRATED' && this.phase !== 'DEAD') {
       const progressToMigration = this.getCurveProgress();
-      const migrationReady = this.isMigrationRuntimeReady(nowMs);
+      const migrationReady = this.isMigrationRuntimeReady(marketTsMs);
       if (progressToMigration >= MIGRATION_APPROACH_FRICTION_START_PCT) {
         const frictionProgress = clamp(
           (progressToMigration - MIGRATION_APPROACH_FRICTION_START_PCT)
@@ -706,7 +712,7 @@ export class TokenSim {
     );
 
     const liquidityUsd = this.baseLiquidityUsd * liquidityMul;
-    const recentTradeStats = this.getRecentTradeStatsReal(18_000, nowMs);
+    const recentTradeStats = this.getRecentTradeStats(18_000, marketTsMs);
     const isNearFloor = this.lastMcapUsd <= MCAP_FLOOR_USD * 3.5;
     const isLowLiquidity = liquidityUsd <= 9_500;
     const isLowActivity = recentTradeStats.tx <= 3;
@@ -718,7 +724,7 @@ export class TokenSim {
       || this.getDynamicQualityScore(flowStrength) < 0.42;
     const lowEndSuppressionContext = isNearFloor && isLowLiquidity && isLowActivity && isWeakOrDeadState;
     if (lowEndSuppressionContext && this.deadUserReboundMs <= 0) {
-      this.lowEndImpulseCooldownMs = Math.max(0, this.lowEndImpulseCooldownMs - realDtSec * 1000);
+      this.lowEndImpulseCooldownMs = Math.max(0, this.lowEndImpulseCooldownMs - simDtSec * 1000);
       const suppressionStrength = clamp(
         ((MCAP_FLOOR_USD * 3.5 - this.lastMcapUsd) / Math.max(1, MCAP_FLOOR_USD * 2.5)) * 0.5
         + (1 - clamp(liquidityUsd / 9_500, 0, 1)) * 0.3
@@ -735,13 +741,13 @@ export class TokenSim {
         volMul *= 0.45;
       }
     } else {
-      this.lowEndImpulseCooldownMs = Math.max(0, this.lowEndImpulseCooldownMs - realDtSec * 1000);
+      this.lowEndImpulseCooldownMs = Math.max(0, this.lowEndImpulseCooldownMs - simDtSec * 1000);
     }
-    const candleTsMs = nowMs;
+    const candleTsMs = marketTsMs;
     const isLaunchTick = !this.emittedInitialDevBuy;
     const devFlow = this.buildDevFlow(
       candleTsMs,
-      realDtSec,
+      simDtSec,
       effectiveBuyBias,
       isLaunchTick,
       !inMigrationFreeze && !inDeadMode && !inCollapseMode,
@@ -763,7 +769,7 @@ export class TokenSim {
       suppressLowEndHeartbeat: lowEndSuppressionContext && this.deadUserReboundMs <= 0,
     });
     const prevPriceUsd = this.lastPriceUsd;
-    const burstDirectionalUsd = this.consumeMicroburstDirectionalUsd(realDtSec);
+    const burstDirectionalUsd = this.consumeMicroburstDirectionalUsd(simDtSec);
 
     // Minimal warm-up only for launch tick (avoid scripted behavior).
     if (isLaunchTick) {
@@ -774,7 +780,7 @@ export class TokenSim {
     }
 
     const market = stepMarket(this.rng, {
-      dtSec: realDtSec,
+      dtSec: simDtSec,
       priceUsd: prevPriceUsd,
       liquidityUsd,
       attention: this.attention,
@@ -845,13 +851,13 @@ export class TokenSim {
       expectedNextPriceUsd,
       previousPriceUsd: prevPriceUsd,
       regimeBehavior,
-      realDtSec,
+      simDtSec,
       liquidityUsd,
     });
 
     this.executeMarketFlowAsTape({
       candleTsMs,
-      realDtSec,
+      simDtSec,
       targetBuyUsd: guardedFlow.targetBuyUsd,
       targetSellUsd: guardedFlow.targetSellUsd,
       expectedNextPriceUsd: guardedFlow.expectedNextPriceUsd,
@@ -859,7 +865,7 @@ export class TokenSim {
       buyMix: actorOverlay.buyMix,
       sellMix: actorOverlay.sellMix,
     });
-    this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - realDtSec * 1000);
+    this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - simDtSec * 1000);
 
     const events: TokenChartEvent[] = [...queuedEvents, ...this.botMigrationEvents.splice(0)];
     if (devFlow?.eventType) {
@@ -880,7 +886,7 @@ export class TokenSim {
 
   private executeMarketFlowAsTape(input: {
     candleTsMs: number;
-    realDtSec: number;
+    simDtSec: number;
     targetBuyUsd: number;
     targetSellUsd: number;
     expectedNextPriceUsd: number;
@@ -925,7 +931,7 @@ export class TokenSim {
       sidePlan[j] = tmp;
     }
 
-    const windowMs = Math.max(80, Math.round(input.realDtSec * 1000));
+    const windowMs = Math.max(80, Math.round(input.simDtSec * 1000));
     const startMs = input.candleTsMs - windowMs + 1;
     let buyIdx = 0;
     let sellIdx = 0;
@@ -983,7 +989,7 @@ export class TokenSim {
     expectedNextPriceUsd: number;
     previousPriceUsd: number;
     regimeBehavior: TokenMarketBehavior;
-    realDtSec: number;
+    simDtSec: number;
     liquidityUsd: number;
   }): {
     targetBuyUsd: number;
@@ -993,8 +999,8 @@ export class TokenSim {
     const previousPriceUsd = Math.max(1e-12, input.previousPriceUsd);
     const expectedNextPriceUsd = Math.max(1e-12, input.expectedNextPriceUsd);
     const desiredMovePct = (expectedNextPriceUsd - previousPriceUsd) / previousPriceUsd;
-    const maxBodyMovePct = input.regimeBehavior.maxBodyMovePct * clamp(input.realDtSec, 0.18, 1);
-    const impactBudgetPct = this.getImpactBudgetPct(input.regimeBehavior, input.liquidityUsd, input.realDtSec);
+    const maxBodyMovePct = input.regimeBehavior.maxBodyMovePct * clamp(input.simDtSec, 0.18, 1);
+    const impactBudgetPct = this.getImpactBudgetPct(input.regimeBehavior, input.liquidityUsd, input.simDtSec);
     const allowedMoveAbsPct = Math.min(maxBodyMovePct, impactBudgetPct);
     if (!Number.isFinite(desiredMovePct) || Math.abs(desiredMovePct) <= allowedMoveAbsPct) {
       return {
@@ -1038,9 +1044,9 @@ export class TokenSim {
   private getImpactBudgetPct(
     regimeBehavior: TokenMarketBehavior,
     liquidityUsd: number,
-    realDtSec: number
+    simDtSec: number
   ): number {
-    const secScale = clamp(realDtSec, 0.18, 1);
+    const secScale = clamp(simDtSec, 0.18, 1);
     const liq = Math.max(1, liquidityUsd);
     let liquidityModifier: number;
     if (liq <= IMPACT_SATURATION_FLOOR_USD) {
@@ -1098,10 +1104,10 @@ export class TokenSim {
     };
   }
 
-  private consumeMicroburstDirectionalUsd(realDtSec: number): number {
+  private consumeMicroburstDirectionalUsd(simDtSec: number): number {
     if (!this.microburst || this.microburst.stepsUsd.length === 0) return 0;
 
-    this.microburst.cooldownMs -= realDtSec * 1000;
+    this.microburst.cooldownMs -= simDtSec * 1000;
     if (this.microburst.cooldownMs > 0) return 0;
 
     let directionalUsd = 0;
@@ -1198,12 +1204,12 @@ export class TokenSim {
   }
 
   private advanceCadenceBurst(
-    realDtSec: number,
+    simDtSec: number,
     sessionProfile: SessionSimProfile,
     flowStrength: number,
     regimeBehavior: TokenMarketBehavior
   ): boolean {
-    this.cadenceBurstLeftMs = Math.max(0, this.cadenceBurstLeftMs - realDtSec * 1000);
+    this.cadenceBurstLeftMs = Math.max(0, this.cadenceBurstLeftMs - simDtSec * 1000);
     if (this.cadenceBurstLeftMs > 0) return true;
     if (this.phase === 'DEAD' || this.migrationFreezeLeftMs > 0) return false;
 
@@ -1211,7 +1217,7 @@ export class TokenSim {
       regimeBehavior.cadenceBurstChance
       * clamp(sessionProfile.tempoMul, 0.75, 1.5)
       * clamp(0.8 + Math.max(0, flowStrength) * 0.75 + Math.max(0, this.attention - 1) * 0.22, 0.75, 1.7)
-      * realDtSec;
+      * simDtSec;
     if (this.rng.next() >= triggerChance) return false;
 
     const minMs = regimeBehavior.cadenceBurstDurationMinSec * 1000;
@@ -1523,12 +1529,12 @@ export class TokenSim {
   }
 
   private advanceMarketRegime(
-    realDtSec: number,
+    simDtSec: number,
     sessionProfile: SessionSimProfile,
     flowStrength: number
   ): void {
     if (this.migrationShockLeftMs > 0) {
-      this.migrationShockLeftMs = Math.max(0, this.migrationShockLeftMs - realDtSec * 1000);
+      this.migrationShockLeftMs = Math.max(0, this.migrationShockLeftMs - simDtSec * 1000);
       this.marketRegime = 'MIGRATION_SHOCK';
       if (this.migrationShockLeftMs <= 0 && this.migrationPostShockRegime) {
         this.marketRegime = this.migrationPostShockRegime;
@@ -1547,7 +1553,7 @@ export class TokenSim {
       this.marketRegime = this.deadUserReboundMs > 0 ? 'DEAD_BOUNCE' : 'BLEED_OUT';
     }
 
-    this.marketRegimeTtlSec -= realDtSec;
+    this.marketRegimeTtlSec -= simDtSec;
     if (this.marketRegimeTtlSec > 0) return;
     this.rollMarketRegime(sessionProfile, flowStrength);
   }
@@ -1651,7 +1657,7 @@ export class TokenSim {
 
   private buildDevFlow(
     candleTsMs: number,
-    realDtSec: number,
+    simDtSec: number,
     buyBias: number,
     isLaunchTick: boolean,
     allowSignals: boolean,
@@ -1691,7 +1697,7 @@ export class TokenSim {
     if (isLaunchTick || !allowSignals) return null;
 
     if (candleTsMs - this.lastDevEventRealMs < 2500) return null;
-    if (this.rng.next() >= this.getDevSignalChancePerSec() * devSignalMul * realDtSec) return null;
+    if (this.rng.next() >= this.getDevSignalChancePerSec() * devSignalMul * simDtSec) return null;
 
     const isBuy = this.rng.next() < buyBias;
     const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6) * DEV_FLOW_SCALE * devPowerMul;
@@ -1882,16 +1888,76 @@ export class TokenSim {
   getSpawnRealMs(): number { return this.spawnRealMs; }
   getLastPriceUsd(): number { return this.lastPriceUsd; }
   getLastMcapUsd(): number { return this.lastMcapUsd; }
-  bootstrapAdvance(targetAgeSimMs: number, sessionBucket: SessionBucket = 'OFF'): void {
+
+  /** Absolute simulation timestamp. Age and this clock advance by the same delta. */
+  private marketNowMs(): number {
+    return this.spawnRealMs + this.simTimeMs;
+  }
+
+  private resetCandleClock(birthMs: number): void {
+    this.aggr1s.reset();
+    this.aggr15s.reset();
+    this.aggr30s.reset();
+    this.aggr1m.reset();
+    this.mcapAggr1s.reset();
+    this.mcapAggr15s.reset();
+    this.mcapAggr30s.reset();
+    this.mcapAggr1m.reset();
+    this.pushCandleTicks(birthMs, 0);
+  }
+
+  bootstrapAdvance(
+    targetAgeSimMs: number,
+    sessionBucket: SessionBucket = 'OFF',
+    stop?: () => boolean,
+  ): void {
     const targetMs = Math.max(0, targetAgeSimMs);
+    // Seek the same clock. Birth is placed so a full run would end at the
+    // current wall instant; alignMarketClockToWall corrects an early stop.
+    const birthMs = Date.now() - targetMs;
+    this.spawnRealMs = birthMs;
+    this.simTimeMs = 0;
+    this.lastTickRealMs = birthMs;
+    this.resetCandleClock(birthMs);
     let guard = 0;
     while (this.simTimeMs + 1 < targetMs && guard < 20_000) {
       const remainingMs = targetMs - this.simTimeMs;
-      const stepRealSec = clamp(remainingMs / (SIM_TIME_MULTIPLIER * 1000), 0.2, 1.2);
-      this.lastTickRealMs = Date.now() - stepRealSec * 1000;
+      const stepRealSec = clamp(wallSecForSimMs(remainingMs), 0.2, 1.2);
+      this.lastTickRealMs = Date.now() - Math.round(stepRealSec * 1000);
       this.tick(stepRealSec, sessionBucket);
       guard += 1;
+      if (stop?.()) break;
     }
+    this.alignMarketClockToWall();
+  }
+
+  /**
+   * Move birth, tape, and the candle series so the head of this clock matches
+   * wall now. Candles are shifted in place: the tape only keeps the latest
+   * 2,000 trades, so rebuilding from it would drop earlier history.
+   */
+  private alignMarketClockToWall(): void {
+    const deltaMs = Date.now() - this.marketNowMs();
+    const shiftMs = Math.round(deltaMs / 1000) * 1000;
+    if (shiftMs === 0) return;
+    this.spawnRealMs += shiftMs;
+    if (this.lastDevEventRealMs > 0) this.lastDevEventRealMs += shiftMs;
+    for (let i = 0; i < this.tape.length; i++) this.tape[i]!.tMs += shiftMs;
+    for (const profile of this.walletProfiles.values()) {
+      profile.firstSeenMs += shiftMs;
+      profile.lastActiveMs += shiftMs;
+    }
+    for (const [walletId, seenMs] of this.walletLastActiveMs) {
+      this.walletLastActiveMs.set(walletId, seenMs + shiftMs);
+    }
+    this.aggr1s.shift(shiftMs);
+    this.aggr15s.shift(shiftMs);
+    this.aggr30s.shift(shiftMs);
+    this.aggr1m.shift(shiftMs);
+    this.mcapAggr1s.shift(shiftMs);
+    this.mcapAggr15s.shift(shiftMs);
+    this.mcapAggr30s.shift(shiftMs);
+    this.mcapAggr1m.shift(shiftMs);
   }
   getCurveDebugSnapshot(): CurveDebugSnapshot {
     const k = this.curveVirtualBase * this.curveVirtualToken;
@@ -2035,7 +2101,8 @@ export class TokenSim {
   }
 
   private processPendingUserTrades(nowMs: number,
-    publishExecution?: (execution: UserTradeExecutionNotice) => void): TokenChartEvent[] {
+    publishExecution?: (execution: UserTradeExecutionNotice) => void,
+    stampMs: number = nowMs): TokenChartEvent[] {
     const publish = (notice: UserTradeExecutionNotice): void => {
       if (publishExecution) publishExecution(notice);
       else this.userTradeExecutions.push(notice);
@@ -2061,7 +2128,9 @@ export class TokenSim {
     const outEvents: TokenChartEvent[] = [];
     for (let i = 0; i < due.length; i++) {
       const order = due[i]!;
-      const execTsMs = Math.max(order.execMs, nowMs);
+      // `nowMs` decides which orders are due. `stampMs` is the simulation
+      // clock, used even when a clamped stall has left it behind the wall.
+      const execTsMs = stampMs;
       const actualQuote = this.quoteUserTrade(order.side, order.amountIn, order.slippageBps);
       if (!actualQuote.ok) {
         publish({
@@ -2456,7 +2525,7 @@ export class TokenSim {
     return this.meta.createdAtSimMs + this.simTimeMs;
   }
 
-  private getRecentTradeStatsReal(windowMs: number, nowMs: number): { tx: number; buys: number; sells: number } {
+  private getRecentTradeStats(windowMs: number, nowMs: number): { tx: number; buys: number; sells: number } {
     const cutoff = nowMs - windowMs;
     let tx = 0;
     let buys = 0;
@@ -2477,7 +2546,7 @@ export class TokenSim {
 
   private isMigrationRuntimeReady(nowMs: number): boolean {
     const ageSec = this.simTimeMs / 1000;
-    const tx60s = this.getRecentTradeStatsReal(60_000, nowMs).tx;
+    const tx60s = this.getRecentTradeStats(60_000, nowMs).tx;
     const holders = this.getEligibleHolderCount();
     return (
       ageSec >= MIN_MIGRATION_AGE_SEC

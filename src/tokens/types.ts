@@ -58,5 +58,14 @@ export const MIGRATION_THRESHOLD_USD = 69_000;
 export const MCAP_FLOOR_USD = 2_000;
 // Keep a high ceiling to avoid visible "flat-top" clamping on chart.
 export const MCAP_CAP_USD = 10_000_000;
-export const SIM_TIME_MULTIPLIER = 60;
+/**
+ * Simulation milliseconds advanced per wall-clock millisecond.
+ * 1 = real time. Every age, gate, market step, candle, and tape delta
+ * uses this scale once, via `src/tokens/simClock.ts`.
+ *
+ * Migration: was 60, and only lifecycle age multiplied by it. Market
+ * steps and tape timestamps used raw wall deltas, so a 90s age gate
+ * elapsed in 1.5s. See docs/architecture.md (Time base).
+ */
+export const SIM_TIME_MULTIPLIER = 1;
 export const SOL_PRICE_USD = 150;

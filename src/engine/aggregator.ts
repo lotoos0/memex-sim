@@ -19,6 +19,19 @@ export class CandleAggregator {
     this.lastAcceptedTimestampMs = null;
   }
 
+  /**
+   * Move an existing series without rebuilding it.
+   * `deltaMs` must be a whole number of seconds so bucket labels stay integers.
+   */
+  shift(deltaMs: number): void {
+    if (!Number.isFinite(deltaMs) || deltaMs === 0) return;
+    const deltaSec = deltaMs / 1000;
+    for (let i = 0; i < this.candles.length; i++) {
+      this.candles[i]!.time += deltaSec;
+    }
+    if (this.lastAcceptedTimestampMs !== null) this.lastAcceptedTimestampMs += deltaMs;
+  }
+
   private pushCandle(c: Candle) {
     this.candles.push(c);
     if (this.candles.length > this.maxLen) {

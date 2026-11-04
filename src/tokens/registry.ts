@@ -9,7 +9,7 @@ import { publishRegistryFeed } from './registryFeedPublisher';
 import { RegistryNarrativeRelay } from './registryNarrative';
 import { RegistryExecutionRelay, type TradeExecutionCallback } from './registryExecutionRelay';
 import { isFinalStretchToken, isMigratedToken, isNewPairsToken } from './tokenBuckets';
-import { SIM_TIME_MULTIPLIER } from './types';
+import { toSimDtMs } from './simClock';
 
 const TICK_MS = 200;
 const FEED_PUBLISH_MS = 1000;
@@ -56,7 +56,7 @@ class TokenRegistry {
 
     this.tickHandle = setInterval(() => {
       const realDtSec = TICK_MS / 1000;
-      this.registrySimTimeMs += realDtSec * SIM_TIME_MULTIPLIER * 1000;
+      this.registrySimTimeMs += toSimDtMs(TICK_MS);
       const sessionBucket = this.resolveMarketSessionBucket(Date.now());
       useTokenStore.getState().setMarketSessionBucket(sessionBucket);
 
@@ -249,21 +249,52 @@ class TokenRegistry {
     for (let attempt = 0; attempt < attempts; attempt++) {
       const ageMs = this.rollBootstrapAge(bucket);
       const fate = this.pickBootstrapFate(this.getBootstrapFates(bucket));
-      const sim = this.buildBootstrappedToken(ageMs, fate);
+      const sim = this.buildBootstrappedToken(ageMs, fate, bucket);
       if (this.matchesBootstrapBucket(bucket, sim)) return sim;
     }
-    return this.buildBootstrappedToken(this.rollBootstrapAge('newPairs'), this.pickBootstrapFate(['SHORT', 'NORMAL']));
+    return this.buildBootstrappedToken(
+      this.rollBootstrapAge('newPairs'),
+      this.pickBootstrapFate(['SHORT', 'NORMAL']),
+      'newPairs',
+    );
   }
 
-  private buildBootstrappedToken(ageMs: number, fate: TokenFate): TokenSim {
-    const createdAtSimMs = Math.max(0, this.registrySimTimeMs - ageMs);
+  private buildBootstrappedToken(ageMs: number, fate: TokenFate, bucket: BootstrapBucket): TokenSim {
+    const createdAtSimMs = this.registrySimTimeMs;
     const meta = generateToken(this.rng, createdAtSimMs, fate);
     const startMcap = getStartingMcapUsd(meta.fate, this.rng);
     const fateMsMs = getFateTimeoutSimMs(meta.fate, this.rng);
     const sim = new TokenSim(meta, startMcap, fateMsMs);
     const sessionBucket = this.resolveMarketSessionBucket(Date.now());
-    sim.bootstrapAdvance(ageMs, sessionBucket);
+    const minAge = this.bootstrapMinAge(bucket);
+    sim.bootstrapAdvance(ageMs, sessionBucket, () => {
+      if (this.bootstrapImpossible(bucket, sim)) return true;
+      const age = sim.getSimTimeMs() - sim.meta.createdAtSimMs;
+      return age >= minAge && this.matchesBootstrapBucket(bucket, sim);
+    });
+    const age = sim.getSimTimeMs() - sim.meta.createdAtSimMs;
+    sim.meta.createdAtSimMs = Math.max(0, this.registrySimTimeMs - age);
     return sim;
+  }
+
+  private bootstrapMinAge(bucket: BootstrapBucket): number {
+    switch (bucket) {
+      case 'newPairs':
+        return FRESH_BOOTSTRAP_AGE_RANGE_MS[0];
+      case 'finalStretch':
+        return FINAL_BOOTSTRAP_AGE_RANGE_MS[0];
+      case 'migrated':
+        return MIGRATED_BOOTSTRAP_AGE_RANGE_MS[0];
+      case 'weakDead':
+        return WEAK_DEAD_BOOTSTRAP_AGE_RANGE_MS[0];
+    }
+  }
+
+  private bootstrapImpossible(bucket: BootstrapBucket, sim: TokenSim): boolean {
+    const phase = sim.getPhase();
+    if (bucket === 'weakDead') return phase === 'MIGRATED';
+    if (bucket === 'migrated') return phase === 'DEAD' || phase === 'RUGGED';
+    return phase === 'MIGRATED' || phase === 'DEAD' || phase === 'RUGGED';
   }
 
   private registerSim(sim: TokenSim, emitLaunch: boolean): void {

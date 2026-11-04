@@ -110,9 +110,11 @@ SUPPLY = 1_000_000_000
 MIGRATION_THRESHOLD_USD = 69_000
 MCAP_FLOOR_USD = 2_000
 MCAP_CAP_USD = 10_000_000
-SIM_TIME_MULTIPLIER = 60
+SIM_TIME_MULTIPLIER = 1
 SOL_PRICE_USD = 150
 ```
+
+`SIM_TIME_MULTIPLIER` is the only simulation time scale (simulation milliseconds per wall-clock millisecond). It is 1 after the clock migration in [docs/architecture.md](docs/architecture.md): age, gates, market steps, candles, and tape all use that scale once via `src/tokens/simClock.ts`. Do not reintroduce a second clock or apply the constant anywhere else.
 
 `MIGRATION_THRESHOLD_USD` is a frozen legacy/public constant. Do not use it as a runtime trigger or silently reconcile it with the current runtime threshold.
 Runtime and chart migration thresholds must use `getMigrationThresholdUsd()` from `src/tokens/tokenMarketRegimes.ts` unless a migration-contract cleanup is explicitly approved. Any reconciliation requires a documented migration note.
