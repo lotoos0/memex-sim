@@ -88,6 +88,12 @@ export class RegistryExecutionRelay {
     this.subscribers.clear();
   }
 
+  forgetToken(tokenId: string): void {
+    for (const [orderId, order] of this.tradeOrders) {
+      if (order.tokenId === tokenId) this.tradeOrders.delete(orderId);
+    }
+  }
+
   private pruneTradeOrders(): void {
     while (this.tradeOrders.size > MAX_ORDER_SNAPSHOTS) {
       const firstKey = this.tradeOrders.keys().next().value;

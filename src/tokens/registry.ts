@@ -1,26 +1,32 @@
 import { RNG } from '../engine/rng';
 import type { Candle } from '../engine/types';
 import { useTokenStore } from '../store/tokenStore';
+import { useTradingStore } from '../store/tradingStore';
+import { usePostStore } from '../store/postStore';
+import { releaseTokenAvatar } from '../lib/tokenAvatar';
 import { generateToken, getFateTimeoutSimMs, getStartingMcapUsd } from './generator';
+import { pickFreshLaunchFate, rollStillbornLaunch } from './freshLaunch';
 import { TokenSim, type UserTradeOrderStatus, type UserTradeQuote, type UserTradeSide, type UserTradeSubmitRequest, type UserTradeSubmitResult } from './tokenSim';
 import type { TokenFate, TokenPhase, TokenState } from './types';
 import { getSessionBucket } from '../market/session';
+import { expectedLaunches } from '../market/launchRate';
 import { publishRegistryFeed } from './registryFeedPublisher';
 import { RegistryNarrativeRelay } from './registryNarrative';
 import { RegistryExecutionRelay, type TradeExecutionCallback } from './registryExecutionRelay';
 import { isFinalStretchToken, isMigratedToken, isNewPairsToken } from './tokenBuckets';
+import { collectProtectedTokenIds, MAX_REGISTRY_TOKENS, planEvictions, type EvictionCandidate } from './registryEviction';
 import { toSimDtMs } from './simClock';
 
 const TICK_MS = 200;
 const FEED_PUBLISH_MS = 1000;
-const SPAWN_INTERVAL_MIN_MS = 6_000;
-const SPAWN_INTERVAL_MAX_MS = 12_000;
+const EVICT_INTERVAL_SIM_MS = 2_000;
 const TARGET_NEW_PAIRS = 10;
 const TARGET_FINAL_STRETCH = 3;
 const TARGET_MIGRATED = 2;
 const TARGET_DEAD_WEAK = 2;
-const MIN_TOTAL_LIVE = 12;
 const INITIAL_REGISTRY_SIM_TIME_MS = 2 * 60 * 60_000;
+const MIN_STEP_WALL_MS = 50;
+const MAX_STEP_WALL_MS = 1_500;
 const FRESH_BOOTSTRAP_AGE_RANGE_MS: [number, number] = [10_000, 110_000];
 const FINAL_BOOTSTRAP_AGE_RANGE_MS: [number, number] = [8 * 60_000, 22 * 60_000];
 const MIGRATED_BOOTSTRAP_AGE_RANGE_MS: [number, number] = [18 * 60_000, 95 * 60_000];
@@ -30,7 +36,7 @@ export type ChartCallback = (candles: Candle[], lastValue: number) => void;
 
 type BootstrapBucket = 'newPairs' | 'finalStretch' | 'migrated' | 'weakDead';
 
-class TokenRegistry {
+export class TokenRegistry {
   private tokens = new Map<string, TokenSim>();
   private rng = new RNG(Date.now() & 0xffffffff);
   private executions = new RegistryExecutionRelay();
@@ -38,7 +44,6 @@ class TokenRegistry {
 
   private tickHandle: ReturnType<typeof setInterval> | null = null;
   private feedHandle: ReturnType<typeof setInterval> | null = null;
-  private spawnHandle: ReturnType<typeof setTimeout> | null = null;
 
   private chartCb: ChartCallback | null = null;
   private activeTfSec = 1;
@@ -46,73 +51,136 @@ class TokenRegistry {
 
   private phaseByTokenId = new Map<string, TokenPhase>();
   private registrySimTimeMs = INITIAL_REGISTRY_SIM_TIME_MS;
+  private sessionOpen = false;
+  private lastAdvanceRealMs = 0;
+  private evictInSimMs = EVICT_INTERVAL_SIM_MS;
+  private lastAdvanceMs = 0;
+  private spawnedFresh = 0;
 
   start(): void {
     if (this.tickHandle) return;
-
-    this.registrySimTimeMs = INITIAL_REGISTRY_SIM_TIME_MS;
-    this.bootstrapLifecycleBuckets();
-    this.updateMarketSessionBucket();
+    if (!this.sessionOpen) this.openSession();
 
     this.tickHandle = setInterval(() => {
-      const realDtSec = TICK_MS / 1000;
-      this.registrySimTimeMs += toSimDtMs(TICK_MS);
-      const sessionBucket = this.resolveMarketSessionBucket(Date.now());
-      useTokenStore.getState().setMarketSessionBucket(sessionBucket);
-
-      for (const [id, sim] of this.tokens) {
-        const events = sim.tick(realDtSec, sessionBucket,
-          (execution) => this.executions.process(id, sim, [execution]),
-          (event) => useTokenStore.getState().pushTokenEvents(id, [event]));
-        if (events.length > 0) {
-          useTokenStore.getState().pushTokenEvents(id, events.filter((event) => event.type !== 'MIGRATION'));
-        }
-
-        const executions = sim.drainUserTradeExecutions();
-        if (executions.length > 0) {
-          this.executions.process(id, sim, executions);
-        }
-
-        const prevPhase = this.phaseByTokenId.get(id);
-        const nextPhase = sim.getPhase();
-        if (prevPhase && prevPhase !== nextPhase) {
-          this.narrative.processPhaseChange(sim, nextPhase);
-        }
-        this.phaseByTokenId.set(id, nextPhase);
-
-      }
-
-      const activeId = useTokenStore.getState().activeTokenId;
-      if (this.chartCb && activeId) {
-        const sim = this.tokens.get(activeId);
-        if (sim) {
-          if (this.activeMetric === 'mcap') {
-            this.chartCb(sim.getCandles(this.activeTfSec, 'mcap'), sim.getLastMcapUsd());
-          } else {
-            this.chartCb(sim.getCandles(this.activeTfSec, 'price'), sim.getLastPriceUsd());
-          }
-        }
-      }
+      this.advance(TICK_MS);
     }, TICK_MS);
 
     this.feedHandle = setInterval(() => {
       this.updateMarketSessionBucket();
       this.publishFeed();
     }, FEED_PUBLISH_MS);
+  }
 
-    this.scheduleNextSpawn();
+  /** Bootstrap without timers so a headless harness can call `advance`. */
+  beginHeadless(): void {
+    if (this.sessionOpen) return;
+    this.openSession();
   }
 
   stop(): void {
     if (this.tickHandle) clearInterval(this.tickHandle);
     if (this.feedHandle) clearInterval(this.feedHandle);
-    if (this.spawnHandle) clearTimeout(this.spawnHandle);
-    this.tickHandle = this.feedHandle = this.spawnHandle = null;
+    this.tickHandle = this.feedHandle = null;
+    this.sessionOpen = false;
     this.tokens.clear();
     this.executions.clear();
     this.phaseByTokenId.clear();
     this.narrative.clear();
     this.registrySimTimeMs = INITIAL_REGISTRY_SIM_TIME_MS;
+    this.lastAdvanceRealMs = 0;
+    this.evictInSimMs = EVICT_INTERVAL_SIM_MS;
+    this.spawnedFresh = 0;
+  }
+
+  get size(): number {
+    return this.tokens.size;
+  }
+
+  get freshSpawnCount(): number {
+    return this.spawnedFresh;
+  }
+
+  get lastTickCostMs(): number {
+    return this.lastAdvanceMs;
+  }
+
+  forEachToken(fn: (sim: TokenSim) => void): void {
+    for (const sim of this.tokens.values()) fn(sim);
+  }
+
+  hasToken(id: string): boolean {
+    return this.tokens.has(id);
+  }
+
+  /**
+   * One simulation step. Births are a Poisson draw on this step's sim dt
+   * at the UTC-hour launch rate, so 200 ms and 1 s callbacks share a mean.
+   */
+  advance(fallbackWallDtMs: number): void {
+    if (!this.sessionOpen) return;
+    const nowMs = Date.now();
+    const measuredMs = this.lastAdvanceRealMs > 0 ? nowMs - this.lastAdvanceRealMs : fallbackWallDtMs;
+    this.lastAdvanceRealMs = nowMs;
+    const wallDtMs = clampStep(measuredMs > 0 ? measuredMs : fallbackWallDtMs);
+    const simDtMs = toSimDtMs(wallDtMs);
+    this.registrySimTimeMs += simDtMs;
+
+    const sessionBucket = this.resolveMarketSessionBucket(nowMs);
+    useTokenStore.getState().setMarketSessionBucket(sessionBucket);
+    this.spawnPoisson(simDtMs, nowMs);
+
+    const realDtSec = wallDtMs / 1000;
+    const started = performance.now();
+    for (const [id, sim] of this.tokens) {
+      const events = sim.tick(realDtSec, sessionBucket,
+        (execution) => this.executions.process(id, sim, [execution]),
+        (event) => useTokenStore.getState().pushTokenEvents(id, [event]));
+      if (events.length > 0) {
+        useTokenStore.getState().pushTokenEvents(id, events.filter((event) => event.type !== 'MIGRATION'));
+      }
+
+      const executions = sim.drainUserTradeExecutions();
+      if (executions.length > 0) {
+        this.executions.process(id, sim, executions);
+      }
+
+      const prevPhase = this.phaseByTokenId.get(id);
+      const nextPhase = sim.getPhase();
+      if (prevPhase && prevPhase !== nextPhase) {
+        this.narrative.processPhaseChange(sim, nextPhase);
+      }
+      this.phaseByTokenId.set(id, nextPhase);
+    }
+    this.lastAdvanceMs = performance.now() - started;
+
+    const activeId = useTokenStore.getState().activeTokenId;
+    if (this.chartCb && activeId) {
+      const sim = this.tokens.get(activeId);
+      if (sim) {
+        if (this.activeMetric === 'mcap') {
+          this.chartCb(sim.getCandles(this.activeTfSec, 'mcap'), sim.getLastMcapUsd());
+        } else {
+          this.chartCb(sim.getCandles(this.activeTfSec, 'price'), sim.getLastPriceUsd());
+        }
+      }
+    }
+
+    this.evictInSimMs -= simDtMs;
+    // A peak minute can add two births between the regular sweeps. Sweep early
+    // so the hard cap holds on the tick that crosses it.
+    if (this.evictInSimMs <= 0 || this.tokens.size >= MAX_REGISTRY_TOKENS - 16) {
+      this.evictInSimMs = EVICT_INTERVAL_SIM_MS;
+      this.evictDormant();
+    }
+  }
+
+  protected onFreshTokenSpawned(sim: TokenSim, nowMs: number): void {
+    void sim;
+    void nowMs;
+  }
+
+  protected onTokenEvicted(sim: TokenSim): void {
+    void sim;
   }
 
   setChartCallback(cb: ChartCallback | null): void {
@@ -160,6 +228,16 @@ class TokenRegistry {
     return this.executions.subscribe(cb);
   }
 
+  private openSession(): void {
+    this.sessionOpen = true;
+    this.registrySimTimeMs = INITIAL_REGISTRY_SIM_TIME_MS;
+    this.lastAdvanceRealMs = Date.now();
+    this.evictInSimMs = EVICT_INTERVAL_SIM_MS;
+    this.spawnedFresh = 0;
+    this.bootstrapLifecycleBuckets();
+    this.updateMarketSessionBucket();
+  }
+
   private bootstrapLifecycleBuckets(): void {
     for (let i = 0; i < TARGET_NEW_PAIRS; i++) this.spawnBootstrapToken('newPairs');
     for (let i = 0; i < TARGET_FINAL_STRETCH; i++) this.spawnBootstrapToken('finalStretch');
@@ -167,43 +245,71 @@ class TokenRegistry {
     for (let i = 0; i < TARGET_DEAD_WEAK; i++) this.spawnBootstrapToken('weakDead');
   }
 
-  private maybeSpawn(): void {
-    const counts = this.bucketCounts();
-    const liveTotal = counts.visibleTotal;
-    if (counts.newPairs < TARGET_NEW_PAIRS) {
-      this.spawnFreshToken();
-      if (counts.newPairs + 1 < TARGET_NEW_PAIRS) {
-        this.spawnFreshToken();
-      }
-    } else if (liveTotal < MIN_TOTAL_LIVE) {
-      this.spawnFreshToken();
-    }
-    this.scheduleNextSpawn();
+  private spawnPoisson(simDtMs: number, nowMs: number): void {
+    const births = this.rng.poisson(expectedLaunches(nowMs, simDtMs / 1000));
+    for (let i = 0; i < births; i++) this.spawnFreshToken(nowMs);
   }
 
-  private bucketCounts(): { newPairs: number; finalStretch: number; migrated: number; weakDead: number; visibleTotal: number } {
-    let newPairs = 0;
-    let finalStretch = 0;
-    let migrated = 0;
-    let weakDead = 0;
-    const visible = new Set<string>();
+  private evictDormant(): void {
+    const protectedIds = this.protectedTokenIds();
+    const candidates: EvictionCandidate[] = [];
     for (const sim of this.tokens.values()) {
       const token = this.toTokenState(sim);
-      if (isNewPairsToken(token)) {
-        newPairs += 1;
-        visible.add(token.id);
-      }
-      if (isFinalStretchToken(token)) {
-        finalStretch += 1;
-        visible.add(token.id);
-      }
-      if (isMigratedToken(token)) {
-        migrated += 1;
-        visible.add(token.id);
-      }
-      if (token.phase === 'DEAD' || token.phase === 'RUGGED') weakDead += 1;
+      candidates.push({
+        id: token.id,
+        ageMs: sim.getAgeMs(),
+        phase: token.phase,
+        bondingCurvePct: token.bondingCurvePct,
+        dormant: sim.isDormant(),
+        finalStretch: isFinalStretchToken(token),
+      });
     }
-    return { newPairs, finalStretch, migrated, weakDead, visibleTotal: visible.size };
+    const doomed = planEvictions(candidates, protectedIds);
+    for (let i = 0; i < doomed.length; i++) this.evictToken(doomed[i]!);
+  }
+
+  private protectedTokenIds(): Set<string> {
+    const trading = useTradingStore.getState();
+    const positionQtyByTokenId: Record<string, number> = {};
+    const positions = trading.quickPositionsByTokenId;
+    for (const id of Object.keys(positions)) {
+      positionQtyByTokenId[id] = positions[id]?.qty ?? 0;
+    }
+    const openOrderTokenIds: string[] = [];
+    const limits = trading.quickLimitOrdersById;
+    for (const id of Object.keys(limits)) {
+      const order = limits[id];
+      if (order) openOrderTokenIds.push(order.tokenId);
+    }
+    const pending = trading.pendingQuickOrdersById;
+    for (const id of Object.keys(pending)) {
+      const order = pending[id];
+      if (order) openOrderTokenIds.push(order.tokenId);
+    }
+    const simPendingTokenIds: string[] = [];
+    for (const [id, sim] of this.tokens) {
+      if (sim.hasPendingUserTrade()) simPendingTokenIds.push(id);
+    }
+    return collectProtectedTokenIds({
+      activeTokenId: useTokenStore.getState().activeTokenId,
+      positionQtyByTokenId,
+      openOrderTokenIds,
+      simPendingTokenIds,
+    });
+  }
+
+  private evictToken(id: string): void {
+    const sim = this.tokens.get(id);
+    if (!sim) return;
+    if (this.protectedTokenIds().has(id)) return;
+    this.tokens.delete(id);
+    this.phaseByTokenId.delete(id);
+    this.narrative.forgetToken(id);
+    this.executions.forgetToken(id);
+    useTokenStore.getState().removeToken(id);
+    usePostStore.getState().clearTokenPosts(id);
+    releaseTokenAvatar(id);
+    this.onTokenEvicted(sim);
   }
 
   private publishFeed(): void {
@@ -223,20 +329,17 @@ class TokenRegistry {
     return getSessionBucket(nowMs);
   }
 
-  private scheduleNextSpawn(): void {
-    if (this.spawnHandle) clearTimeout(this.spawnHandle);
-    const delayMs = SPAWN_INTERVAL_MIN_MS + this.rng.next() * (SPAWN_INTERVAL_MAX_MS - SPAWN_INTERVAL_MIN_MS);
-    this.spawnHandle = setTimeout(() => this.maybeSpawn(), delayMs);
-  }
-
-  private spawnFreshToken(): void {
+  private spawnFreshToken(nowMs: number): void {
     const createdAtSimMs = this.registrySimTimeMs;
-    const fate = this.pickBootstrapFate(['SHORT', 'NORMAL', 'LONG_RUNNER']);
+    const fate = pickFreshLaunchFate(this.rng);
     const meta = generateToken(this.rng, createdAtSimMs, fate);
     const startMcap = getStartingMcapUsd(meta.fate, this.rng);
     const fateMsMs = getFateTimeoutSimMs(meta.fate, this.rng);
     const sim = new TokenSim(meta, startMcap, fateMsMs);
+    if (rollStillbornLaunch(this.rng)) sim.markStillbornLaunch();
+    this.spawnedFresh += 1;
     this.registerSim(sim, true);
+    this.onFreshTokenSpawned(sim, nowMs);
   }
 
   private spawnBootstrapToken(bucket: BootstrapBucket): void {
@@ -301,6 +404,7 @@ class TokenRegistry {
     this.tokens.set(sim.meta.id, sim);
     this.phaseByTokenId.set(sim.meta.id, sim.getPhase());
     this.narrative.registerToken(sim.meta.id);
+    sim.enableDormantFastPath();
 
     const runtime = sim.getRuntime();
     useTokenStore.getState().addToken(sim.meta, runtime);
@@ -358,6 +462,11 @@ class TokenRegistry {
   private rollRange([min, max]: [number, number]): number {
     return min + this.rng.next() * Math.max(0, max - min);
   }
+}
+
+function clampStep(ms: number): number {
+  if (!Number.isFinite(ms)) return MIN_STEP_WALL_MS;
+  return Math.max(MIN_STEP_WALL_MS, Math.min(MAX_STEP_WALL_MS, ms));
 }
 
 export const registry = new TokenRegistry();

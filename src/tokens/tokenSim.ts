@@ -480,6 +480,13 @@ export class TokenSim {
   private statWindow: StatBucket[] = [];
   private readonly WINDOW_SIM_MS = 5 * 60_000;
   private sessionBucket: SessionBucket = 'OFF';
+  // Off during bootstrap, which has to keep printing until the column matches.
+  private dormantFastPath = false;
+  private cheapStepped = false;
+  private lifetimeTrades = 0;
+  private tradesAfter5Min = 0;
+  private marketPublishKey = '';
+  private stillbornLaunch = false;
 
   constructor(meta: TokenMeta, startMcapUsd: number, fateTimeoutSimMs: number) {
     this.meta = meta;
@@ -558,6 +565,16 @@ export class TokenSim {
     // One step for age, rates, cooldowns, candles, and tape.
     const simDtMs = toSimDtMs(Math.round(wallDtSec * 1000));
     const simDtSec = simDtMs / 1000;
+    this.cheapStepped = false;
+    // A silenced coin has no tape work. Skip the market step so a few thousand
+    // births an hour do not each run the full actor/curve path.
+    if (this.canCheapStep(simDtMs)) {
+      this.simTimeMs += simDtMs;
+      const decay = this.getPhaseModel().attentionDecayPerSec;
+      this.attention = Math.max(0.12, this.attention * Math.exp(-decay * simDtSec));
+      this.cheapStepped = true;
+      return [];
+    }
     this.simTimeMs += simDtMs;
     const marketTsMs = this.marketNowMs();
     // Due-ness uses wall time. The fill itself is stamped on this clock so a
@@ -1033,6 +1050,29 @@ export class TokenSim {
 
   private isFlowSilent(): boolean {
     return this.simTimeMs >= this.flowSilentAfterSimMs && !this.rugDumpActive() && this.deadUserReboundMs <= 0;
+  }
+
+  /**
+   * Safe to advance the clock without stepMarket. Pending user trades, a rug
+   * dump, finish-stretch, and the fate-timeout crossing stay on the full path
+   * so fills and migration still happen.
+   */
+  private canCheapStep(simDtMs: number): boolean {
+    if (!this.dormantFastPath) return false;
+    // The launch tick has to land the dev buy before a stillborn coin goes cheap.
+    if (!this.emittedInitialDevBuy) return false;
+    if (this.pendingUserOrders.length > 0) return false;
+    if (!this.isFlowSilent()) return false;
+    if (this.rugDumpActive()) return false;
+    if (this.finishStretchActive()) return false;
+    if (this.curveCompleted && !this.hasMigrated) return false;
+    if (this.migrationFreezeLeftMs > 0 || this.migrationShockLeftMs > 0) return false;
+    if (this.microburst != null) return false;
+    if (this.deadUserReboundMs > 0) return false;
+    if (this.phase !== 'MIGRATED' && this.phase !== 'DEAD' && this.simTimeMs + simDtMs >= this.fateTimeoutSimMs) {
+      return false;
+    }
+    return true;
   }
 
   private rugDumpActive(): boolean {
@@ -2036,9 +2076,69 @@ export class TokenSim {
 
   getPhase(): TokenPhase { return this.phase; }
   getSimTimeMs(): number { return this.getPublishedSimTimeMs(); }
+  getAgeMs(): number { return Math.max(0, this.simTimeMs); }
   getSpawnRealMs(): number { return this.spawnRealMs; }
   getLastPriceUsd(): number { return this.lastPriceUsd; }
   getLastMcapUsd(): number { return this.lastMcapUsd; }
+  hasPendingUserTrade(): boolean { return this.pendingUserOrders.length > 0; }
+  wasCheapStep(): boolean { return this.cheapStepped; }
+
+  /** Registry turns this on after bootstrap. Bootstrap itself must keep the full step. */
+  enableDormantFastPath(): void {
+    this.dormantFastPath = true;
+  }
+
+  /**
+   * Crowd arrivals never start. The launch tick still places the dev buy.
+   * Does not change the silence draw used by coins that are allowed to trade.
+   */
+  markStillbornLaunch(): void {
+    this.stillbornLaunch = true;
+    this.flowSilentAfterSimMs = 0;
+  }
+
+  isDormant(): boolean {
+    return this.canCheapStep(0);
+  }
+
+  getLaunchAudit(): {
+    tradeCount: number;
+    tradesAfter5Min: number;
+    phase: TokenPhase;
+    mcapUsd: number;
+    ageMs: number;
+    fate: TokenFate;
+    stillborn: boolean;
+  } {
+    return {
+      tradeCount: this.lifetimeTrades,
+      tradesAfter5Min: this.tradesAfter5Min,
+      phase: this.phase,
+      mcapUsd: this.lastMcapUsd,
+      ageMs: this.getAgeMs(),
+      fate: this.meta.fate,
+      stillborn: this.stillbornLaunch,
+    };
+  }
+
+  /** True when phase, tape, or mcap changed since the previous feed publish. */
+  takeMarketDirty(): boolean {
+    const key = `${this.phase}|${this.lifetimeTrades}|${this.bondingProgress.toFixed(3)}|${Math.round(this.lastMcapUsd)}`;
+    if (key === this.marketPublishKey) return false;
+    this.marketPublishKey = key;
+    return true;
+  }
+
+  private nextTradeFlowExpiryMs = 0;
+
+  armTradeFlowExpiry(nextExpiryMs: number): void {
+    this.nextTradeFlowExpiryMs = nextExpiryMs;
+  }
+
+  /** True once `nowMs` is past the last instant the current 60s flow count is valid. */
+  tradeFlowDue(nowMs: number): boolean {
+    return nowMs > this.nextTradeFlowExpiryMs;
+  }
 
   /** Absolute simulation timestamp. Age and this clock advance by the same delta. */
   private marketNowMs(): number {
@@ -3030,6 +3130,8 @@ export class TokenSim {
       candleTsMs
     );
 
+    this.lifetimeTrades += 1;
+    if (this.simTimeMs >= 5 * 60_000) this.tradesAfter5Min += 1;
     this.tape.push({
       id: `T${candleTsMs.toString(36)}${Math.floor(this.rng.next() * 1e7).toString(36)}`,
       tMs: candleTsMs,
