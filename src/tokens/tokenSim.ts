@@ -1,6 +1,6 @@
 import { RNG } from '../engine/rng';
 import { CandleAggregator } from '../engine/aggregator';
-import type { TokenMeta, TokenRuntime, TokenPhase } from './types';
+import type { TokenFate, TokenMeta, TokenRuntime, TokenPhase } from './types';
 import {
   SUPPLY, MCAP_FLOOR_USD, MCAP_CAP_USD, SOL_PRICE_USD,
 } from './types';
@@ -308,6 +308,45 @@ const LONG_RUNNER_SOFT_MCAP_USD = 220_000;
 const QUICK_RUG_SOFT_MCAP_USD = 1_500_000;
 const FLOW_WARMUP_SIM_MS = 90_000;
 const DEV_WARMUP_SIM_MS = 60_000;
+// Organic prints per second at age 5s, before the regime/actor shape (`lambdaMul`).
+// That shape is well below 1 in the first minute (flow warmup). Age decay then
+// takes over on the sim clock.
+const ARRIVAL_RATE_AT_5S = 6.2;
+const ARRIVAL_AGE_FLOOR_SEC = 5;
+const ARRIVAL_AGE_DECAY = 0.85;
+// One organic print should stay near the existing bucket scale. The old tape
+// split a large stepMarket notional into many bucket fills; the notional per
+// arrival has to match a single fill now that the count is the arrival count.
+const ARRIVAL_PRINT_USD = 0.35 * SOL_PRICE_USD;
+// Rare enough that a coin silent by 5 min usually records no later trade inside a 30 min run.
+const FLOW_STRAY_PER_SEC = 0.00008;
+const RUG_DUMP_PER_SEC = 1.1;
+
+function sampleExpSimMs(rng: RNG, meanSec: number): number {
+  return -Math.log(Math.max(1e-9, rng.next())) * meanSec * 1000;
+}
+
+/**
+ * Sim-time after which crowd flow goes quiet. Drawn once so the hazard does
+ * not depend on tick length. QUICK_RUG dies faster; LONG_RUNNER survives more
+ * often. Infinity means the coin never goes silent from this draw.
+ */
+function rollFlowSilenceSimMs(rng: RNG, fate: TokenFate): number {
+  const u = rng.next();
+  if (fate === 'LONG_RUNNER') {
+    if (u < 0.30) return sampleExpSimMs(rng, 75);
+    if (u < 0.50) return sampleExpSimMs(rng, 520);
+    return Number.POSITIVE_INFINITY;
+  }
+  if (fate === 'QUICK_RUG') {
+    if (u < 0.72) return sampleExpSimMs(rng, 40);
+    if (u < 0.92) return sampleExpSimMs(rng, 180);
+    return sampleExpSimMs(rng, 420);
+  }
+  if (u < 0.56) return sampleExpSimMs(rng, 50);
+  if (u < 0.80) return sampleExpSimMs(rng, 260);
+  return Number.POSITIVE_INFINITY;
+}
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -345,7 +384,7 @@ export class TokenSim {
   private marketRegime: TokenMarketRegime = 'LAUNCH_CHAOS';
   private marketRegimeTtlSec = 0;
   private attention = 1;
-  private baseLambda = 10;
+  private flowSilentAfterSimMs = Number.POSITIVE_INFINITY;
   private baseLiquidityUsd = 25_000;
   private baseTradeSizeUsd = 350;
   private tradeSigma = 0.95;
@@ -404,7 +443,9 @@ export class TokenSim {
     this.rng = new RNG(meta.id);
 
     // Token-specific baseline params.
-    this.baseLambda = 8 + this.rng.next() * 16;
+    // Historical draw. Arrival rate no longer uses it; dropping the call would
+    // shift every later roll (curve, archetype, dev).
+    this.rng.next();
     this.baseLiquidityUsd = startMcapUsd * (1.2 + this.rng.next() * 1.0);
     this.baseTradeSizeUsd = (120 + this.rng.next() * 680) * BASE_TRADE_SIZE_SCALE;
     this.tradeSigma = 0.75 + this.rng.next() * 0.45;
@@ -435,6 +476,8 @@ export class TokenSim {
 
     // Seed initial flat candle so first dev buy grows from launch baseline.
     this.pushCandleTicks(this.spawnRealMs, 0);
+    // Separate stream so the silence draw does not shift curve / dev rolls.
+    this.flowSilentAfterSimMs = rollFlowSilenceSimMs(new RNG(`${meta.id}:flow`), meta.fate);
   }
 
   tick(fallbackRealDtSec: number, sessionBucket: SessionBucket = getSessionBucket(Date.now()),
@@ -770,6 +813,7 @@ export class TokenSim {
     });
     const prevPriceUsd = this.lastPriceUsd;
     const burstDirectionalUsd = this.consumeMicroburstDirectionalUsd(simDtSec);
+    const appliedBurstUsd = this.isFlowSilent() ? 0 : burstDirectionalUsd;
 
     // Minimal warm-up only for launch tick (avoid scripted behavior).
     if (isLaunchTick) {
@@ -779,13 +823,15 @@ export class TokenSim {
       lambdaMul *= 0.1;
     }
 
+    const arrivalPerSec = this.arrivalLambdaPerSec(lambdaMul, marketTsMs) * (isLaunchTick ? 0.15 : 1);
     const market = stepMarket(this.rng, {
       dtSec: simDtSec,
       priceUsd: prevPriceUsd,
       liquidityUsd,
       attention: this.attention,
-      baseLambda: this.baseLambda * lambdaMul * (isLaunchTick ? 0.15 : 1),
-      baseTradeSizeUsd: this.baseTradeSizeUsd * tradeSizeMul,
+      // stepMarket multiplies by attention again; cancel that so the sim-clock rate is the rate.
+      baseLambda: arrivalPerSec / Math.max(this.attention, 0.05),
+      baseTradeSizeUsd: ARRIVAL_PRINT_USD * tradeSizeMul,
       tradeSigma: this.tradeSigma * regimeBehavior.tradeSigmaMul * regimeBehavior.wickinessMultiplier,
       driftPerSec,
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
@@ -820,19 +866,19 @@ export class TokenSim {
       );
     }
 
-    if (burstDirectionalUsd > 0) {
-      targetBuyUsd += burstDirectionalUsd;
+    if (appliedBurstUsd > 0) {
+      targetBuyUsd += appliedBurstUsd;
       expectedNextPriceUsd = this.adjustExpectedPriceForDirectionalUsd(
         expectedNextPriceUsd,
-        burstDirectionalUsd,
+        appliedBurstUsd,
         liquidityUsd,
         this.impactK * impactMul
       );
-    } else if (burstDirectionalUsd < 0) {
-      targetSellUsd += Math.abs(burstDirectionalUsd);
+    } else if (appliedBurstUsd < 0) {
+      targetSellUsd += Math.abs(appliedBurstUsd);
       expectedNextPriceUsd = this.adjustExpectedPriceForDirectionalUsd(
         expectedNextPriceUsd,
-        burstDirectionalUsd,
+        appliedBurstUsd,
         liquidityUsd,
         this.impactK * impactMul
       );
@@ -864,6 +910,8 @@ export class TokenSim {
       previousPriceUsd: prevPriceUsd,
       buyMix: actorOverlay.buyMix,
       sellMix: actorOverlay.sellMix,
+      marketBuys: market.buys,
+      marketSells: market.sells,
     });
     this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - simDtSec * 1000);
 
@@ -884,6 +932,46 @@ export class TokenSim {
     return events;
   }
 
+  /**
+   * Crowd intensity in trades per sim-second. Regime, phase, session, and
+   * actor shape arrive as `shape` (the existing lambdaMul). Age decay and
+   * silence are on the sim clock, so a 1s tick and five 0.2s ticks share
+   * the same expected count.
+   */
+  private arrivalLambdaPerSec(shape: number, nowMs: number): number {
+    const organic = this.organicArrivalPerSec(shape, nowMs);
+    if (this.simTimeMs < this.flowSilentAfterSimMs) return organic;
+    if (this.rugDumpActive()) return Math.max(organic, RUG_DUMP_PER_SEC);
+    if (this.deadUserReboundMs > 0) return Math.max(organic, 0.8);
+    return FLOW_STRAY_PER_SEC;
+  }
+
+  private organicArrivalPerSec(shape: number, nowMs: number): number {
+    const ageSec = Math.max(0, this.simTimeMs / 1000);
+    const t = Math.max(ageSec, ARRIVAL_AGE_FLOOR_SEC);
+    const ageDecay = Math.pow(t / ARRIVAL_AGE_FLOOR_SEC, -ARRIVAL_AGE_DECAY);
+    const attentionMul = clamp(this.attention / 1.05, 0.65, 1.65);
+    return Math.max(0, ARRIVAL_RATE_AT_5S * ageDecay * Math.max(0, shape) * attentionMul * this.arrivalExcitement(nowMs));
+  }
+
+  private arrivalExcitement(nowMs: number): number {
+    const lastMs = this.tape[this.tape.length - 1]?.tMs;
+    if (lastMs == null) return 1;
+    const gapSec = (nowMs - lastMs) / 1000;
+    if (!Number.isFinite(gapSec) || gapSec < 0 || gapSec > 12) return 1;
+    return 1 + 0.18 * Math.exp(-gapSec / 2.5);
+  }
+
+  private isFlowSilent(): boolean {
+    return this.simTimeMs >= this.flowSilentAfterSimMs && !this.rugDumpActive() && this.deadUserReboundMs <= 0;
+  }
+
+  private rugDumpActive(): boolean {
+    if (this.ruggedAtSimMs == null || this.phase === 'DEAD') return false;
+    // Keep selling until a print actually tags the floor and phase can flip to DEAD.
+    return this.lastMcapUsd > MCAP_FLOOR_USD;
+  }
+
   private executeMarketFlowAsTape(input: {
     candleTsMs: number;
     simDtSec: number;
@@ -893,30 +981,43 @@ export class TokenSim {
     previousPriceUsd: number;
     buyMix: TokenActorMixEntry[];
     sellMix: TokenActorMixEntry[];
+    marketBuys?: number;
+    marketSells?: number;
   }): void {
-    const targetBuyUsd = Math.max(0, Number.isFinite(input.targetBuyUsd) ? input.targetBuyUsd : 0);
-    const targetSellUsd = Math.max(0, Number.isFinite(input.targetSellUsd) ? input.targetSellUsd : 0);
+    let targetBuyUsd = Math.max(0, Number.isFinite(input.targetBuyUsd) ? input.targetBuyUsd : 0);
+    let targetSellUsd = Math.max(0, Number.isFinite(input.targetSellUsd) ? input.targetSellUsd : 0);
+    // Collapse drift used to be applied as an extra steering print. During a rug
+    // dump, fold that sell pressure into the notionals the arrival process already drew.
+    if (this.rugDumpActive() && targetBuyUsd > 0) {
+      const nearFloor = this.lastMcapUsd < MCAP_FLOOR_USD * 3;
+      const moved = targetBuyUsd * (nearFloor ? 1 : 0.7);
+      targetBuyUsd -= moved;
+      targetSellUsd += moved;
+    }
     const totalUsd = targetBuyUsd + targetSellUsd;
     if (totalUsd <= 1e-6) {
       return;
     }
 
     const minTradeUsd = this.getMinSyntheticTradeUsd();
-    const targetTrades = clamp(
-      Math.round(3 + Math.sqrt(totalUsd / Math.max(20, this.baseTradeSizeUsd)) * 3.05 + this.rng.next() * 3.6),
-      2,
-      Math.max(2, Math.min(24, Math.floor(totalUsd / Math.max(1, minTradeUsd)) || 2))
-    );
-    let buyTrades = targetBuyUsd > 0
-      ? Math.max(1, Math.round(targetTrades * (targetBuyUsd / Math.max(1e-9, totalUsd))))
-      : 0;
-    let sellTrades = targetSellUsd > 0
-      ? Math.max(1, targetTrades - buyTrades)
-      : 0;
-    if (buyTrades > 0 && sellTrades > 0 && buyTrades + sellTrades > targetTrades) {
-      if (buyTrades > sellTrades) buyTrades -= 1;
-      else sellTrades -= 1;
+    // Counts come from stepMarket's Poisson(λ Δt). No per-tick floor: a quiet
+    // interval must be allowed to print nothing, and a long tick must be able
+    // to print more than a short one.
+    let buyTrades = Math.max(0, Math.floor(input.marketBuys ?? 0));
+    let sellTrades = Math.max(0, Math.floor(input.marketSells ?? 0));
+    if (input.marketBuys == null || input.marketSells == null) {
+      const share = targetBuyUsd / Math.max(1e-9, totalUsd);
+      const n = this.rng.poisson(Math.max(0, this.arrivalLambdaPerSec(1, input.candleTsMs) * input.simDtSec));
+      buyTrades = 0;
+      sellTrades = 0;
+      for (let i = 0; i < n; i++) {
+        if (this.rng.next() < share) buyTrades += 1;
+        else sellTrades += 1;
+      }
     }
+    if (buyTrades === 0 && targetBuyUsd > 0) buyTrades = 1;
+    if (sellTrades === 0 && targetSellUsd > 0) sellTrades = 1;
+    if (buyTrades + sellTrades === 0) return;
 
     const buyParts = this.splitNotional(targetBuyUsd, buyTrades, minTradeUsd);
     const sellParts = this.splitNotional(targetSellUsd, sellTrades, minTradeUsd);
@@ -956,26 +1057,13 @@ export class TokenSim {
         executedTrades += 1;
         continue;
       }
-      // If inventory is exhausted, keep tape alive by converting the slot to a small buy.
-      if (targetUsd > 0 && this.executeSimBuyTrade(
+      // A failed sell used to be rewritten as a buy so the tape never went quiet.
+      // That fights a rug dump and revives a coin the arrival process has silenced.
+      if (!this.rugDumpActive() && !this.isFlowSilent() && targetUsd > 0 && this.executeSimBuyTrade(
         targetUsd * (0.65 + this.rng.next() * 0.35),
         tsMs,
         'dip_buyers'
       )) {
-        executedTrades += 1;
-      }
-    }
-
-    const expected = Number.isFinite(input.expectedNextPriceUsd)
-      ? clamp(input.expectedNextPriceUsd, input.previousPriceUsd * 0.25, input.previousPriceUsd * 4)
-      : input.previousPriceUsd;
-    const driftPct = this.lastPriceUsd > 0 ? ((expected - this.lastPriceUsd) / this.lastPriceUsd) : 0;
-    if (Math.abs(driftPct) > 0.012 && totalUsd > 25) {
-      const steeringTs = Math.max(input.candleTsMs, this.tape[this.tape.length - 1]?.tMs ?? this.spawnRealMs);
-      const steeringNotional = Math.max(8, totalUsd * 0.15);
-      if (driftPct > 0) {
-        if (this.executeSimBuyTrade(steeringNotional, steeringTs, 'momentum_chasers')) executedTrades += 1;
-      } else if (this.executeSimSellTrade(steeringNotional, steeringTs, 'panic_sellers')) {
         executedTrades += 1;
       }
     }

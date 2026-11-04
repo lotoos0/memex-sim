@@ -46,7 +46,8 @@ export function stepMarket(rng: RNG, input: MarketStepInput): MarketStepOutput {
   const attention = clamp(input.attention, 0.05, 3);
   const liquidity = Math.max(1, input.liquidityUsd);
 
-  const lambda = Math.max(0.05, input.baseLambda * attention);
+  // Quiet tokens pass a near-zero rate. A 0.05/s floor would keep dead coins printing.
+  const lambda = Math.max(0, input.baseLambda * attention);
   const nTrades = rng.poisson(lambda * dtSec);
   const tradeCount = Math.max(0, nTrades);
 
