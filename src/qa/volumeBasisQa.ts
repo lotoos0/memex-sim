@@ -9,8 +9,8 @@ import { useWalletStore } from '../store/walletStore';
 
 // Diagnostic, not a CI gate. Private fixture access adds no production seam.
 // Market volume is compared separately from propagation and known economic diagnostics.
-type Group = 'integrity' | 'candidate' | 'model' | 'wallet' | 'settlement' | 'holderCycle';
-const counts: Record<Group, number> = { integrity: 0, candidate: 0, model: 0, wallet: 0, settlement: 0, holderCycle: 0 };
+type Group = 'integrity' | 'candidate' | 'model' | 'wallet' | 'settlement' | 'holderCycle' | 'guard';
+const counts: Record<Group, number> = { integrity: 0, candidate: 0, model: 0, wallet: 0, settlement: 0, holderCycle: 0, guard: 0 };
 const failures: Array<{ group: Group; label: string }> = [];
 const traces: unknown[] = [];
 const singleSwapEconomics: unknown[] = [];
@@ -277,10 +277,44 @@ try {
   fixture(partialFill?.ok === true, 'partial SELL');
   near('integrity', partialFill.filledToken, 10_000_000, 'partial/only-available-tokens-filled');
 
-  // Distinguish reserve-model inconsistency from a mere volume convention choice.
+  // Preserve the inconsistent reserve fixture; policy now rejects without execution.
   const cashCap = create('cash-cap');
   cashCap['curveRealBase'] = 1;
-  execute(cashCap, 'user', 'SELL', 1_000_000, [], 'cash-cap/user/SELL');
+  const cashBefore = snapshot(cashCap);
+  const profilesBefore = JSON.stringify([...cashCap['walletProfiles']]);
+  const estimate = cashCap['estimateCurveSellOut'](1_000_000);
+  near('model', estimate.tokenIn + estimate.baseOutUsd, 0, 'cash-cap/estimate-zero');
+  const execution = cashCap['executeCurveSell'](1_000_000);
+  near('model', execution.tokenIn + execution.baseOutUsd, 0, 'cash-cap/execution-zero');
+  check('model', snapshot(cashCap) === cashBefore, 'cash-cap/helpers-no-mutation');
+  const rejected = cashCap['executeUserTradeImmediate']('SELL', 1_000_000, now);
+  check('integrity', !rejected.fill.ok, 'cash-cap/user-fill-failed');
+  check('integrity', rejected.events.length === 0, 'cash-cap/no-events');
+  check('integrity', snapshot(cashCap) === cashBefore, 'cash-cap/no-economic-or-market-mutation');
+  check('wallet', JSON.stringify([...cashCap['walletProfiles']]) === profilesBefore, 'cash-cap/no-holder-accounting');
+  near('candidate', cashCap['tape'].reduce((sum, row) => sum + row.notionalUsd, 0), 0, 'cash-cap/no-tape-volume');
+  near('candidate', cashCap['statWindow'].reduce((sum, row) => sum + row.volUsd, 0), 0, 'cash-cap/no-stat-volume');
+  verifyProjection(cashCap, [], 'cash-cap/rejected');
+  traces.push({ label: 'cash-cap-rejection', estimate, execution, fill: rejected.fill,
+    before: cashBefore, after: snapshot(cashCap) });
+  const botBefore = snapshot(cashCap);
+  check('guard', !cashCap['executeSimSellTrade'](15, now), 'cash-cap/bot-SELL-failed');
+  check('guard', snapshot(cashCap) === botBefore, 'cash-cap/bot-no-economic-mutation');
+
+  // Strict boundary: equality is allowed; a relative 1e-12 shortage is rejected.
+  for (const factor of [1, 1 - 1e-12]) {
+    const boundary = create(`cash-boundary-${factor}`);
+    const state = boundary.getCurveDebugSnapshot();
+    const net = (state.vBase - state.k / (state.vTok + 1_000_000)) * feeFactor;
+    boundary['curveRealBase'] = net * factor;
+    const before = snapshot(boundary);
+    const quote = boundary['estimateCurveSellOut'](1_000_000);
+    const fill = boundary['executeCurveSell'](1_000_000);
+    check('guard', JSON.stringify(quote) === JSON.stringify(fill), `boundary/${factor}/estimate-fill`);
+    check('guard', factor === 1 ? fill.tokenIn === 1_000_000 && fill.baseOutUsd === net
+      : fill.tokenIn === 0 && fill.baseOutUsd === 0 && snapshot(boundary) === before,
+      `boundary/${factor}/strict-guard`);
+  }
 
   const mixed = create('mixed');
   const expected: Array<{ tMs: number; quote: number; legacyVolume?: number }> = [];
@@ -391,6 +425,49 @@ try {
 
   for (const migrated of [false, true]) holderCycle(migrated);
 
+  const pendingSell = create('cash-cap-pending-SELL');
+  registry['tokens'].set(pendingSell.meta.id, pendingSell);
+  useTokenStore.getState().addToken(pendingSell.meta, pendingSell.getRuntime());
+  useWalletStore.setState({ solBalance: 1_000, realizedPnlSol: 0 });
+  fixture(useTradingStore.getState().quickBuy(pendingSell.meta.id, 0.1, { slippagePct: 100 }).ok,
+    'pending-SELL/seed-BUY');
+  const buyOrder = Object.values(useTradingStore.getState().pendingQuickOrdersById)
+    .find((p) => p.tokenId === pendingSell.meta.id)!;
+  now = buyOrder.execMs;
+  pendingSell['processPendingUserTrades'](now);
+  const buyNotices = pendingSell.drainUserTradeExecutions();
+  fixture(buyNotices.length === 1 && buyNotices[0]!.status === 'FILLED', 'pending-SELL/seed-fill');
+  registry['executions'].process(pendingSell.meta.id, pendingSell, buyNotices);
+  const walletBeforeSell = useWalletStore.getState().solBalance;
+  const positionBefore = JSON.stringify(useTradingStore.getState().quickPositionsByTokenId[pendingSell.meta.id]);
+  const tradesBefore = JSON.stringify(useTradingStore.getState().quickTradesByTokenId[pendingSell.meta.id]);
+  fixture(useTradingStore.getState().quickSell(pendingSell.meta.id, 0.05, { slippagePct: 100 }).ok,
+    'pending-SELL/submitted-while-valid');
+  const sellOrder = Object.values(useTradingStore.getState().pendingQuickOrdersById)
+    .find((p) => p.tokenId === pendingSell.meta.id)!;
+  check('guard', sellOrder.reservedSol === 0 && sellOrder.reservedToken > 0, 'pending-SELL/token-reservation');
+  pendingSell['curveRealBase'] = 1;
+  const beforePending = snapshot(pendingSell);
+  now = sellOrder.execMs;
+  const pendingEvents = pendingSell['processPendingUserTrades'](now);
+  const sellNotices = pendingSell.drainUserTradeExecutions();
+  fixture(sellNotices.length === 1, 'pending-SELL/one-notice');
+  check('guard', sellNotices[0].status === 'FAILED' && sellNotices[0].actualOut === 0,
+    'pending-SELL/FAILED-no-output');
+  check('guard', pendingEvents.length === 0 && snapshot(pendingSell) === beforePending,
+    'pending-SELL/no-reserve-ledger-holder-volume-mutation');
+  registry['executions'].process(pendingSell.meta.id, pendingSell, sellNotices);
+  near('guard', useWalletStore.getState().solBalance, walletBeforeSell - sellOrder.txCostSol,
+    'pending-SELL/only-transaction-cost-charged');
+  near('guard', useWalletStore.getState().realizedPnlSol, 0, 'pending-SELL/no-user-PnL');
+  check('guard', JSON.stringify(useTradingStore.getState().quickPositionsByTokenId[pendingSell.meta.id]) === positionBefore,
+    'pending-SELL/position-preserved');
+  check('guard', JSON.stringify(useTradingStore.getState().quickTradesByTokenId[pendingSell.meta.id]) === tradesBefore,
+    'pending-SELL/no-fictional-Your-Trades');
+  check('guard', !useTradingStore.getState().pendingQuickOrdersById[sellOrder.orderId],
+    'pending-SELL/reservation-released');
+  registry['tokens'].delete(pendingSell.meta.id);
+
   // Real pending-order failure and refund, after another trade worsens the quote.
   const failed = create('failed-refund');
   registry['tokens'].set(failed.meta.id, failed);
@@ -419,7 +496,7 @@ console.log(`HOLDER_CYCLES ${JSON.stringify(holderCycles)}`);
 console.log(`ECONOMICS ${JSON.stringify(singleSwapEconomics)}`);
 console.log(`TRACES ${JSON.stringify(traces)}`);
 for (const failure of failures) console.error(`FAIL ${failure.group}/${failure.label}`);
-for (const group of ['integrity', 'candidate', 'model', 'wallet', 'settlement', 'holderCycle'] as const) {
+for (const group of ['integrity', 'candidate', 'model', 'wallet', 'settlement', 'holderCycle', 'guard'] as const) {
   const failed = failures.filter((f) => f.group === group).length;
   console.log(`Volume basis ${group}: ${counts[group] - failed}/${counts[group]} passed; ${failed} discrepancies`);
 }

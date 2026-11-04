@@ -1,6 +1,8 @@
 # Cash-cap SELL reachability - Slice 2C3
 
-Verdict: **B - UNREACHABLE UNDER CURRENT INVARIANTS**. This conclusion follows from the initialized reserve and inventory invariants below, not merely from a search that found no failures.
+Historical Slice 2C3 audit snapshot, preserved below. The approved guard and current validation are documented in [Slice 2C3b implementation](#slice-2c3b-implementation).
+
+Verdict at audit: **B - UNREACHABLE UNDER CURRENT INVARIANTS**. This conclusion follows from the initialized reserve and inventory invariants below, not merely from a search that found no failures.
 
 Audited base: `653d3d8` (`main` after PR #49), 2026-11-04. Branch: `docs/cash-cap-sell-reachability`. Changes are restricted to this report and [`cashCapSellQa.ts`](../src/qa/cashCapSellQa.ts). No production code, frozen contracts, dependency or CI change is included.
 
@@ -174,3 +176,48 @@ A different design that fills a smaller token input to match the limited quote w
 **B - UNREACHABLE UNDER CURRENT INVARIANTS.** Keep the current curve model. The smallest proposed STANDARD follow-up is a defensive pre-mutation check in both curve SELL estimate and execution: if intended net payout exceeds real quote in an invariant-broken state, reject consistently through the existing zero-output/No liquidity result instead of consuming the full token input with clamped quote. Do not add a provider, reserve rebuilder or silently recalculate K.
 
 Acceptance for that separately approved change: valid initialized public/private sequences remain economically identical; the forced invalid state returns no executed tokens/quote and changes no reserves, ownership, volume or OHLCV; estimate and fill agree; pending order failure/refund stays correct. Preserve the positive control as invalid-state defense coverage. Handling near-boundary numerical conditions and explicit invariant reporting should be scoped with that plan. No such defense is implemented in this audit.
+
+## Slice 2C3b implementation
+
+Base: `2185886` after audit PR #50. Branch: `fix/cash-cap-sell-guard`. The historical proof and results above describe the pre-guard source. This slice implements only the approved defense in `estimateCurveSellOut` and `executeCurveSell`; the initialized-state reachability conclusion remains B.
+
+Both methods calculate gross constant-product quote, net quote after the existing fee, and available `curveRealBase`. If `netBaseOut > availableBase`, both return `{ tokenIn: 0, baseOutUsd: 0 }` before reserve mutation. The old payout assignment to real base is removed. Exact equality is allowed; no new tolerance or fee parameter is introduced. Valid swap arithmetic, including the existing net-to-gross calculation during reserve update, is unchanged.
+
+Rejection is preferable to a new partial fill here: the shortage is an invariant-broken state, not a supported liquidity-clipping contract. Filling fewer tokens would require coordinated quote, execution, ownership, cost allocation and settlement changes. Rejecting preserves all economic and market records without rebuilding K or consuming tokens for a reduced payout.
+
+### QA and settlement
+
+The original forced reserve fixture is retained in both QA files. It now verifies zero estimate and execution and exact unchanged reserve state, including K and pool inventory. Volume QA also verifies direct user/bot SELL failure without ledger, holder-profile, tape, stats, events or OHLCV mutation. The bot path may still consume its existing wallet-selection RNG before detecting insufficient liquidity; it does not create an economic execution. Boundary fixtures check successful equality and rejection just below the required net payout, with estimate/fill agreement.
+
+A store-backed fixture first executes a valid pending BUY and submits a valid pending SELL. Only then does it inject `curveRealBase = 1`. Pending processing obtains a zero/no-liquidity quote and emits FAILED with zero output. The relay/store path clears the token reservation without changing the position, PnL or Your Trades. SELL reserves tokens logically, not a SOL principal; its existing transaction cost remains charged, with no fictional proceeds or extra refund. The production store/relay code was not changed. Direct execution rejection is separately covered, so passing the pending quote check is not relied on for safety.
+
+| Check | Before guard | After guard |
+| --- | --- | --- |
+| Cash-cap main invariant/control checks | 2,314,437/2,314,437 | 2,314,439/2,314,439 PASS, including added estimate checks |
+| Forced fixture | Two expected model FAIL; cap consumes tokens | 2/2 rejection/no-mutation checks PASS; zero execution |
+| Market volume / integrity | 265/265 / 249/249 | 265/265 / 249/249 PASS |
+| Volume model checks | 35/37, two forced-state FAIL | 37/37 PASS; forced checks now assert rejection |
+| Holder accounting / cycles | 16/16 / 162/162 | 16/16 / 162/162 PASS |
+| User settlement/PnL | 10/10 | 10/10 PASS |
+| Additional guard/FAILED settlement | Not present | 14/14 PASS |
+| Cash-cap QA / volume QA exits | 1 / 1 | 0 / 0 |
+| BUY exhaustion | 135 | 135 assertions PASS |
+| Late Tick | 52/52 + 81/81 | 52/52 + 81/81 PASS |
+| Timestamp | 350/350 | 350/350 PASS |
+| OHLC diagnostic | 335/413, exit 1 | 335/413, same 78 discrepancies; exit 1 |
+| Curve parity diagnostic | 14/18, exit 1 | 14/18, same 4 discrepancies; exit 1 |
+| Build / lint | PASS / 7 warnings | PASS / 0 errors, 7 existing Hooks warnings |
+
+The two extra main-group checks verify that the forced estimate does not mutate state and agrees with execution; they do not expand the sampled valid market paths. The predicate still detects one forced shortage, while successful execution count for that fixture is now zero. Two fresh new-QA processes produced identical output and exit 0. No mandatory CI gate was added. The reproduction commands in the audit section build and run the current tests.
+
+### Economic regression and limits
+
+The same updated harness was bundled with `TokenSim` from `2185886` in a temporary tree and with the guard source. All 11 valid isolated swap traces and all six holder-cycle stages matched exactly: quantities, quote/fees, virtual/real reserves, prices/mcap, market tape, OHLCV, stat entries, holder accounting, RNG and user wallet state. The previous twelfth isolated case was the invalid forced SELL; it remains a separate rejection fixture rather than a successful-swap trace. Non-forced quote/volume traces also match. Aggregates of the full 144 public and 240 private initialized-state scenarios are identical before/after.
+
+For the forced state, the expected difference is zero execution instead of clamped payout and full token consumption. State after rejection is compared with its own pre-call snapshot, not with the old incorrect post-fill state. This avoids treating retained ownership or absent volume as a regression. Historical expectations were changed only for the explicitly approved rejection policy; OHLC and curve-parity diagnostics were not rewritten.
+
+Production changes are restricted to the two SELL helpers. Frozen types, BUY/exhaustion arithmetic, fee model, market-volume contract, holder accounting, lifecycle/migration, market parameters, UI/stores and Replay/Live are unchanged. This guard is not a general repair for NaN/corrupt reserve states and does not change existing sanitization or add transaction rollback. Fresh sessions remain appropriate after updating simulation code; no persisted-state migration is added.
+
+Both browser QA launchers were attempted sequentially and exited 127 because PowerShell is unavailable. Full manual/browser lifecycle and trading checks remain unverified on this Linux host. Build retains the existing chunk-size warning. No PR is created by this task; the separate commit is prepared for code review.
+
+Local startup smoke check: Vite served HTTP 200 and was stopped afterward. This verifies startup/serving only and does not replace browser execution checks.

@@ -2589,12 +2589,11 @@ export class TokenSim {
     if (!Number.isFinite(newX)) return { tokenIn: 0, baseOutUsd: 0 };
 
     const grossBaseOut = Math.max(0, x - newX);
-    let baseOut = grossBaseOut * feeFactor;
-    if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
-    if (baseOut > this.curveRealBase) baseOut = this.curveRealBase;
-    if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
+    const netBaseOut = grossBaseOut * feeFactor;
+    const availableBase = this.curveRealBase;
+    if (netBaseOut <= 0 || netBaseOut > availableBase) return { tokenIn: 0, baseOutUsd: 0 };
 
-    return { tokenIn: cappedTokenIn, baseOutUsd: baseOut };
+    return { tokenIn: cappedTokenIn, baseOutUsd: netBaseOut };
   }
 
   private executeCurveBuy(grossBaseInUsd: number): { baseInUsd: number; tokensOut: number } {
@@ -2669,24 +2668,20 @@ export class TokenSim {
       return { tokenIn: 0, baseOutUsd: 0 };
     }
     const grossBaseOut = Math.max(0, x - newX);
-    let baseOut = grossBaseOut * feeFactor;
-    if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
+    const netBaseOut = grossBaseOut * feeFactor;
+    const availableBase = this.curveRealBase;
+    if (netBaseOut <= 0 || netBaseOut > availableBase) return { tokenIn: 0, baseOutUsd: 0 };
 
-    if (baseOut > this.curveRealBase) {
-      baseOut = this.curveRealBase;
-    }
-    if (baseOut <= 0) return { tokenIn: 0, baseOutUsd: 0 };
-
-    const grossUsed = baseOut / feeFactor;
+    const grossUsed = netBaseOut / feeFactor;
     if (!Number.isFinite(grossUsed) || grossUsed <= 0) {
       this.invalidCurveState = true;
       return { tokenIn: 0, baseOutUsd: 0 };
     }
     this.curveVirtualBase = Math.max(CURVE_TOKEN_EPS, x - grossUsed);
     this.curveVirtualToken = y + cappedTokenIn;
-    this.curveRealBase = Math.max(0, this.curveRealBase - baseOut);
+    this.curveRealBase = Math.max(0, this.curveRealBase - netBaseOut);
     this.curveRealToken = Math.min(this.curveInitialRealToken, this.curveRealToken + cappedTokenIn);
-    return { tokenIn: cappedTokenIn, baseOutUsd: baseOut };
+    return { tokenIn: cappedTokenIn, baseOutUsd: netBaseOut };
   }
 
   private executeMigratedBuy(grossBaseInUsd: number): {
