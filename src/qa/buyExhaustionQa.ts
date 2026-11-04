@@ -89,14 +89,16 @@ try {
     near(fill.mcapAfterUsd, terminalMcap === 12_000 && scenario === 'normal'
       ? after.vBase / after.vTok * SUPPLY : terminalMcap, `${scenario}: market cap`);
     assert(fill.filledSol <= requestedSol + 1e-10, `${scenario}: no overcharge`);
-    const shouldMigrate = scenario === 'above-migration';
+    // Slice 3B: every completing BUY hands off, independently of terminal MCAP.
+    const shouldMigrate = scenario !== 'normal';
     assert((sim.getPhase() === 'MIGRATED') === shouldMigrate, `${scenario}: migration phase`);
     assert(events.some((event) => event.type === 'MIGRATION') === shouldMigrate,
       `${scenario}: migration event`);
     if (scenario !== 'normal') near(after.rTok, 0, `${scenario}: reserves exhausted`);
     if (scenario === 'exhaustion') {
       const retry = sim.quoteUserTrade('BUY', requestedSol, 0);
-      assert(!retry.ok, 'exhausted curve rejects another BUY before migration');
+      assert(retry.ok, 'completed curve routes the next BUY to migrated trading');
+      near(sim['estimateCurveBuyOut'](grossBudget).tokensOut, 0, 'completed curve stays closed');
     }
     registry['executions'].process(meta.id, sim, notices);
     near(useWalletStore.getState().solBalance, 1_000 - fill.filledSol - pending.txCostSol,

@@ -21,7 +21,6 @@ import {
   decideMigrationOutcome,
   getMarketBehavior,
   getMigrationShockDurationMs,
-  getMigrationThresholdUsd,
   MICROBUST_CANDLES_MAX,
   MICROBUST_CANDLES_MIN,
   MICROBUST_CONTINUATION_DECAY,
@@ -364,6 +363,11 @@ export class TokenSim {
   private cadenceBurstLeftMs = 0;
   private hasEnteredFinal = false;
   private hasMigrated = false;
+  private curveCompleted = false;
+  private completionReferenceMcapUsd = 0;
+  private migrationMcapUsd: number | null = null;
+  private botMigrationEvents: TokenChartEvent[] = [];
+  private migrationPublisher?: (event: TokenChartEvent) => void;
   private bondingProgress = 0;
   private curveVirtualBase = 0;
   private curveVirtualToken = 0;
@@ -432,7 +436,21 @@ export class TokenSim {
     this.pushCandleTicks(this.spawnRealMs, 0);
   }
 
-  tick(fallbackRealDtSec: number, sessionBucket: SessionBucket = getSessionBucket(Date.now())): TokenChartEvent[] {
+  tick(fallbackRealDtSec: number, sessionBucket: SessionBucket = getSessionBucket(Date.now()),
+    publishExecution?: (execution: UserTradeExecutionNotice) => void,
+    publishMigration?: (event: TokenChartEvent) => void): TokenChartEvent[] {
+    // Publish each fill and handoff before the next same-batch execution.
+    // Standalone callers retain the existing returned-events/drained-notices API.
+    this.migrationPublisher = publishMigration;
+    try {
+      return this.tickInternal(fallbackRealDtSec, sessionBucket, publishExecution);
+    } finally {
+      this.migrationPublisher = undefined;
+    }
+  }
+
+  private tickInternal(fallbackRealDtSec: number, sessionBucket: SessionBucket,
+    publishExecution?: (execution: UserTradeExecutionNotice) => void): TokenChartEvent[] {
     this.sessionBucket = sessionBucket;
     const sessionProfile = this.getSessionProfile();
     if (this.phase === 'RUGGED') this.phase = 'DEAD';
@@ -448,7 +466,7 @@ export class TokenSim {
 
     const simDtSec = realDtSec * SIM_TIME_MULTIPLIER;
     this.simTimeMs += simDtSec * 1000;
-    const queuedEvents = this.processPendingUserTrades(nowMs);
+    const queuedEvents = this.processPendingUserTrades(nowMs, publishExecution);
     const inDeadMode = this.phase === 'DEAD';
     const inCollapseMode = !inDeadMode && this.ruggedAtSimMs != null;
     const hasUserBuyEvent = queuedEvents.some((ev) => ev.type === 'USER_BUY');
@@ -462,8 +480,8 @@ export class TokenSim {
     this.attention = Math.max(0.12, this.attention * Math.exp(-phaseModel.attentionDecayPerSec * realDtSec));
 
     const regimeBehavior = this.getMarketBehavior(flowStrength, sessionProfile);
-    const inMigrationShock = this.migrationShockLeftMs > 0;
     const inMigrationFreeze = this.migrationFreezeLeftMs > 0;
+    const inMigrationShock = this.migrationShockLeftMs > 0;
 
     if (this.marketRegime === 'FIRST_PUMP' || this.marketRegime === 'MIGRATION_SHOCK') {
       this.attention = Math.min(2.6, this.attention + 0.026 * realDtSec);
@@ -495,7 +513,7 @@ export class TokenSim {
     }
 
     if (this.phase === 'MIGRATED') {
-      const migrationThresholdUsd = getMigrationThresholdUsd();
+      const migrationThresholdUsd = this.getMigrationReferenceMcapUsd();
       const overMigration = (this.lastMcapUsd - migrationThresholdUsd) / Math.max(1, migrationThresholdUsd);
       if (overMigration > 0) {
         const contestedBias = clamp(overMigration, 0, 1.4);
@@ -630,8 +648,7 @@ export class TokenSim {
     }
 
     if (this.phase !== 'MIGRATED' && this.phase !== 'DEAD') {
-      const migrationThresholdUsd = getMigrationThresholdUsd();
-      const progressToMigration = this.lastMcapUsd / Math.max(1, migrationThresholdUsd);
+      const progressToMigration = this.getCurveProgress();
       const migrationReady = this.isMigrationRuntimeReady(nowMs);
       if (progressToMigration >= MIGRATION_APPROACH_FRICTION_START_PCT) {
         const frictionProgress = clamp(
@@ -738,7 +755,7 @@ export class TokenSim {
       qualityScore: this.getDynamicQualityScore(flowStrength),
       flowStrength,
       changePct: this.getChangePct(),
-      progressToMigration: this.lastMcapUsd / Math.max(1, getMigrationThresholdUsd()),
+      progressToMigration: this.getCurveProgress(),
       baseTradeSizeUsd: this.baseTradeSizeUsd,
       hasEnteredFinal: this.hasEnteredFinal,
       hasDevBuySignal: devFlow?.eventType === 'DEV_BUY',
@@ -822,39 +839,29 @@ export class TokenSim {
       }
     }
 
-    const constrainedApproach = this.constrainNonReadyMigrationApproach({
-      nowMs,
+    const guardedFlow = this.guardCandleDisplacement({
       targetBuyUsd,
       targetSellUsd,
       expectedNextPriceUsd,
-    });
-
-    const guardedFlow = this.guardCandleDisplacement({
-      targetBuyUsd: constrainedApproach.targetBuyUsd,
-      targetSellUsd: constrainedApproach.targetSellUsd,
-      expectedNextPriceUsd: constrainedApproach.expectedNextPriceUsd,
       previousPriceUsd: prevPriceUsd,
       regimeBehavior,
       realDtSec,
       liquidityUsd,
     });
 
-    if (!inMigrationFreeze) {
-      this.executeMarketFlowAsTape({
-        candleTsMs,
-        realDtSec,
-        targetBuyUsd: guardedFlow.targetBuyUsd,
-        targetSellUsd: guardedFlow.targetSellUsd,
-        expectedNextPriceUsd: guardedFlow.expectedNextPriceUsd,
-        previousPriceUsd: prevPriceUsd,
-        buyMix: actorOverlay.buyMix,
-        sellMix: actorOverlay.sellMix,
-      });
-    } else {
-      this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - realDtSec * 1000);
-    }
+    this.executeMarketFlowAsTape({
+      candleTsMs,
+      realDtSec,
+      targetBuyUsd: guardedFlow.targetBuyUsd,
+      targetSellUsd: guardedFlow.targetSellUsd,
+      expectedNextPriceUsd: guardedFlow.expectedNextPriceUsd,
+      previousPriceUsd: prevPriceUsd,
+      buyMix: actorOverlay.buyMix,
+      sellMix: actorOverlay.sellMix,
+    });
+    this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - realDtSec * 1000);
 
-    const events: TokenChartEvent[] = queuedEvents.slice();
+    const events: TokenChartEvent[] = [...queuedEvents, ...this.botMigrationEvents.splice(0)];
     if (devFlow?.eventType) {
       events.push({
         tokenId: this.meta.id,
@@ -1025,52 +1032,6 @@ export class TokenSim {
       targetBuyUsd: newBuyUsd,
       targetSellUsd: newSellUsd,
       expectedNextPriceUsd: previousPriceUsd * (1 + allowedMovePct),
-    };
-  }
-
-  private constrainNonReadyMigrationApproach(input: {
-    nowMs: number;
-    targetBuyUsd: number;
-    targetSellUsd: number;
-    expectedNextPriceUsd: number;
-  }): {
-    targetBuyUsd: number;
-    targetSellUsd: number;
-    expectedNextPriceUsd: number;
-  } {
-    if (this.hasMigrated || this.phase === 'MIGRATED' || this.phase === 'DEAD') return input;
-    if (this.isMigrationRuntimeReady(input.nowMs)) return input;
-
-    const thresholdPriceUsd = getMigrationThresholdUsd() / SUPPLY;
-    const capPriceUsd = thresholdPriceUsd * (1.002 + this.rng.next() * 0.012);
-    const approachAnchor = Math.max(this.lastPriceUsd, input.expectedNextPriceUsd);
-    const clampedExpectedPriceUsd = Math.min(input.expectedNextPriceUsd, capPriceUsd);
-    if (approachAnchor < thresholdPriceUsd * 0.972) {
-      return {
-        targetBuyUsd: input.targetBuyUsd,
-        targetSellUsd: input.targetSellUsd,
-        expectedNextPriceUsd: clampedExpectedPriceUsd,
-      };
-    }
-
-    const totalUsd = input.targetBuyUsd + input.targetSellUsd;
-    const netUsd = input.targetBuyUsd - input.targetSellUsd;
-    if (netUsd <= 0) {
-      return {
-        targetBuyUsd: input.targetBuyUsd,
-        targetSellUsd: input.targetSellUsd,
-        expectedNextPriceUsd: clampedExpectedPriceUsd,
-      };
-    }
-
-    const overshootPressure = clamp((approachAnchor / Math.max(1e-9, thresholdPriceUsd) - 0.972) / 0.04, 0, 1);
-    const allowedNetBuyUsd = Math.max(0, this.baseTradeSizeUsd * (0.18 - overshootPressure * 0.16));
-    const compressedNetUsd = Math.min(netUsd, allowedNetBuyUsd);
-
-    return {
-      targetBuyUsd: Math.max(0, (totalUsd + compressedNetUsd) * 0.5),
-      targetSellUsd: Math.max(0, (totalUsd - compressedNetUsd) * 0.5),
-      expectedNextPriceUsd: clampedExpectedPriceUsd,
     };
   }
 
@@ -1284,6 +1245,12 @@ export class TokenSim {
       this.applyWalletDelta(walletId, buy.tokensOut, tsMs);
       this.recordTradeTick(tsMs, buy.baseInUsd, buy.baseInUsd / (1 - CURVE_FEE_BPS / 10_000),
         'BUY', walletId, buy.tokensOut);
+      if (this.curveRealToken === 0) this.curveCompleted = true;
+      const migration = this.curveCompleted ? this.updatePhase(tsMs) : null;
+      if (migration) {
+        this.botMigrationEvents.push(migration);
+        this.migrationPublisher?.(migration);
+      }
       return true;
     }
 
@@ -1745,14 +1712,10 @@ export class TokenSim {
   }
 
   private updatePhase(candleTsMs: number): TokenChartEvent | null {
-    if (this.phase === 'DEAD' || this.phase === 'MIGRATED') return null;
-    if (this.phase === 'RUGGED') {
+    if (this.hasMigrated || this.phase === 'MIGRATED') return null;
+    if (!this.curveCompleted && this.phase === 'DEAD') return null;
+    if (!this.curveCompleted && this.phase === 'RUGGED') {
       this.phase = 'DEAD';
-      return null;
-    }
-
-    if (this.hasMigrated) {
-      this.phase = 'MIGRATED';
       return null;
     }
 
@@ -1760,10 +1723,11 @@ export class TokenSim {
       this.hasEnteredFinal = true;
     }
 
-    const migrationThresholdUsd = getMigrationThresholdUsd();
-    const eligibleForMigration = this.lastMcapUsd >= migrationThresholdUsd;
+    const eligibleForMigration = this.curveCompleted;
     if (eligibleForMigration && !this.hasMigrated) {
       this.hasMigrated = true;
+      this.hasEnteredFinal = true;
+      this.migrationMcapUsd = this.lastMcapUsd;
       this.phase = 'MIGRATED';
       this.preMigrationFlowStrength = this.getFlowStrength();
       this.migrationFreezeLeftMs = 2_000 + this.rng.next() * 2_000;
@@ -1786,8 +1750,8 @@ export class TokenSim {
         tokenId: this.meta.id,
         tMs: candleTsMs,
         type: 'MIGRATION',
-        price: migrationThresholdUsd / SUPPLY,
-        mcap: migrationThresholdUsd,
+        price: this.lastPriceUsd,
+        mcap: this.lastMcapUsd,
       };
     }
 
@@ -2070,7 +2034,12 @@ export class TokenSim {
     return clamp(Math.round(latencyMs), MIN_EFFECTIVE_LATENCY_MS, MAX_USER_LATENCY_MS);
   }
 
-  private processPendingUserTrades(nowMs: number): TokenChartEvent[] {
+  private processPendingUserTrades(nowMs: number,
+    publishExecution?: (execution: UserTradeExecutionNotice) => void): TokenChartEvent[] {
+    const publish = (notice: UserTradeExecutionNotice): void => {
+      if (publishExecution) publishExecution(notice);
+      else this.userTradeExecutions.push(notice);
+    };
     if (this.pendingUserOrders.length === 0) return [];
 
     const due: PendingUserOrder[] = [];
@@ -2095,7 +2064,7 @@ export class TokenSim {
       const execTsMs = Math.max(order.execMs, nowMs);
       const actualQuote = this.quoteUserTrade(order.side, order.amountIn, order.slippageBps);
       if (!actualQuote.ok) {
-        this.userTradeExecutions.push({
+        publish({
           tokenId: this.meta.id,
           orderId: order.id,
           status: 'FAILED',
@@ -2114,7 +2083,7 @@ export class TokenSim {
         continue;
       }
       if (actualQuote.expectedOut < order.minOut) {
-        this.userTradeExecutions.push({
+        publish({
           tokenId: this.meta.id,
           orderId: order.id,
           status: 'FAILED',
@@ -2135,7 +2104,7 @@ export class TokenSim {
 
       const execution = this.executeUserTradeImmediate(order.side, order.amountIn, execTsMs);
       if (!execution.fill.ok) {
-        this.userTradeExecutions.push({
+        publish({
           tokenId: this.meta.id,
           orderId: order.id,
           status: 'FAILED',
@@ -2156,7 +2125,7 @@ export class TokenSim {
 
       const fill = execution.fill;
       const actualOut = fill.side === 'BUY' ? fill.filledToken : fill.filledSol;
-      this.userTradeExecutions.push({
+      publish({
         tokenId: this.meta.id,
         orderId: order.id,
         status: 'FILLED',
@@ -2172,7 +2141,10 @@ export class TokenSim {
         txCostSol: order.txCostSol,
         fill,
       });
-      if (execution.events.length > 0) outEvents.push(...execution.events);
+      for (const event of execution.events) {
+        outEvents.push(event);
+        if (event.type === 'MIGRATION') this.migrationPublisher?.(event);
+      }
     }
 
     return outEvents;
@@ -2309,6 +2281,7 @@ export class TokenSim {
     this.recordTradeTick(tsMs, marketVolumeUsd, walletNotionalUsd, side, walletId, filledToken);
 
     const events: TokenChartEvent[] = [];
+    if (side === 'BUY' && !this.hasMigrated && this.curveRealToken === 0) this.curveCompleted = true;
     const maybeMigrationEvent = this.updatePhase(tsMs);
     if (maybeMigrationEvent) events.push(maybeMigrationEvent);
 
@@ -2405,6 +2378,12 @@ export class TokenSim {
     this.curveKStart = this.curveVirtualBase * this.curveVirtualToken;
     this.invalidCurveState = false;
     this.bondingProgress = 0;
+    const terminalTokens = this.curveVirtualToken - this.curveInitialRealToken;
+    this.completionReferenceMcapUsd = this.curveKStart / (terminalTokens * terminalTokens) * SUPPLY;
+  }
+
+  getMigrationReferenceMcapUsd(): number {
+    return this.migrationMcapUsd ?? this.completionReferenceMcapUsd;
   }
 
   private getCurvePriceUsd(): number {
@@ -2534,7 +2513,7 @@ export class TokenSim {
   }
 
   private estimateCurveBuyOut(grossBaseInUsd: number): { tokensOut: number; baseInUsedUsd: number } {
-    if (!Number.isFinite(grossBaseInUsd) || grossBaseInUsd <= 0 || this.curveRealToken <= CURVE_TOKEN_EPS) {
+    if (this.curveCompleted || this.hasMigrated || !Number.isFinite(grossBaseInUsd) || grossBaseInUsd <= 0 || this.curveRealToken <= 0) {
       return { tokensOut: 0, baseInUsedUsd: 0 };
     }
     const feeFactor = 1 - CURVE_FEE_BPS / 10_000;
@@ -2560,17 +2539,16 @@ export class TokenSim {
     if (inputExceedsAvailableTokens) {
       // Charge only the input required by the capped output, preserving constant product.
       const cappedY = y - tokensOut;
-      const cappedX = k / Math.max(CURVE_TOKEN_EPS, cappedY);
-      netBaseUsed = Math.max(0, cappedX - x);
+      netBaseUsed = x * tokensOut / Math.max(CURVE_TOKEN_EPS, cappedY);
     }
-    if (tokensOut <= 0 || netBaseUsed <= 0) return { tokensOut: 0, baseInUsedUsd: 0 };
+    if (tokensOut <= 0 || !Number.isFinite(netBaseUsed) || netBaseUsed <= 0) return { tokensOut: 0, baseInUsedUsd: 0 };
 
     const grossBaseUsed = netBaseUsed / feeFactor;
     return { tokensOut, baseInUsedUsd: grossBaseUsed };
   }
 
   private estimateCurveSellOut(tokenIn: number): { tokenIn: number; baseOutUsd: number } {
-    if (!Number.isFinite(tokenIn) || tokenIn <= 0 || this.curveRealBase <= 0) {
+    if (this.curveCompleted || this.hasMigrated || !Number.isFinite(tokenIn) || tokenIn <= 0 || this.curveRealBase <= 0) {
       return { tokenIn: 0, baseOutUsd: 0 };
     }
 
@@ -2597,7 +2575,7 @@ export class TokenSim {
   }
 
   private executeCurveBuy(grossBaseInUsd: number): { baseInUsd: number; tokensOut: number } {
-    if (!Number.isFinite(grossBaseInUsd) || grossBaseInUsd <= 0 || this.curveRealToken <= CURVE_TOKEN_EPS) {
+    if (this.curveCompleted || this.hasMigrated || !Number.isFinite(grossBaseInUsd) || grossBaseInUsd <= 0 || this.curveRealToken <= 0) {
       return { baseInUsd: 0, tokensOut: 0 };
     }
 
@@ -2631,10 +2609,9 @@ export class TokenSim {
     if (inputExceedsAvailableTokens) {
       // Charge only the input required by the capped output, preserving constant product.
       const cappedY = y - tokensOut;
-      const cappedX = k / Math.max(CURVE_TOKEN_EPS, cappedY);
-      netBaseUsed = Math.max(0, cappedX - x);
+      netBaseUsed = x * tokensOut / Math.max(CURVE_TOKEN_EPS, cappedY);
     }
-    if (tokensOut <= 0 || netBaseUsed <= 0) return { baseInUsd: 0, tokensOut: 0 };
+    if (tokensOut <= 0 || !Number.isFinite(netBaseUsed) || netBaseUsed <= 0) return { baseInUsd: 0, tokensOut: 0 };
 
     this.curveVirtualBase = x + netBaseUsed;
     this.curveVirtualToken = Math.max(CURVE_TOKEN_EPS, y - tokensOut);
@@ -2644,7 +2621,7 @@ export class TokenSim {
   }
 
   private executeCurveSell(tokenIn: number): { tokenIn: number; baseOutUsd: number } {
-    if (!Number.isFinite(tokenIn) || tokenIn <= 0 || this.curveRealBase <= 0) return { tokenIn: 0, baseOutUsd: 0 };
+    if (this.curveCompleted || this.hasMigrated || !Number.isFinite(tokenIn) || tokenIn <= 0 || this.curveRealBase <= 0) return { tokenIn: 0, baseOutUsd: 0 };
 
     const cappedTokenIn = Math.min(tokenIn, this.curveInitialRealToken - this.curveRealToken);
     if (cappedTokenIn <= 0) return { tokenIn: 0, baseOutUsd: 0 };

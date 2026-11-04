@@ -15,7 +15,6 @@ import {
 import { registry, type ChartMetric } from '../../tokens/registry';
 import type { Candle } from '../../engine/types';
 import { SUPPLY } from '../../tokens/types';
-import { getMigrationThresholdUsd } from '../../tokens/tokenMarketRegimes';
 import { useTokenStore, selectMarketSessionBucket } from '../../store/tokenStore';
 import {
   useTradingStore,
@@ -153,8 +152,11 @@ export default function Chart({ tokenId }: Props) {
   const avgEntryMcap = useTradingStore(selectAvgEntryMcap);
   const avgSellPrice = useTradingStore(selectAvgSellPrice);
   const avgSellMcap = useTradingStore(selectAvgSellMcap);
-  const migrationMcap = useMemo(() => getMigrationThresholdUsd(), []);
-  const migrationPrice = useMemo(() => migrationMcap / SUPPLY, [migrationMcap]);
+  const migrationMcap = useMemo(() => {
+    const migration = tokenEvents.find((event) => event.type === 'MIGRATION');
+    return migration?.mcap ?? registry.getTokenSim(tokenId)?.getMigrationReferenceMcapUsd() ?? null;
+  }, [tokenId, tokenEvents]);
+  const migrationPrice = useMemo(() => (migrationMcap ?? 0) / SUPPLY, [migrationMcap]);
 
   const [tfSec, setTfSec] = useState(1);
   const [metric, setMetric] = useState<Metric>('mcap');

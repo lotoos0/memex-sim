@@ -61,9 +61,11 @@ class TokenRegistry {
       useTokenStore.getState().setMarketSessionBucket(sessionBucket);
 
       for (const [id, sim] of this.tokens) {
-        const events = sim.tick(realDtSec, sessionBucket);
+        const events = sim.tick(realDtSec, sessionBucket,
+          (execution) => this.executions.process(id, sim, [execution]),
+          (event) => useTokenStore.getState().pushTokenEvents(id, [event]));
         if (events.length > 0) {
-          useTokenStore.getState().pushTokenEvents(id, events);
+          useTokenStore.getState().pushTokenEvents(id, events.filter((event) => event.type !== 'MIGRATION'));
         }
 
         const executions = sim.drainUserTradeExecutions();
