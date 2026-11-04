@@ -1282,7 +1282,7 @@ export class TokenSim {
         simMs: this.simTimeMs,
       };
       this.applyWalletDelta(walletId, buy.tokensOut, tsMs);
-      this.recordTradeTick(tsMs, buy.baseInUsd, 'BUY', walletId, buy.tokensOut);
+      this.recordTradeTick(tsMs, buy.baseInUsd, buy.baseInUsd, 'BUY', walletId, buy.tokensOut);
       return true;
     }
 
@@ -1299,7 +1299,7 @@ export class TokenSim {
       simMs: this.simTimeMs,
     };
     this.applyWalletDelta(walletId, buy.tokensOut, tsMs);
-    this.recordTradeTick(tsMs, buy.baseInNetUsd, 'BUY', walletId, buy.tokensOut);
+    this.recordTradeTick(tsMs, buy.baseInNetUsd, buy.baseInNetUsd, 'BUY', walletId, buy.tokensOut);
     return true;
   }
 
@@ -1336,7 +1336,8 @@ export class TokenSim {
         simMs: this.simTimeMs,
       };
       this.applyWalletDelta(walletId, -sell.tokenIn, tsMs);
-      this.recordTradeTick(tsMs, sell.baseOutUsd, 'SELL', walletId, sell.tokenIn);
+      this.recordTradeTick(tsMs, sell.baseOutUsd / (1 - CURVE_FEE_BPS / 10_000),
+        sell.baseOutUsd, 'SELL', walletId, sell.tokenIn);
       return true;
     }
 
@@ -1353,7 +1354,7 @@ export class TokenSim {
       simMs: this.simTimeMs,
     };
     this.applyWalletDelta(walletId, -sell.tokenIn, tsMs);
-    this.recordTradeTick(tsMs, sell.baseOutNetUsd, 'SELL', walletId, sell.tokenIn);
+    this.recordTradeTick(tsMs, sell.baseOutGrossUsd, sell.baseOutNetUsd, 'SELL', walletId, sell.tokenIn);
     return true;
   }
 
@@ -2218,6 +2219,7 @@ export class TokenSim {
     let filledToken = 0;
     let filledUsd = 0;
     let feeUsd = 0;
+    let marketVolumeUsd = 0;
 
     if (!this.hasMigrated && this.phase !== 'MIGRATED') {
       this.sanitizeCurveState();
@@ -2235,6 +2237,7 @@ export class TokenSim {
         filledToken = buy.tokensOut;
         filledUsd = grossUsedUsd;
         feeUsd = Math.max(0, grossUsedUsd - buy.baseInUsd);
+        marketVolumeUsd = buy.baseInUsd;
       } else {
         const sell = this.executeCurveSell(amount);
         if (sell.baseOutUsd <= 0 || sell.tokenIn <= 0) {
@@ -2248,6 +2251,7 @@ export class TokenSim {
         filledToken = sell.tokenIn;
         filledUsd = sell.baseOutUsd;
         feeUsd = Math.max(0, grossOutUsd - sell.baseOutUsd);
+        marketVolumeUsd = grossOutUsd;
       }
       this.sanitizeCurveState();
       this.bondingProgress = this.getCurveProgress();
@@ -2267,6 +2271,7 @@ export class TokenSim {
         filledToken = buy.tokensOut;
         filledUsd = buy.baseInGrossUsd;
         feeUsd = Math.max(0, buy.baseInGrossUsd - buy.baseInNetUsd);
+        marketVolumeUsd = buy.baseInNetUsd;
         const mcapUsd = this.clampMcapUsd(buy.priceAfterUsd * SUPPLY);
         this.lastMcapUsd = mcapUsd;
         this.lastPriceUsd = mcapUsd / SUPPLY;
@@ -2282,6 +2287,7 @@ export class TokenSim {
         filledToken = sell.tokenIn;
         filledUsd = sell.baseOutNetUsd;
         feeUsd = Math.max(0, sell.baseOutGrossUsd - sell.baseOutNetUsd);
+        marketVolumeUsd = sell.baseOutGrossUsd;
         const mcapUsd = this.clampMcapUsd(sell.priceAfterUsd * SUPPLY);
         this.lastMcapUsd = mcapUsd;
         this.lastPriceUsd = mcapUsd / SUPPLY;
@@ -2294,12 +2300,12 @@ export class TokenSim {
     const impactPct = priceBeforeUsd > 0
       ? ((priceAfterUsd - priceBeforeUsd) / priceBeforeUsd) * 100
       : 0;
-    const notionalUsd = Math.max(0, filledUsd);
+    const walletNotionalUsd = Math.max(0, filledUsd);
     const walletId = 'you';
     if (side === 'BUY') this.applyWalletDelta(walletId, filledToken, tsMs);
     else this.applyWalletDelta(walletId, -filledToken, tsMs);
 
-    this.recordTradeTick(tsMs, notionalUsd, side, walletId, filledToken);
+    this.recordTradeTick(tsMs, marketVolumeUsd, walletNotionalUsd, side, walletId, filledToken);
 
     const events: TokenChartEvent[] = [];
     const maybeMigrationEvent = this.updatePhase(tsMs);
@@ -2795,26 +2801,28 @@ export class TokenSim {
 
   private recordTradeTick(
     candleTsMs: number,
-    volumeUsd: number,
+    marketVolumeUsd: number,
+    walletNotionalUsd: number,
     side: UserTradeSide,
     walletId: string,
     tokenAmount: number
   ): void {
-    this.pushCandleTicks(candleTsMs, volumeUsd);
+    this.pushCandleTicks(candleTsMs, marketVolumeUsd);
 
     this.statWindow.push({
       simMs: this.simTimeMs,
-      volUsd: volumeUsd,
+      volUsd: marketVolumeUsd,
       buys: side === 'BUY' ? 1 : 0,
       sells: side === 'SELL' ? 1 : 0,
     });
     this.pruneStatWindow();
 
+    // Holder accounting keeps its existing notional, including bot BUY net cost.
     this.recordWalletTradeStats(
       walletId,
       side,
       Math.max(0, tokenAmount),
-      Math.max(0, volumeUsd),
+      Math.max(0, walletNotionalUsd),
       this.lastPriceUsd,
       candleTsMs
     );
@@ -2825,7 +2833,7 @@ export class TokenSim {
       side,
       walletId,
       tokenAmount: Math.max(0, tokenAmount),
-      notionalUsd: Math.max(0, volumeUsd),
+      notionalUsd: Math.max(0, marketVolumeUsd),
       priceUsd: this.lastPriceUsd,
       mcapUsd: this.lastMcapUsd,
     });
