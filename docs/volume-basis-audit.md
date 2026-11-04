@@ -296,3 +296,35 @@ Pulse volume filters, sorting and displayed totals now use fee-exclusive market 
 Remaining risks are the separately documented cash-cap SELL accounting defect, bot holder cost defect, in-memory mixed-basis sessions and the synthetic post-migration reserve interpretation. Slice 2B's fan-out invariant alarm still has no rollback for unsupported private-state desynchronization. This change does not alter that admission proof or add recovery behavior.
 
 Both Windows QA launchers were attempted sequentially and exited 127 because PowerShell is unavailable. Full browser/manual lifecycle and trading verification, including the five-minute run, remains unverified on this host. A permitted local Vite launch returned HTTP 200; that proves serving/startup only, not browser execution. Production changes are confined to `tokenSim.ts`; aggregators, frozen types, curve/AMM math, fees, latency/slippage, migration rules, OHLC/genesis conventions, UI/store, dependencies and Replay/Live architecture are unchanged.
+
+## Slice 2C2 - bot BUY holder accounting
+
+Base: `bbae15b` after PR #48. Branch: `fix/bot-holder-buy-accounting`. This slice resolves the four bot BUY holder-cost diagnostics above; the two cash-cap SELL diagnostics remain. The preceding audit and Slice 2C1 results are historical snapshots.
+
+Cause: bot BUY passed net input as both market volume and holder notional. `recordWalletTradeStats` consequently omitted the swap fee from Bought, average entry, open cost and profile SOL debit, overstating later realized PnL. The fix changes only the BUY holder argument: pre migration uses actual `buy.baseInUsd / feeFactor`, including exhaustion caps; post migration uses `buy.baseInGrossUsd`. Market volume stays net. `recordWalletTradeStats`, SELL, swap math, fees and trading wallet settlement are unchanged.
+
+Holder cost basis now includes gross used BUY cost. Average BUY is cumulative gross cost divided by purchased tokens. SELL still records net proceeds, allocates average cost proportionally to sold tokens, leaves the remaining cost with the open position and realizes net proceeds minus allocated cost. Profile SOL decreases by gross BUY cost / 150 and increases by net SELL proceeds / 150; the existing zero-floor behavior is retained. No requested-but-unused budget is charged at exhaustion.
+
+`volumeBasisQa.ts` retains all previous expectations and adds 162 holder checks. Four existing bot BUY fixtures (pre/post, exhaustion and mixed flow) additionally verify open-cost increment, average entry, SOL debit, no immediate realized PnL and token inventory. Two isolated holder fixtures cover BUY, partial SELL and full SELL before/after migration. Each starts with no other holders; assertions verify the actual tape walletId is the BUY holder on both SELLs. Normal selection and swaps run unchanged. A private observer captures profile SOL before its initial debit; no public test API is added. The cycles check all holder amounts/averages, inventory, remaining cost, PnL, swap fee and volume in all eight projections.
+
+| Check | Slice 2C1 | Slice 2C2 |
+| --- | --- | --- |
+| Market volume / integrity | 265/265 / 249/249 | 265/265 / 249/249 PASS |
+| Holder accounting | 12/16, four FAIL | 16/16 PASS |
+| User wallet settlement/PnL | 10/10 | 10/10 PASS |
+| New holder/cycle checks | Not present | 162/162 PASS |
+| Reserve model | 35/37, two FAIL | 35/37, same two cash-cap FAIL |
+| Late Tick | 52/52 + 81/81 | 52/52 + 81/81 PASS |
+| Timestamp / BUY exhaustion | 350/350 / 135 | 350/350 / 135 PASS |
+| OHLC / curve diagnostics | 335/413 / 14/18 | 335/413 / 14/18; exit 1 |
+| Build / lint | PASS / 7 warnings | PASS / 0 errors, 7 existing Hooks warnings |
+
+The volume diagnostic now exits 1 only for the two unchanged cash-cap model assertions. No mandatory CI gate was added. Existing reproduction commands build the extended QA; it also emits `HOLDER_CYCLES` and expanded `ECONOMICS` JSON for comparison.
+
+Economic regression used the same updated harness with `TokenSim` from `bbae15b` in a temporary tree and the current source. Across 12 isolated swaps, execution quantities, reserves, price/mcap, fills/fees, RNG, market tape, stats, all eight OHLCV series and the user's trading wallet matched exactly. Only the three isolated bot BUY cases changed holder profiles: gross bought/open cost and average entry increased by the fee effect, while SOL decreased accordingly. The mixed-stream holder change is checked separately by the existing wallet assertion and added accounting checks.
+
+Across six stages of the two same-holder cycles, all market/execution/inventory/user-wallet data also matched exactly. Differences in open cost equal the BUY fee times the unsold fraction; realized PnL decreases by the fee times the sold fraction; SOL is lower by the BUY fee / 150. Sold totals/averages and token quantities are unchanged. Comparison allowed only these named holder fields and verified their expected deltas, rather than ignoring whole profiles. The older Slice 2C1 full-profile equality command is historical and must be run at that revision; full holder-profile equality is intentionally invalid for Slice 2C2.
+
+Scope is three files: `tokenSim.ts`, this report and `volumeBasisQa.ts`. No market-volume semantic change, frozen types, aggregator, curve/AMM, fee model, stores, migration, regime parameters, UI or Replay/Live changes. A fresh SIM session avoids mixing earlier understated costs with corrected BUY entries; old profiles are not retroactively recalculated. Future actor behavior may diverge if it consumes corrected profile accounting; isolated regression does not claim equality of all future paths. The cash-cap SELL model defect and its unverified public reachability remain separate work.
+
+Two fresh-process QA runs produced identical output. Both Windows browser QA launchers were attempted sequentially and exited 127 (`powershell` unavailable). Full manual/browser lifecycle and trading checks remain unverified on this Linux host; a permitted Vite startup returned HTTP 200, which checks serving only. Build retained the chunk-size warning. No PR is created by this task; the dedicated commit is prepared for code review.
