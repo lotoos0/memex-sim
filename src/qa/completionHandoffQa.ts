@@ -1,3 +1,5 @@
+import { useTradingStore } from '../store/tradingStore';
+import { useWalletStore } from '../store/walletStore';
 import { TokenSim, type UserTradeExecutionNotice } from '../tokens/tokenSim';
 import { SUPPLY, type TokenMeta } from '../tokens/types';
 import { registry } from '../tokens/registry';
@@ -35,6 +37,74 @@ function snapshot(sim: TokenSim): string {
 }
 try {
   Date.now = () => now;
+  // Relative-only comparisons: zero cannot pass against a positive dust cost.
+  const relative = (actual: number, expected: number, label: string): void => {
+    assert(Number.isFinite(actual) && expected > 0 && actual > 0
+      && Math.abs(actual / expected - 1) < 1e-10, label);
+  };
+  for (const scenario of ['normal', 'exact', 'oversize', 'extreme-dust'] as const) {
+    const precision = fixture('precision-' + scenario);
+    const available = scenario === 'extreme-dust' ? 1e-9 : 1000;
+    precision['curveRealToken'] = available;
+    const expectedCapNet = 1000 * available / (100_000_000 - available);
+    const gross = scenario === 'normal' ? expectedCapNet / 0.99 / 2
+      : scenario === 'exact' ? expectedCapNet / 0.99 : expectedCapNet / 0.99 * 3;
+    // For dust use an ordinary oversize budget to reproduce cancellation in the old inverse.
+    const budgetSol = scenario === 'extreme-dust' ? 0.1 : gross / 150;
+    const expectedOut = scenario === 'normal'
+      ? 100_000_000 * (gross * 0.99) / (1000 + gross * 0.99) : available;
+    const expectedNet = scenario === 'normal' ? gross * 0.99 : expectedCapNet;
+    const expectedGross = expectedNet / 0.99;
+    const estimate = precision['estimateCurveBuyOut'](budgetSol * 150);
+    relative(estimate.tokensOut, expectedOut, scenario + '/positive quote output');
+    relative(estimate.baseInUsedUsd, expectedGross, scenario + '/positive quoted gross cost');
+    registry['tokens'].set(precision.meta.id, precision);
+    useTokenStore.getState().addToken(precision.meta, precision.getRuntime());
+    const walletBefore = scenario === 'extreme-dust' ? 120 : 1;
+    useWalletStore.setState({ solBalance: walletBefore });
+    const submit = useTradingStore.getState().quickBuy(precision.meta.id, budgetSol, { slippagePct: 100 });
+    assert(submit.ok, scenario + '/reserved BUY');
+    const pending = Object.values(useTradingStore.getState().pendingQuickOrdersById).find(order => order.tokenId === precision.meta.id);
+    assert(pending !== undefined, scenario + '/pending reservation');
+    const k = precision.getCurveDebugSnapshot().k;
+    now = pending.execMs;
+    const events = precision['processPendingUserTrades'](now);
+    const notices = precision.drainUserTradeExecutions();
+    const notice = notices[0];
+    assert(notices.length === 1 && notice.status === 'FILLED', scenario + '/one fill');
+    const filled = notice.fill;
+    relative(filled.filledToken, estimate.tokensOut, scenario + '/quote fill agreement');
+    relative(filled.filledUsd, expectedGross, scenario + '/charged gross');
+    relative(filled.feeUsd, expectedGross * 0.01, scenario + '/fee');
+    relative(precision['tape'][0]!.notionalUsd, expectedNet, scenario + '/positive market net quote');
+    near(precision.getCurveDebugSnapshot().k, k, scenario + '/K');
+    registry['executions'].process(precision.meta.id, precision, notices);
+    assert(!useTradingStore.getState().pendingQuickOrdersById[pending.orderId], scenario + '/settled once');
+    const expectedWallet = walletBefore - filled.filledSol - pending.txCostSol;
+    assert(Math.abs(useWalletStore.getState().solBalance - expectedWallet) <= 2 * Number.EPSILON * walletBefore,
+      scenario + '/reservation refund (wallet ULP bound)');
+    relative(useTradingStore.getState().quickPositionsByTokenId[precision.meta.id].costBasisUsd,
+      expectedGross, scenario + '/position retains positive gross cost');
+    if (scenario !== 'normal') {
+      const completed = precision.getCurveDebugSnapshot();
+      assert(completed.rTok === 0 && completed.phase === 'MIGRATED' && completed.hasMigrated,
+        scenario + '/real depletion and migration');
+      assert(events.filter(event => event.type === 'MIGRATION').length === 1, scenario + '/one event');
+      const nextBuy = precision['executeUserTradeImmediate']('BUY', 0.1, now);
+      assert(nextBuy.fill.ok && nextBuy.events.length === 0, scenario + '/next venue no repeat migration');
+      assert(precision.getCurveDebugSnapshot().rTok === 0, scenario + '/curve stays closed');
+    } else assert(!precision.getCurveDebugSnapshot().hasMigrated && events.length === 0, 'normal BUY stays on curve');
+    if (scenario === 'extreme-dust') {
+      assert(filled.filledSol > 0 && walletBefore - filled.filledSol === walletBefore, 'explicit wallet sub-ULP boundary');
+      assert(useWalletStore.getState().solBalance === walletBefore - pending.txCostSol, 'documented dust debit below wallet resolution');
+      console.log('DUST_PRECISION', JSON.stringify({ tokens: filled.filledToken, netUsd: expectedNet,
+        grossUsd: filled.filledUsd, feeUsd: filled.feeUsd, costSol: filled.filledSol,
+        wallet: useWalletStore.getState().solBalance, txCostSol: pending.txCostSol,
+        incrementalWalletCost: (walletBefore - pending.txCostSol) - useWalletStore.getState().solBalance,
+        virtualBase: precision.getCurveDebugSnapshot().vBase }));
+    }
+    registry['tokens'].delete(precision.meta.id);
+  }
   const dust = fixture('completion-dust');
   dust['curveRealToken'] = 0.0000005;
   const dustFill = dust['executeUserTradeImmediate']('BUY', 1, now);

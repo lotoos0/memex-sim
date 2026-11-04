@@ -1719,11 +1719,6 @@ export class TokenSim {
       return null;
     }
 
-    if (this.hasMigrated) {
-      this.phase = 'MIGRATED';
-      return null;
-    }
-
     if (!this.hasEnteredFinal && this.bondingProgress >= FINAL_PROGRESS) {
       this.hasEnteredFinal = true;
     }
@@ -2544,10 +2539,9 @@ export class TokenSim {
     if (inputExceedsAvailableTokens) {
       // Charge only the input required by the capped output, preserving constant product.
       const cappedY = y - tokensOut;
-      const cappedX = k / Math.max(CURVE_TOKEN_EPS, cappedY);
-      netBaseUsed = Math.max(0, cappedX - x);
+      netBaseUsed = x * tokensOut / Math.max(CURVE_TOKEN_EPS, cappedY);
     }
-    if (tokensOut <= 0 || netBaseUsed <= 0) return { tokensOut: 0, baseInUsedUsd: 0 };
+    if (tokensOut <= 0 || !Number.isFinite(netBaseUsed) || netBaseUsed <= 0) return { tokensOut: 0, baseInUsedUsd: 0 };
 
     const grossBaseUsed = netBaseUsed / feeFactor;
     return { tokensOut, baseInUsedUsd: grossBaseUsed };
@@ -2615,10 +2609,9 @@ export class TokenSim {
     if (inputExceedsAvailableTokens) {
       // Charge only the input required by the capped output, preserving constant product.
       const cappedY = y - tokensOut;
-      const cappedX = k / Math.max(CURVE_TOKEN_EPS, cappedY);
-      netBaseUsed = Math.max(0, cappedX - x);
+      netBaseUsed = x * tokensOut / Math.max(CURVE_TOKEN_EPS, cappedY);
     }
-    if (tokensOut <= 0 || netBaseUsed <= 0) return { baseInUsd: 0, tokensOut: 0 };
+    if (tokensOut <= 0 || !Number.isFinite(netBaseUsed) || netBaseUsed <= 0) return { baseInUsd: 0, tokensOut: 0 };
 
     this.curveVirtualBase = x + netBaseUsed;
     this.curveVirtualToken = Math.max(CURVE_TOKEN_EPS, y - tokensOut);

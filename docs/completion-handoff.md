@@ -80,3 +80,48 @@ Screenshots/DOM observations were inspected through browser tools; no screenshot
 ## Review focus
 
 Review synchronous publication/settlement order and standalone callback compatibility, quantity-zero completion including positive dust, fate precedence, and removal of threshold-based flow caps. Natural flow can now reach the existing profile's actual completion price, which can differ substantially from USD34200. This is intended by 3B but changes cadence and migration distribution. Initial reserves, fees and synthetic post-migration venue remain the approved existing model; 3C economics and 3D broad natural-lifecycle sign-off are separate decisions.
+
+## Follow-up — BUY dust precision and completion safety
+
+Starting commit: `ebabbb8c8ea78c773a56468f9a840907060a23c7`. This section supersedes the earlier 48-check count, not the original handoff contract.
+
+Both capped BUY paths previously solved required input by computing K/(Y-T)-X. With X=1000, Y=100000000 and real inventory T=1e-9, the division rounds back to X and subtraction produces zero. Quote/execution then reject a positive inventory as No liquidity. The fix uses the equivalent stable inverse `X*T/max(CURVE_TOKEN_EPS,Y-T)` in estimateCurveBuyOut and executeCurveBuy. Existing denominator protection, reserve/output cap, fee-on-gross and refund are retained. Nonfinite required input is explicitly rejected before reserve mutation. No completion epsilon is added: an actual successful fill consumes the real inventory to zero. The unreachable second hasMigrated branch in updatePhase was removed; its entry guard already returns for that condition.
+
+New QA covers ordinary BUY, exact exhaustion, oversize exhaustion and the 1e-9-token case through actual pending quick BUY reservation, execution and existing settlement. Dust cost/fee/output assertions use positive, relative-only comparisons; a zero cost cannot pass under an absolute tolerance. It checks original quote/fill agreement, positive tape net volume, actual gross cost and fee, settled reservation/refund, positive position cost basis, K, real-token depletion, MIGRATED latch, one migration event, the next migrated BUY and no second migration. Existing same-batch ordering and failure-mutation checks remain.
+
+Regression sensitivity was verified outside the repository: a temporary bundled QA with only the old inverse expression substituted back fails `extreme-dust/positive quote output`. The corrected bundle passes. No production file was reverted for this check.
+
+### Explicit numerical boundary, not hidden by QA tolerance
+
+For the dust fixture:
+
+- Tokens filled: 1e-9; real token reserves become exactly zero.
+- Net market quote: approximately 1.0000000000000002e-14 USD.
+- Gross charged in fill/cost basis: 1.0101010101010102e-14 USD.
+- Fee in fill: approximately 1.0101010101010052e-16 USD.
+- Fill cost in SOL: 6.734006734006735e-17.
+- At wallet 120 SOL, the existing transaction cost is 0.000005 SOL; final wallet is 119.999995 SOL. The incremental dust debit beyond that transaction cost rounds to zero.
+
+Binary64 spacing is approximately 1.1368683772161603e-13 USD at virtual base 1000, 5.684341886080802e-14 USD at real base 500, 1.4901161193847656e-8 tokens at virtual tokens 100000000, and 1.4210854715202004e-14 SOL at wallet 120. The respective dust deltas are below half those spacings. Thus virtual reserve fields and the wallet cannot represent the individual increments even though the stable cost calculation, fill, tape and position cost basis preserve a positive amount. K remains within tolerance (indeed these reserve-sized fields may remain numerically identical); that alone is not evidence of an exactly representable reserve transfer.
+
+QA explicitly asserts and reports this sub-ULP wallet boundary, separately from the positive economic quantities. Its wallet-refund comparison bounds ordinary binary64 addition/subtraction error; it is not a claim of exact dust cash conservation. The inverse cancellation/completion blocker is fixed, but arbitrary-precision settlement is NOT claimed. At still smaller subnormal amounts, multiplication/division can underflow too.
+
+A minimal separate numerical-accounting proposal is compensated accumulation with retained residuals for real/virtual quote and wallet cash updates, including reservation/refund arithmetic. Residuals must remain part of the accounting state across operations; simply loosening tolerances, dropping them or adding a completion epsilon would not fix it. That proposal requires review and authorization for wallet/store arithmetic, explicitly prohibited in this patch. Integer lamport/token quantization is a different economic contract and would reject/round the 1e-9-token trade rather than reproduce this continuous model; it is not introduced here. Existing holder inventory dust filtering is also unchanged.
+
+### Follow-up validation
+
+| Check | Result |
+|---|---|
+| completionHandoffQa | 115 assertions PASS |
+| buyExhaustionQa | 136 assertions PASS |
+| curveParityAuditQa | 182 assertions PASS |
+| volumeBasisQa | All seven groups PASS: 249, 265, 37, 16, 10, 162, 14 |
+| cashCapSellQa | 2,683,166 invariant checks PASS; forced guard 2/2 |
+| lateTickQa | Contract 52/52; integration 81/81 |
+| tradeTimestampQa | 353/353 |
+| npm run build | PASS; existing bundle-size warning |
+| npm run lint | PASS; 0 errors, 7 existing warnings |
+| Windows dead-floor / quick-limit | Both PASS; quick-limit refund restored 120 SOL, one BUY and SELL execution, zero open limits |
+| Historical tradeOhlcQa / curveParityQa | Unchanged 335/413 and 14/18; expected nonzero diagnostic exits |
+
+Only tokenSim.ts, completionHandoffQa.ts and this document change in the follow-up. Frozen contracts, fee constants, initialization, stores, relay, pending-order behavior, event architecture and SOL/USD are untouched. The separate uncommitted trading-core sign-off remains unchanged.
