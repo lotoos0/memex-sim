@@ -1,0 +1,1381 @@
+{
+ "meta": {
+  "source": "huggingface.co/datasets/pumpdatafun/pump-fun-trades-sample",
+  "day": "2026-10-15 UTC",
+  "cohort_cutoff_utc": "20:00",
+  "sol_usd_assumed_for_compare": 150
+ },
+ "coverage": {
+  "curve_sol_trades": 4013534,
+  "curve_trades_on_day_launches": 3796661,
+  "launches_all": 46540,
+  "launches_sol": 36897,
+  "completes_all": 1067,
+  "completes_of_day_launches": 997,
+  "slots_per_s": 4.6236805556,
+  "ms_per_slot": 216.27791712142476
+ },
+ "trade_size_by_age_side": [
+  {
+   "age_bucket": "0-10s",
+   "side": "buy",
+   "n": 284031,
+   "vol_sol": 162754.4439790359,
+   "p10": 0.010016628,
+   "p25": 0.0413212705,
+   "p50": 0.175903547,
+   "p75": 0.740740739,
+   "p90": 1.432098764,
+   "p99": 4.938271604,
+   "mean": 0.5730164805,
+   "mu_ln": -1.9372665397,
+   "sigma_ln": 1.9973931357,
+   "share_ge_1sol": 0.1627780066,
+   "share_lt_001sol": 0.0992532505
+  },
+  {
+   "age_bucket": "0-10s",
+   "side": "sell",
+   "n": 162262,
+   "vol_sol": 80579.1559380259,
+   "p10": 0.0102201529,
+   "p25": 0.03228787,
+   "p50": 0.148148146,
+   "p75": 0.592426765,
+   "p90": 1.3376655471,
+   "p99": 3.950617282,
+   "mean": 0.4965990555,
+   "mu_ln": -2.0497324671,
+   "sigma_ln": 1.9250759874,
+   "share_ge_1sol": 0.1521243421,
+   "share_lt_001sol": 0.0972932664
+  },
+  {
+   "age_bucket": "10-60s",
+   "side": "buy",
+   "n": 546380,
+   "vol_sol": 127467.9366185646,
+   "p10": 0.0081002184,
+   "p25": 0.019753085,
+   "p50": 0.0648183535,
+   "p75": 0.2345987105,
+   "p90": 0.6795447834,
+   "p99": 1.975308641,
+   "mean": 0.2332953926,
+   "mu_ln": -2.7607482699,
+   "sigma_ln": 1.8561414311,
+   "share_ge_1sol": 0.04783301,
+   "share_lt_001sol": 0.1610161426
+  },
+  {
+   "age_bucket": "10-60s",
+   "side": "sell",
+   "n": 499856,
+   "vol_sol": 138217.2375312649,
+   "p10": 0.0075582665,
+   "p25": 0.021237262,
+   "p50": 0.077615791,
+   "p75": 0.3010389132,
+   "p90": 0.796558752,
+   "p99": 2.329684417,
+   "mean": 0.2765141111,
+   "mu_ln": -2.6082330504,
+   "sigma_ln": 1.8800313349,
+   "share_ge_1sol": 0.0659970071,
+   "share_lt_001sol": 0.1339485772
+  },
+  {
+   "age_bucket": "1-10m",
+   "side": "buy",
+   "n": 836308,
+   "vol_sol": 173877.6073949151,
+   "p10": 0.003832888,
+   "p25": 0.009777777,
+   "p50": 0.0456401235,
+   "p75": 0.1951360602,
+   "p90": 0.5785454951,
+   "p99": 1.975308641,
+   "mean": 0.2079109699,
+   "mu_ln": -3.2330508073,
+   "sigma_ln": 2.1100667794,
+   "share_ge_1sol": 0.0440172759,
+   "share_lt_001sol": 0.2821472472
+  },
+  {
+   "age_bucket": "1-10m",
+   "side": "sell",
+   "n": 806145,
+   "vol_sol": 195417.2111961562,
+   "p10": 0.0043860392,
+   "p25": 0.010678508,
+   "p50": 0.046812938,
+   "p75": 0.23732299,
+   "p90": 0.7473012054,
+   "p99": 2.218163763,
+   "mean": 0.242409506,
+   "mu_ln": -3.0408031006,
+   "sigma_ln": 2.0898010965,
+   "share_ge_1sol": 0.0625941983,
+   "share_lt_001sol": 0.2389210378
+  },
+  {
+   "age_bucket": "10-60m",
+   "side": "buy",
+   "n": 200344,
+   "vol_sol": 61521.3690070459,
+   "p10": 0.0023621104,
+   "p25": 0.0118108362,
+   "p50": 0.0962140915,
+   "p75": 0.342222221,
+   "p90": 0.9679914624,
+   "p99": 2.7051183224,
+   "mean": 0.3070786697,
+   "mu_ln": -2.8909090427,
+   "sigma_ln": 2.5193138937,
+   "share_ge_1sol": 0.0694904764,
+   "share_lt_001sol": 0.2349708501
+  },
+  {
+   "age_bucket": "10-60m",
+   "side": "sell",
+   "n": 190387,
+   "vol_sol": 68911.911730289,
+   "p10": 0.0042174632,
+   "p25": 0.0189799885,
+   "p50": 0.110637621,
+   "p75": 0.461042011,
+   "p90": 1.0136510826,
+   "p99": 2.7929550485,
+   "mean": 0.361957023,
+   "mu_ln": -2.5919186844,
+   "sigma_ln": 2.4438043534,
+   "share_ge_1sol": 0.1027853793,
+   "share_lt_001sol": 0.1888049079
+  },
+  {
+   "age_bucket": "1h+",
+   "side": "buy",
+   "n": 72927,
+   "vol_sol": 20326.3625584963,
+   "p10": 1e-06,
+   "p25": 0.0023129825,
+   "p50": 0.059364627,
+   "p75": 0.296296296,
+   "p90": 0.9302571396,
+   "p99": 2.444444443,
+   "mean": 0.2787220448,
+   "mu_ln": -4.4735488494,
+   "sigma_ln": 4.5502222174,
+   "share_ge_1sol": 0.0647359688,
+   "share_lt_001sol": 0.3479369781
+  },
+  {
+   "age_bucket": "1h+",
+   "side": "sell",
+   "n": 72841,
+   "vol_sol": 21821.38245803,
+   "p10": 0.00052886,
+   "p25": 0.003602429,
+   "p50": 0.06,
+   "p75": 0.339551572,
+   "p90": 0.944399021,
+   "p99": 2.5008953758,
+   "mean": 0.2995755475,
+   "mu_ln": -3.4187929578,
+   "sigma_ln": 2.8587925076,
+   "share_ge_1sol": 0.0869153361,
+   "share_lt_001sol": 0.3406186077
+  }
+ ],
+ "trade_size_all": [
+  {
+   "side": "sell",
+   "n": 1886634,
+   "q": [
+    0.0001213253,
+    0.0049136779,
+    0.0152901735,
+    0.073352919,
+    0.332386005,
+    0.9171871516,
+    1.3265788016,
+    2.7681143132,
+    6.8245685414
+   ],
+   "mean": 0.3114924155,
+   "mu_ln": -2.7531914591,
+   "sigma_ln": 2.1832605436
+  },
+  {
+   "side": "buy",
+   "n": 2126704,
+   "q": [
+    5.08801e-05,
+    0.004543209,
+    0.014153487,
+    0.064562217,
+    0.2817778,
+    0.9189768969,
+    1.224691357,
+    2.933333333,
+    8.5179527622
+   ],
+   "mean": 0.3019390175,
+   "mu_ln": -2.909698511,
+   "sigma_ln": 2.3043878205
+  }
+ ],
+ "trade_size_tail": [
+  {
+   "side": "sell",
+   "xmin_p95": 1.3265788016,
+   "n_tail": 94332,
+   "pareto_alpha": 2.2214333925
+  },
+  {
+   "side": "buy",
+   "xmin_p95": 1.224691357,
+   "n_tail": 106331,
+   "pareto_alpha": 1.9110022189
+  }
+ ],
+ "trade_size_buckets_share": [
+  {
+   "b": "<0.03",
+   "share": 0.3564925257
+  },
+  {
+   "b": "0.03-0.05",
+   "share": 0.0989189049
+  },
+  {
+   "b": "0.05-0.1",
+   "share": 0.1288912123
+  },
+  {
+   "b": "0.1-0.25",
+   "share": 0.1375832287
+  },
+  {
+   "b": "0.25-0.5",
+   "share": 0.1069770351
+  },
+  {
+   "b": "0.5-1",
+   "share": 0.0957008854
+  },
+  {
+   "b": "1-1.5",
+   "share": 0.0388512007
+  },
+  {
+   "b": "1.5-2.5",
+   "share": 0.0239436599
+  },
+  {
+   "b": ">=2.5",
+   "share": 0.0126413474
+  }
+ ],
+ "interarrival_all": {
+  "n": 3762017,
+  "q_slot": [
+   0.0,
+   0.0,
+   1.0,
+   4.0,
+   14.0,
+   673.0
+  ],
+  "mean_slot": 130.3985388689,
+  "cv_slot": 25.670903733,
+  "share_same_slot": 0.3380160164,
+  "q_s": [
+   0.0,
+   3.0,
+   146.0
+  ],
+  "cv_s": 25.666387606
+ },
+ "interarrival_by_age": [
+  {
+   "age_bucket": "0-10s",
+   "n": 466596,
+   "p50_slot": 1.0,
+   "p90_slot": 5.0,
+   "mean_slot": 1.9007128222,
+   "cv_slot": 1.9103983058,
+   "share_same_slot": 0.4564934119
+  },
+  {
+   "age_bucket": "10-60s",
+   "n": 1078463,
+   "p50_slot": 1.0,
+   "p90_slot": 7.0,
+   "mean_slot": 4.1506477274,
+   "cv_slot": 3.2880812325,
+   "share_same_slot": 0.3236624715
+  },
+  {
+   "age_bucket": "1-10m",
+   "n": 1670793,
+   "p50_slot": 1.0,
+   "p90_slot": 12.0,
+   "mean_slot": 14.3103849489,
+   "cv_slot": 6.258639596,
+   "share_same_slot": 0.3386822904
+  },
+  {
+   "age_bucket": "10-60m",
+   "n": 397461,
+   "p50_slot": 2.0,
+   "p90_slot": 58.0,
+   "mean_slot": 129.6665635119,
+   "cv_slot": 6.1303923931,
+   "share_same_slot": 0.2792676514
+  },
+  {
+   "age_bucket": "1h+",
+   "n": 148704,
+   "p50_slot": 7.0,
+   "p90_slot": 1112.0,
+   "mean_slot": 2755.4823138584,
+   "cv_slot": 6.0126866968,
+   "share_same_slot": 0.2198999354
+  }
+ ],
+ "trade_rate_by_age": [
+  {
+   "lo": 0,
+   "hi": 10,
+   "trades_per_coin_s": 1.3599890099,
+   "share_coins_active": 0.9260569427
+  },
+  {
+   "lo": 10,
+   "hi": 30,
+   "trades_per_coin_s": 0.753862005,
+   "share_coins_active": 0.6636672734
+  },
+  {
+   "lo": 30,
+   "hi": 60,
+   "trades_per_coin_s": 0.4875902966,
+   "share_coins_active": 0.5532850225
+  },
+  {
+   "lo": 60,
+   "hi": 120,
+   "trades_per_coin_s": 0.2916950006,
+   "share_coins_active": 0.4746368101
+  },
+  {
+   "lo": 120,
+   "hi": 300,
+   "trades_per_coin_s": 0.1065822563,
+   "share_coins_active": 0.3870934506
+  },
+  {
+   "lo": 300,
+   "hi": 600,
+   "trades_per_coin_s": 0.0327104441,
+   "share_coins_active": 0.2632482742
+  },
+  {
+   "lo": 600,
+   "hi": 1800,
+   "trades_per_coin_s": 0.0073638253,
+   "share_coins_active": 0.2004670811
+  },
+  {
+   "lo": 1800,
+   "hi": 3600,
+   "trades_per_coin_s": 0.0014580447,
+   "share_coins_active": 0.0914929423
+  },
+  {
+   "lo": 3600,
+   "hi": 14400,
+   "trades_per_coin_s": 0.0002745278,
+   "share_coins_active": 0.1456537418
+  }
+ ],
+ "trades_per_active_coin_minute": {
+  "q": [
+   1.0,
+   3.0,
+   17.0,
+   64.0,
+   250.0
+  ],
+  "mean": 22.5676048385
+ },
+ "buy_share_by_age": [
+  {
+   "age_lo": 0,
+   "n": 775735,
+   "buy_share_cnt": 0.5790405229,
+   "buy_share_sol": 0.5969463954,
+   "net_sol": 59703.6025723323,
+   "net_sol_per_active_coin": 2.5496926278,
+   "active_coins": 23416
+  },
+  {
+   "age_lo": 30,
+   "n": 415334,
+   "buy_share_cnt": 0.5167575975,
+   "buy_share_sol": 0.4756389202,
+   "net_sol": -4280.6333253251,
+   "net_sol_per_active_coin": -0.2826993347,
+   "active_coins": 15142
+  },
+  {
+   "age_lo": 60,
+   "n": 292524,
+   "buy_share_cnt": 0.5055995406,
+   "buy_share_sol": 0.4688036222,
+   "net_sol": -3329.3388558031,
+   "net_sol_per_active_coin": -0.2952850426,
+   "active_coins": 11275
+  },
+  {
+   "age_lo": 90,
+   "n": 207222,
+   "buy_share_cnt": 0.5117603343,
+   "buy_share_sol": 0.4730699024,
+   "net_sol": -1998.246982934,
+   "net_sol_per_active_coin": -0.2283710838,
+   "active_coins": 8750
+  },
+  {
+   "age_lo": 120,
+   "n": 154545,
+   "buy_share_cnt": 0.5116179753,
+   "buy_share_sol": 0.4654760604,
+   "net_sol": -2005.948329047,
+   "net_sol_per_active_coin": -0.2796916242,
+   "active_coins": 7172
+  },
+  {
+   "age_lo": 150,
+   "n": 119410,
+   "buy_share_cnt": 0.5033414287,
+   "buy_share_sol": 0.4675615495,
+   "net_sol": -1524.793544025,
+   "net_sol_per_active_coin": -0.2719931402,
+   "active_coins": 5606
+  },
+  {
+   "age_lo": 180,
+   "n": 93928,
+   "buy_share_cnt": 0.501224342,
+   "buy_share_sol": 0.46499965,
+   "net_sol": -1426.095903347,
+   "net_sol_per_active_coin": -0.2896802566,
+   "active_coins": 4923
+  },
+  {
+   "age_lo": 210,
+   "n": 72697,
+   "buy_share_cnt": 0.5164449702,
+   "buy_share_sol": 0.478091907,
+   "net_sol": -759.136962603,
+   "net_sol_per_active_coin": -0.1805749197,
+   "active_coins": 4204
+  },
+  {
+   "age_lo": 240,
+   "n": 60922,
+   "buy_share_cnt": 0.5017235153,
+   "buy_share_sol": 0.4584927812,
+   "net_sol": -1310.488352752,
+   "net_sol_per_active_coin": -0.3588412795,
+   "active_coins": 3652
+  },
+  {
+   "age_lo": 270,
+   "n": 48436,
+   "buy_share_cnt": 0.5247749608,
+   "buy_share_sol": 0.4762130615,
+   "net_sol": -642.906984587,
+   "net_sol_per_active_coin": -0.2048126743,
+   "active_coins": 3139
+  },
+  {
+   "age_lo": 300,
+   "n": 43961,
+   "buy_share_cnt": 0.5180500899,
+   "buy_share_sol": 0.473821541,
+   "net_sol": -625.771291338,
+   "net_sol_per_active_coin": -0.1747964501,
+   "active_coins": 3580
+  },
+  {
+   "age_lo": 330,
+   "n": 39719,
+   "buy_share_cnt": 0.5029582819,
+   "buy_share_sol": 0.4757435047,
+   "net_sol": -531.286321977,
+   "net_sol_per_active_coin": -0.1672289336,
+   "active_coins": 3177
+  },
+  {
+   "age_lo": 360,
+   "n": 34043,
+   "buy_share_cnt": 0.5139382546,
+   "buy_share_sol": 0.4753106032,
+   "net_sol": -470.431171391,
+   "net_sol_per_active_coin": -0.1779240436,
+   "active_coins": 2644
+  },
+  {
+   "age_lo": 390,
+   "n": 31528,
+   "buy_share_cnt": 0.4941321999,
+   "buy_share_sol": 0.4729518987,
+   "net_sol": -457.763032082,
+   "net_sol_per_active_coin": -0.1954581691,
+   "active_coins": 2342
+  },
+  {
+   "age_lo": 420,
+   "n": 27317,
+   "buy_share_cnt": 0.5180290661,
+   "buy_share_sol": 0.4698526567,
+   "net_sol": -495.318868303,
+   "net_sol_per_active_coin": -0.2373353466,
+   "active_coins": 2087
+  },
+  {
+   "age_lo": 450,
+   "n": 24484,
+   "buy_share_cnt": 0.498897239,
+   "buy_share_sol": 0.4739308761,
+   "net_sol": -374.313390334,
+   "net_sol_per_active_coin": -0.1967998898,
+   "active_coins": 1902
+  },
+  {
+   "age_lo": 480,
+   "n": 22998,
+   "buy_share_cnt": 0.5198278111,
+   "buy_share_sol": 0.4939521249,
+   "net_sol": -86.252591409,
+   "net_sol_per_active_coin": -0.0486478237,
+   "active_coins": 1773
+  },
+  {
+   "age_lo": 510,
+   "n": 22199,
+   "buy_share_cnt": 0.5066444434,
+   "buy_share_sol": 0.4790553912,
+   "net_sol": -283.047136753,
+   "net_sol_per_active_coin": -0.1801700425,
+   "active_coins": 1571
+  },
+  {
+   "age_lo": 540,
+   "n": 19302,
+   "buy_share_cnt": 0.5041446482,
+   "buy_share_sol": 0.4650957683,
+   "net_sol": -409.264890589,
+   "net_sol_per_active_coin": -0.2715759062,
+   "active_coins": 1507
+  },
+  {
+   "age_lo": 570,
+   "n": 15870,
+   "buy_share_cnt": 0.5233144297,
+   "buy_share_sol": 0.457956677,
+   "net_sol": -430.143555472,
+   "net_sol_per_active_coin": -0.3029179968,
+   "active_coins": 1420
+  },
+  {
+   "age_lo": 600,
+   "n": 113645,
+   "buy_share_cnt": 0.5094108848,
+   "buy_share_sol": 0.4681300995,
+   "net_sol": -2284.089168739,
+   "net_sol_per_active_coin": -0.6561589109,
+   "active_coins": 3481
+  },
+  {
+   "age_lo": 900,
+   "n": 139598,
+   "buy_share_cnt": 0.5161320363,
+   "buy_share_sol": 0.4740995141,
+   "net_sol": -2483.181239977,
+   "net_sol_per_active_coin": -0.6762476144,
+   "active_coins": 3672
+  },
+  {
+   "age_lo": 1800,
+   "n": 74803,
+   "buy_share_cnt": 0.5226795717,
+   "buy_share_sol": 0.4764497171,
+   "net_sol": -1264.375633853,
+   "net_sol_per_active_coin": -0.522037834,
+   "active_coins": 2422
+  },
+  {
+   "age_lo": 3600,
+   "n": 53416,
+   "buy_share_cnt": 0.4204919874,
+   "buy_share_sol": 0.465333568,
+   "net_sol": -920.690194918,
+   "net_sol_per_active_coin": -0.2870876816,
+   "active_coins": 3207
+  },
+  {
+   "age_lo": 7200,
+   "n": 79828,
+   "buy_share_cnt": 0.5662173673,
+   "buy_share_sol": 0.4891469066,
+   "net_sol": -524.201339146,
+   "net_sol_per_active_coin": -0.1936465974,
+   "active_coins": 2707
+  }
+ ],
+ "graduation": {
+  "launches": 29117,
+  "graduated": 750,
+  "rate": 0.0257581482,
+  "ttg_q_s": [
+   0.0,
+   0.0,
+   126.5,
+   409.25,
+   1741.1
+  ],
+  "ttg_mean_s": 1263.6733333333
+ },
+ "graduation_all_day_launches": {
+  "launches": 36897,
+  "graduated": 916,
+  "rate": 0.0248258666
+ },
+ "mcap_sol_at_complete": {
+  "q": [
+   0.3605667592,
+   410.8801681208,
+   410.8801742265
+  ],
+  "n": 972
+ },
+ "peak_mcap_sol": {
+  "ge40": 0.4337328708,
+  "ge60": 0.2165058213,
+  "ge100": 0.098052684,
+  "ge200": 0.0413504138,
+  "ge300": 0.0280248652,
+  "peak_q": [
+   28.5511913641,
+   36.4052581517,
+   55.0825519583,
+   98.6127574319,
+   167.8036498469,
+   410.8801692526
+  ]
+ },
+ "dev": {
+  "cohort": 29117,
+  "devs_traded": 23184,
+  "share_with_block0_buy": 0.9965924776,
+  "init_buy_q_sol": [
+   0.04725941,
+   0.065118571,
+   0.256790122,
+   0.989824718,
+   3.0
+  ],
+  "share_dev_sold": 0.9030365769,
+  "first_sell_age_q_s": [
+   3.0,
+   7.0,
+   25.0,
+   93.0,
+   376.0
+  ],
+  "mean_frac_sold": 0.8945029911,
+  "share_sold_all": 0.8817236768,
+  "mean_dev_pnl_sol_gross": -0.5737314374,
+  "dev_pnl_q": [
+   -0.2897542591,
+   0.0,
+   0.8551529446
+  ]
+ },
+ "snipers": {
+  "coins_with_nondev_buys": 24354,
+  "share_coins_with_block0_snipe": 0.408885604,
+  "block0_share_of_all_buy_sol": 0.122004527,
+  "first5s_share_of_all_buy_sol": 0.241211409,
+  "first60s_share_of_all_buy_sol": 0.5236273015,
+  "block0_share_of_first60s": 0.2329987888,
+  "first5s_share_of_first60s": 0.4606547602,
+  "block0_wallets_q": [
+   0.0,
+   5.0,
+   10.0
+  ],
+  "block0_wallets_mean": 1.3858093126,
+  "block0_sol_q": [
+   3.144191233,
+   10.4462289608
+  ]
+ },
+ "post_migration": {
+  "n_migrations_day": 1067,
+  "first5min_trades_per_coin": 1156.8908748824083,
+  "first5min_sol_per_coin": 414.7287235356982,
+  "time_to_half_trades_s": 900.0,
+  "time_to_half_sol_s": 300.0,
+  "exp_fit_halflife_trades_s_0_2h": 1525.3117545422492,
+  "exp_fit_halflife_sol_s_0_2h": 1648.0167631418967,
+  "series_first_24_buckets": [
+   {
+    "lo": 0,
+    "n_coins": 1063,
+    "trades_per_coin": 1156.8908748824,
+    "sol_per_coin": 414.7287235357,
+    "wallets_per_coin_active": 348.9958847737
+   },
+   {
+    "lo": 300,
+    "n_coins": 1061,
+    "trades_per_coin": 1029.1630537229,
+    "sol_per_coin": 201.8946618163,
+    "wallets_per_coin_active": 414.7984322508
+   },
+   {
+    "lo": 600,
+    "n_coins": 1057,
+    "trades_per_coin": 748.298013245,
+    "sol_per_coin": 143.0993401164,
+    "wallets_per_coin_active": 341.570673712
+   },
+   {
+    "lo": 900,
+    "n_coins": 1052,
+    "trades_per_coin": 563.2015209125,
+    "sol_per_coin": 108.4148016286,
+    "wallets_per_coin_active": 300.0320610687
+   },
+   {
+    "lo": 1200,
+    "n_coins": 1047,
+    "trades_per_coin": 433.3820439351,
+    "sol_per_coin": 79.8324700667,
+    "wallets_per_coin_active": 247.7986111111
+   },
+   {
+    "lo": 1500,
+    "n_coins": 1043,
+    "trades_per_coin": 364.8897411314,
+    "sol_per_coin": 76.3678295737,
+    "wallets_per_coin_active": 212.9274509804
+   },
+   {
+    "lo": 1800,
+    "n_coins": 1042,
+    "trades_per_coin": 326.330134357,
+    "sol_per_coin": 64.635550774,
+    "wallets_per_coin_active": 192.5848670757
+   },
+   {
+    "lo": 2100,
+    "n_coins": 1039,
+    "trades_per_coin": 291.3262752647,
+    "sol_per_coin": 54.0084857235,
+    "wallets_per_coin_active": 193.2467248908
+   },
+   {
+    "lo": 2400,
+    "n_coins": 1036,
+    "trades_per_coin": 250.1554054054,
+    "sol_per_coin": 48.526379157,
+    "wallets_per_coin_active": 151.9375
+   },
+   {
+    "lo": 2700,
+    "n_coins": 1032,
+    "trades_per_coin": 239.6647286822,
+    "sol_per_coin": 46.0798238135,
+    "wallets_per_coin_active": 168.7394540943
+   },
+   {
+    "lo": 3000,
+    "n_coins": 1030,
+    "trades_per_coin": 213.4184466019,
+    "sol_per_coin": 34.5944079099,
+    "wallets_per_coin_active": 162.283887468
+   },
+   {
+    "lo": 3300,
+    "n_coins": 1022,
+    "trades_per_coin": 195.885518591,
+    "sol_per_coin": 30.6281433581,
+    "wallets_per_coin_active": 131.0471698113
+   },
+   {
+    "lo": 3600,
+    "n_coins": 1018,
+    "trades_per_coin": 180.9263261297,
+    "sol_per_coin": 29.943496989,
+    "wallets_per_coin_active": 103.3544776119
+   },
+   {
+    "lo": 3900,
+    "n_coins": 1010,
+    "trades_per_coin": 160.2148514851,
+    "sol_per_coin": 26.2060123609,
+    "wallets_per_coin_active": 135.302955665
+   },
+   {
+    "lo": 4200,
+    "n_coins": 1008,
+    "trades_per_coin": 135.8819444444,
+    "sol_per_coin": 24.6023568758,
+    "wallets_per_coin_active": 122.7105263158
+   },
+   {
+    "lo": 4500,
+    "n_coins": 1002,
+    "trades_per_coin": 117.619760479,
+    "sol_per_coin": 24.3378443405,
+    "wallets_per_coin_active": 128.1274509804
+   },
+   {
+    "lo": 4800,
+    "n_coins": 997,
+    "trades_per_coin": 98.7943831494,
+    "sol_per_coin": 21.3115911026,
+    "wallets_per_coin_active": 106.0771812081
+   },
+   {
+    "lo": 5100,
+    "n_coins": 990,
+    "trades_per_coin": 94.7717171717,
+    "sol_per_coin": 22.691472018,
+    "wallets_per_coin_active": 110.8360655738
+   },
+   {
+    "lo": 5400,
+    "n_coins": 987,
+    "trades_per_coin": 79.6626139818,
+    "sol_per_coin": 18.8420693734,
+    "wallets_per_coin_active": 82.1877256318
+   },
+   {
+    "lo": 5700,
+    "n_coins": 980,
+    "trades_per_coin": 85.6275510204,
+    "sol_per_coin": 16.666620144,
+    "wallets_per_coin_active": 161.1607843137
+   },
+   {
+    "lo": 6000,
+    "n_coins": 976,
+    "trades_per_coin": 53.6680327869,
+    "sol_per_coin": 13.5491843435,
+    "wallets_per_coin_active": 74.5120967742
+   },
+   {
+    "lo": 6300,
+    "n_coins": 975,
+    "trades_per_coin": 54.8071794872,
+    "sol_per_coin": 14.1429050496,
+    "wallets_per_coin_active": 91.8898305085
+   },
+   {
+    "lo": 6600,
+    "n_coins": 971,
+    "trades_per_coin": 45.149330587,
+    "sol_per_coin": 12.422420277,
+    "wallets_per_coin_active": 74.56
+   },
+   {
+    "lo": 6900,
+    "n_coins": 970,
+    "trades_per_coin": 33.0587628866,
+    "sol_per_coin": 11.7673352585,
+    "wallets_per_coin_active": 50.6637168142
+   }
+  ],
+  "at_1h": [
+   {
+    "lo": 3600,
+    "n_coins": 1018,
+    "trades_per_coin": 180.9263261297,
+    "sol_per_coin": 29.943496989,
+    "wallets_per_coin_active": 103.3544776119
+   }
+  ],
+  "at_6h": [
+   {
+    "lo": 21600,
+    "n_coins": 770,
+    "trades_per_coin": 4.2025974026,
+    "sol_per_coin": 1.7026217471,
+    "wallets_per_coin_active": 16.8557692308
+   }
+  ],
+  "at_12h": [
+   {
+    "lo": 43200,
+    "n_coins": 489,
+    "trades_per_coin": 3.018404908,
+    "sol_per_coin": 1.0125055202,
+    "wallets_per_coin_active": 11.6417910448
+   }
+  ]
+ },
+ "wallets": {
+  "n_wallets": 173974,
+  "trades_q": {
+   "0.5": 4.0,
+   "0.9": 24.0,
+   "0.99": 184.0,
+   "0.999": 1296.189000000013
+  },
+  "share_wallets_1trade": 0.17357766102980904,
+  "top1pct_wallets_share_trades": 0.5890027204287304,
+  "top1pct_wallets_share_vol": 0.4902601705064355,
+  "hold_s_q_over_wallets": {
+   "0.1": 4.0,
+   "0.25": 16.5,
+   "0.5": 52.0,
+   "0.75": 163.5,
+   "0.9": 657.0
+  }
+ },
+ "wallet_clusters_ge5_trades": [
+  {
+   "cl": 0,
+   "wallets": 14235,
+   "trades": 2201916,
+   "vol": 753894.9825436741,
+   "med_n": 56.0,
+   "med_tpm": 0.0930212528,
+   "med_mints": 19.0,
+   "med_size_cv": 0.6466256837,
+   "med_hold_s": 41.0,
+   "med_buy_share": 0.5227272727,
+   "med_avg_sol": 0.2126857012,
+   "share_wallets": 0.2010564823,
+   "share_trades_all": 0.5486495281,
+   "share_vol_all": 0.6130188902,
+   "label": "bot-like"
+  },
+  {
+   "cl": 1,
+   "wallets": 30072,
+   "trades": 318414,
+   "vol": 143889.285899245,
+   "med_n": 8.0,
+   "med_tpm": 0.3033537451,
+   "med_mints": 3.0,
+   "med_size_cv": 0.7427746187,
+   "med_hold_s": 27.0,
+   "med_buy_share": 0.5,
+   "med_avg_sol": 0.1131262783,
+   "share_wallets": 0.4247397636,
+   "share_trades_all": 0.0793389443,
+   "share_vol_all": 0.1170015087,
+   "label": "bot-like"
+  },
+  {
+   "cl": 2,
+   "wallets": 22994,
+   "trades": 282676,
+   "vol": 97342.036621105,
+   "med_n": 9.0,
+   "med_tpm": 0.0378070814,
+   "med_mints": 4.0,
+   "med_size_cv": 0.584085513,
+   "med_hold_s": 269.0,
+   "med_buy_share": 0.6,
+   "med_avg_sol": 0.1259587516,
+   "share_wallets": 0.3247694242,
+   "share_trades_all": 0.0704341374,
+   "share_vol_all": 0.0791522807,
+   "label": "human-like"
+  },
+  {
+   "cl": 3,
+   "wallets": 3500,
+   "trades": 986303,
+   "vol": 103923.0067488012,
+   "med_n": 7.0,
+   "med_tpm": 4.1666666667,
+   "med_mints": 1.0,
+   "med_size_cv": 0.814846941,
+   "med_hold_s": 10.0,
+   "med_buy_share": 0.3333333333,
+   "med_avg_sol": 0.3500349842,
+   "share_wallets": 0.04943433,
+   "share_trades_all": 0.2457562757,
+   "share_vol_all": 0.0845035021,
+   "label": "bot-like"
+  }
+ ],
+ "wallet_rule_botlike": {
+  "rule": "n>=5 AND (median hold<30s OR trades/min>=3)",
+  "share_wallets": 0.14353868968926392,
+  "share_trades": 0.6416329748453781,
+  "share_vol": 0.5347069321212269
+ },
+ "launches_by_hour_utc": [
+  {
+   "hour_utc": 0,
+   "launches_per_min": 28.7166666667,
+   "sol_launches_per_min": 23.2333333333
+  },
+  {
+   "hour_utc": 1,
+   "launches_per_min": 31.0666666667,
+   "sol_launches_per_min": 25.0833333333
+  },
+  {
+   "hour_utc": 2,
+   "launches_per_min": 23.45,
+   "sol_launches_per_min": 19.15
+  },
+  {
+   "hour_utc": 3,
+   "launches_per_min": 22.7333333333,
+   "sol_launches_per_min": 17.7833333333
+  },
+  {
+   "hour_utc": 4,
+   "launches_per_min": 20.4333333333,
+   "sol_launches_per_min": 16.4166666667
+  },
+  {
+   "hour_utc": 5,
+   "launches_per_min": 20.45,
+   "sol_launches_per_min": 17.0833333333
+  },
+  {
+   "hour_utc": 6,
+   "launches_per_min": 21.5333333333,
+   "sol_launches_per_min": 19.0333333333
+  },
+  {
+   "hour_utc": 7,
+   "launches_per_min": 21.0166666667,
+   "sol_launches_per_min": 18.0833333333
+  },
+  {
+   "hour_utc": 8,
+   "launches_per_min": 17.8666666667,
+   "sol_launches_per_min": 15.35
+  },
+  {
+   "hour_utc": 9,
+   "launches_per_min": 21.85,
+   "sol_launches_per_min": 18.7833333333
+  },
+  {
+   "hour_utc": 10,
+   "launches_per_min": 20.6666666667,
+   "sol_launches_per_min": 17.25
+  },
+  {
+   "hour_utc": 11,
+   "launches_per_min": 23.5333333333,
+   "sol_launches_per_min": 19.1833333333
+  },
+  {
+   "hour_utc": 12,
+   "launches_per_min": 31.8666666667,
+   "sol_launches_per_min": 24.8833333333
+  },
+  {
+   "hour_utc": 13,
+   "launches_per_min": 40.0833333333,
+   "sol_launches_per_min": 26.7166666667
+  },
+  {
+   "hour_utc": 14,
+   "launches_per_min": 35.65,
+   "sol_launches_per_min": 28.2833333333
+  },
+  {
+   "hour_utc": 15,
+   "launches_per_min": 38.3,
+   "sol_launches_per_min": 29.8166666667
+  },
+  {
+   "hour_utc": 16,
+   "launches_per_min": 50.5666666667,
+   "sol_launches_per_min": 38.0833333333
+  },
+  {
+   "hour_utc": 17,
+   "launches_per_min": 39.5333333333,
+   "sol_launches_per_min": 31.3333333333
+  },
+  {
+   "hour_utc": 18,
+   "launches_per_min": 43.9666666667,
+   "sol_launches_per_min": 33.65
+  },
+  {
+   "hour_utc": 19,
+   "launches_per_min": 56.65,
+   "sol_launches_per_min": 46.0833333333
+  },
+  {
+   "hour_utc": 20,
+   "launches_per_min": 44.4666666667,
+   "sol_launches_per_min": 33.6
+  },
+  {
+   "hour_utc": 21,
+   "launches_per_min": 46.05,
+   "sol_launches_per_min": 36.45
+  },
+  {
+   "hour_utc": 22,
+   "launches_per_min": 40.1666666667,
+   "sol_launches_per_min": 31.7833333333
+  },
+  {
+   "hour_utc": 23,
+   "launches_per_min": 35.05,
+   "sol_launches_per_min": 27.8333333333
+  }
+ ],
+ "launches_per_min_day": {
+  "mean": 32.31944444444444,
+  "min": 17.866666666666667,
+  "max": 56.65
+ },
+ "curve_trades_by_hour_utc": [
+  {
+   "hour_utc": 0,
+   "curve_trades_per_min": 2651.6833333333
+  },
+  {
+   "hour_utc": 1,
+   "curve_trades_per_min": 2312.9666666667
+  },
+  {
+   "hour_utc": 2,
+   "curve_trades_per_min": 2347.5833333333
+  },
+  {
+   "hour_utc": 3,
+   "curve_trades_per_min": 2401.4833333333
+  },
+  {
+   "hour_utc": 4,
+   "curve_trades_per_min": 2383.95
+  },
+  {
+   "hour_utc": 5,
+   "curve_trades_per_min": 2254.75
+  },
+  {
+   "hour_utc": 6,
+   "curve_trades_per_min": 2163.0666666667
+  },
+  {
+   "hour_utc": 7,
+   "curve_trades_per_min": 2224.5166666667
+  },
+  {
+   "hour_utc": 8,
+   "curve_trades_per_min": 1752.6166666667
+  },
+  {
+   "hour_utc": 9,
+   "curve_trades_per_min": 1957.25
+  },
+  {
+   "hour_utc": 10,
+   "curve_trades_per_min": 1963.4
+  },
+  {
+   "hour_utc": 11,
+   "curve_trades_per_min": 1965.0
+  },
+  {
+   "hour_utc": 12,
+   "curve_trades_per_min": 2722.4333333333
+  },
+  {
+   "hour_utc": 13,
+   "curve_trades_per_min": 2457.7833333333
+  },
+  {
+   "hour_utc": 14,
+   "curve_trades_per_min": 2974.7166666667
+  },
+  {
+   "hour_utc": 15,
+   "curve_trades_per_min": 3664.7833333333
+  },
+  {
+   "hour_utc": 16,
+   "curve_trades_per_min": 4322.4333333333
+  },
+  {
+   "hour_utc": 17,
+   "curve_trades_per_min": 3673.6166666667
+  },
+  {
+   "hour_utc": 18,
+   "curve_trades_per_min": 3937.2666666667
+  },
+  {
+   "hour_utc": 19,
+   "curve_trades_per_min": 3925.25
+  },
+  {
+   "hour_utc": 20,
+   "curve_trades_per_min": 3244.3333333333
+  },
+  {
+   "hour_utc": 21,
+   "curve_trades_per_min": 3744.3
+  },
+  {
+   "hour_utc": 22,
+   "curve_trades_per_min": 3086.95
+  },
+  {
+   "hour_utc": 23,
+   "curve_trades_per_min": 2760.1
+  }
+ ],
+ "failed": {
+  "failed_tx": 10274436,
+  "landed_tx_sol": 3939390,
+  "landed_tx_all": 4476349,
+  "failed_fees_sol": 398.689054087,
+  "failed_wallets": 29617,
+  "fail_share_of_attempts": 0.6965348623819003,
+  "top100_wallets_share_of_failed": 0.9608867094991881
+ },
+ "failed_top_errors": [
+  {
+   "code": 6001,
+   "n": 3207997,
+   "pump_idl_name": "AlreadyInitialized",
+   "share": 0.3122309585
+  },
+  {
+   "code": 7,
+   "n": 2689133,
+   "pump_idl_name": null,
+   "share": 0.2617304736
+  },
+  {
+   "code": 12,
+   "n": 1077286,
+   "pump_idl_name": null,
+   "share": 0.1048511081
+  },
+  {
+   "code": 23,
+   "n": 706300,
+   "pump_idl_name": null,
+   "share": 0.0687434327
+  },
+  {
+   "code": 6042,
+   "n": 410139,
+   "pump_idl_name": "BuySlippageBelowMinTokensOut",
+   "share": 0.0399183955
+  },
+  {
+   "code": 408,
+   "n": 334510,
+   "pump_idl_name": null,
+   "share": 0.0325575049
+  },
+  {
+   "code": 4,
+   "n": 309052,
+   "pump_idl_name": null,
+   "share": 0.0300797046
+  },
+  {
+   "code": 412,
+   "n": 275898,
+   "pump_idl_name": null,
+   "share": 0.0268528608
+  },
+  {
+   "code": 102,
+   "n": 183515,
+   "pump_idl_name": null,
+   "share": 0.017861321
+  },
+  {
+   "code": 7000,
+   "n": 153214,
+   "pump_idl_name": null,
+   "share": 0.0149121567
+  },
+  {
+   "code": 11,
+   "n": 146024,
+   "pump_idl_name": null,
+   "share": 0.0142123616
+  },
+  {
+   "code": 1,
+   "n": 145672,
+   "pump_idl_name": null,
+   "share": 0.0141781018
+  },
+  {
+   "code": 6002,
+   "n": 139090,
+   "pump_idl_name": "TooMuchSolRequired",
+   "share": 0.0135374827
+  },
+  {
+   "code": 6003,
+   "n": 127770,
+   "pump_idl_name": "TooLittleSolReceived",
+   "share": 0.0124357191
+  },
+  {
+   "code": 6000,
+   "n": 91742,
+   "pump_idl_name": "NotAuthorized",
+   "share": 0.0089291519
+  }
+ ],
+ "lifecycle_nongraduated": {
+  "n": 28367,
+  "share_le1_trade": 0.1024782317,
+  "share_le5_trades": 0.2586103571,
+  "dead_by_1m": 0.3459653823,
+  "dead_by_5m": 0.5959036909,
+  "dead_by_15m": 0.7169598477,
+  "dead_by_60m": 0.8143617584,
+  "trades_per_coin_q": [
+   5.0,
+   22.0,
+   78.0,
+   234.4,
+   1127.04
+  ],
+  "wallets_per_coin_q": [
+   5.0,
+   40.0,
+   361.68
+  ],
+  "vol_sol_per_coin_q": [
+   3.957979777,
+   53.276588916,
+   408.8293894146
+  ]
+ }
+}
