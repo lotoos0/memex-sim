@@ -11,6 +11,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # The A/B regression compiles the pinned baseline commit.
 
       - uses: actions/setup-node@v4
         with:
@@ -31,6 +33,9 @@ jobs:
 
       - name: QA market baseline and OHLC contracts
         run: npm run qa:sim:market-baseline:check
+
+      - name: QA Final Stretch A/B isolation and regressions
+        run: npm run qa:sim:buy-bias-ab:check
 
       - name: QA sim dead floor
         run: npm run qa:sim:dead-floor

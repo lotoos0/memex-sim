@@ -878,11 +878,7 @@ export class TokenSim {
           volMul *= 1 + finalStretchPressure * stallBias * 0.14;
         }
       }
-      // Same prints, more of them on the bid, once the coin has already raised
-      // real quote. The dense-tape stall was selling this stretch back down.
-      if (migrationReady && progressToMigration >= FINISH_STRETCH_MIN_PROGRESS) {
-        effectiveBuyBias = 0.98;
-      } else if (migrationReady && progressToMigration >= 0.8) {
+      if (migrationReady && progressToMigration >= 0.8) {
         effectiveBuyBias = clamp(effectiveBuyBias + 0.1, 0.4, 0.75);
       } else if (
         !migrationReady
