@@ -7,6 +7,9 @@ The [persistent Real vs Sim price-structure benchmark](real-market/README.md) co
 the raw-data source manifest, historical comparison, normalized flow/streak metrics
 and offline reproduction tools. It keeps A and draft #72's B as separate pinned sources.
 
+The [P1 conditional-activity experiment](conditional-activity/report.md) records a
+separate bounded arrival-memory candidate, its paired results and rejection rationale.
+
 ## Run
 
 From the repository root, after `npm ci`:

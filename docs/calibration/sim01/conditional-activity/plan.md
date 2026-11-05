@@ -6,8 +6,11 @@ with an executed-print exponential memory. No curve-progress/readiness trigger.
 
 Parameters fixed before the full run: 8s exponential time constant, +0.075 trades/s
 per executed print, state capped at +2 trades/s, and the extra rate capped at five
-times the current organic rate (total at most six times organic). Isolated uncapped
-kernel mass is 0.6; this is not a stability proof for the entire interacting engine.
+times the current organic rate (total at most six times organic). These caps apply
+inside organicArrivalPerSec, before the unchanged launch/open/late factors; the
+largest existing factor is 1.7, so the final additive contribution is at most 3.4/s.
+Isolated uncapped kernel mass is 0.6; the existing factors also scale it, so this is
+not a subcriticality or stability proof for the entire interacting engine.
 Both BUY and SELL contribute equally; quote size is not an excitation weight.
 Queries use simulation milliseconds and the previously committed tick only. Pending
 prints commit at tick end, including actual developer/user fills. Rejected orders and

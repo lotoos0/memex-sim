@@ -26,6 +26,11 @@ assert(memory.extraPerSec(2000000, 1) < 1e-30, 'long silence extinguishes intere
 let rejected = false;
 try { memory.commit(0, 1); } catch { rejected = true; }
 assert(rejected, 'backward observation rejected');
+for (const count of [-1, 0.5, NaN, Infinity]) {
+  rejected = false;
+  try { new ConditionalActivity().commit(0, count); } catch { rejected = true; }
+  assert(rejected, 'invalid observation rejected');
+}
 
 const originalNow = Date.now;
 let now = Date.parse('2026-10-15T08:00:00Z');
@@ -54,6 +59,15 @@ try {
   sim['stillbornLaunch'] = false;
   sim['flowSilentAfterSimMs'] = 0;
   near(sim['organicArrivalPerSec'](1, now), withMemory, 'silenced ignores memory');
+  sim['flowSilentAfterSimMs'] = Infinity;
+  for (const state of ['dead', 'collapse'] as const) {
+    sim['phase'] = state === 'dead' ? 'DEAD' : 'NEW';
+    sim['ruggedAtSimMs'] = state === 'collapse' ? 0 : null;
+    const blocked = sim['organicArrivalPerSec'](1, now);
+    sim['conditionalActivity'].extraPerSec = () => 0;
+    near(sim['organicArrivalPerSec'](1, now), blocked, `${state} ignores memory`);
+    sim['conditionalActivity'].extraPerSec = () => 1e9;
+  }
   const before = sim['pendingActivityTrades'];
   assert(!sim['executeSimBuyTrade'](0, now), 'failed fill fixture');
   assert(sim['pendingActivityTrades'] === before, 'failed fill does not excite');
