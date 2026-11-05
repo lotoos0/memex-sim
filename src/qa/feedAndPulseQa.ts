@@ -64,17 +64,24 @@ function runPublisherAgesFlow(): void {
   sim.enableDormantFastPath();
   const tokens = new Map([[sim.meta.id, sim]]);
   try {
+    // Stillborn coins no longer print a dev buy. The flow window still needs one
+    // tape row, so the fixture places its own fill and stays dormant afterward.
+    const submitted = sim.submitUserTrade({ side: 'BUY', amountIn: 0.1, slippageBps: 10_000, latencyMs: 100 });
+    check(submitted.ok, `publish/user-buy ${submitted.ok ? 'ok' : submitted.reason}`);
+    if (submitted.ok) now = submitted.execMs;
     sim.tick(0.2, 'OFF');
+    check(sim.getLaunchAudit().stillborn && sim.isDormant(), `publish/still-dormant stillborn=${sim.getLaunchAudit().stillborn} dormant=${sim.isDormant()}`);
     useTokenStore.getState().addToken(sim.meta, sim.getRuntime());
     publishRegistryFeed(tokens);
     const store = useTokenStore.getState();
     const snapshot = store.marketByTokenId[sim.meta.id];
     const flow = store.tradeFlowByTokenId[sim.meta.id];
     check(snapshot != null && (flow?.tx60s ?? 0) >= 1, `publish/has-flow tx=${flow?.tx60s ?? 0}`);
-    if (!snapshot || snapshot.recentTrades.length === 0) return;
+    const recentTrades = snapshot?.recentTrades ?? [];
+    check(recentTrades.length > 0, `publish/has-trades n=${recentTrades.length}`);
 
-    const publishedAt = snapshot.updatedAtMs;
-    const oldestMs = snapshot.recentTrades.reduce((min, trade) => Math.min(min, trade.tMs), Number.POSITIVE_INFINITY);
+    const publishedAt = snapshot?.updatedAtMs;
+    const oldestMs = recentTrades.reduce((min, trade) => Math.min(min, trade.tMs), now);
     now = oldestMs + 30_000;
     publishRegistryFeed(tokens);
     const mid = useTokenStore.getState();
