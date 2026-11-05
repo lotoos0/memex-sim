@@ -29,6 +29,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: QA market baseline and OHLC contracts
+        run: npm run qa:sim:market-baseline:check
+
       - name: QA sim dead floor
         run: npm run qa:sim:dead-floor
 

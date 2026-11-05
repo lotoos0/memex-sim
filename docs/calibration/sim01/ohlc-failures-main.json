@@ -1,0 +1,378 @@
+{
+  "sourceCommit": "df2de0794ec41c9de9ad95c852115d3635549cb5",
+  "qa": "tradeOhlcQa",
+  "counts": {
+    "continuity_open": 26,
+    "late_tick_rejection": 24,
+    "omitted_genesis": 20,
+    "wallet_vs_market_notional": 4,
+    "spot_vs_average": 4,
+    "stale_tick_genesis_5000": 13
+  },
+  "failures": [
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/1s/boundary/bucket1/open: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/1s/boundary/bucket1/low: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/1s/sparse/bucket1/open: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/1s/sparse/bucket1/low: actual=12, expected=20"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/1s/late-same-bucket/bucket0/open: actual=20, expected=10"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/1s/late-same-bucket/bucket0/low: actual=20, expected=10"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/1s/late-same-bucket/bucket0/volume: actual=2, expected=5"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/1s/late-previous-bucket/bucket0/low: actual=10, expected=8"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/1s/late-previous-bucket/bucket0/close: actual=10, expected=8"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/1s/late-previous-bucket/bucket0/volume: actual=2, expected=6"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/1s/late-previous-bucket/bucket1/open: actual=10, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/1s/late-previous-bucket/bucket1/low: actual=10, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/15s/boundary/bucket1/open: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/15s/boundary/bucket1/low: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/15s/sparse/bucket1/open: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/15s/sparse/bucket1/low: actual=12, expected=20"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/15s/late-same-bucket/bucket0/open: actual=20, expected=10"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/15s/late-same-bucket/bucket0/low: actual=20, expected=10"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/15s/late-same-bucket/bucket0/volume: actual=2, expected=5"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/15s/late-previous-bucket/bucket0/low: actual=10, expected=8"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/15s/late-previous-bucket/bucket0/close: actual=10, expected=8"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/15s/late-previous-bucket/bucket0/volume: actual=2, expected=6"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/15s/late-previous-bucket/bucket1/open: actual=10, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/15s/late-previous-bucket/bucket1/low: actual=10, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/30s/boundary/bucket1/open: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/30s/boundary/bucket1/low: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/30s/sparse/bucket1/open: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/30s/sparse/bucket1/low: actual=12, expected=20"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/30s/late-same-bucket/bucket0/open: actual=20, expected=10"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/30s/late-same-bucket/bucket0/low: actual=20, expected=10"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/30s/late-same-bucket/bucket0/volume: actual=2, expected=5"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/30s/late-previous-bucket/bucket0/low: actual=10, expected=8"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/30s/late-previous-bucket/bucket0/close: actual=10, expected=8"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/30s/late-previous-bucket/bucket0/volume: actual=2, expected=6"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/30s/late-previous-bucket/bucket1/open: actual=10, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/30s/late-previous-bucket/bucket1/low: actual=10, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/60s/boundary/bucket1/open: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/60s/boundary/bucket1/low: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/60s/sparse/bucket1/open: actual=12, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/60s/sparse/bucket1/low: actual=12, expected=20"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/60s/late-same-bucket/bucket0/open: actual=20, expected=10"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/60s/late-same-bucket/bucket0/low: actual=20, expected=10"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/60s/late-same-bucket/bucket0/volume: actual=2, expected=5"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/60s/late-previous-bucket/bucket0/low: actual=10, expected=8"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/60s/late-previous-bucket/bucket0/close: actual=10, expected=8"
+    },
+    {
+      "cause": "late_tick_rejection",
+      "diagnostic": "aggregator/60s/late-previous-bucket/bucket0/volume: actual=2, expected=6"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/60s/late-previous-bucket/bucket1/open: actual=10, expected=20"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "aggregator/60s/late-previous-bucket/bucket1/low: actual=10, expected=20"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "genesis/1s/trade-only-count: actual=1, expected=0"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "genesis/15s/trade-only-count: actual=1, expected=0"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "genesis/30s/trade-only-count: actual=1, expected=0"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "genesis/60s/trade-only-count: actual=1, expected=0"
+    },
+    {
+      "cause": "wallet_vs_market_notional",
+      "diagnostic": "user-BUY/tape-vs-fill-notional: actual=14.8125, expected=15"
+    },
+    {
+      "cause": "spot_vs_average",
+      "diagnostic": "user-BUY/trade-average-price-convention: actual=0.000004221503968138397, expected=0.000004207653774464174"
+    },
+    {
+      "cause": "wallet_vs_market_notional",
+      "diagnostic": "user-BUY/fill-average-identity: actual=0.000004260915214647265, expected=0.000004207653774464174"
+    },
+    {
+      "cause": "spot_vs_average",
+      "diagnostic": "bot-BUY/trade-average-price-convention: actual=0.000004249249796132339, expected=0.000004235354161812643"
+    },
+    {
+      "cause": "wallet_vs_market_notional",
+      "diagnostic": "user-SELL/tape-vs-fill-notional: actual=7.467136719435075, expected=7.373797510442137"
+    },
+    {
+      "cause": "spot_vs_average",
+      "diagnostic": "user-SELL/trade-average-price-convention: actual=0.000004235251473631613, expected=0.000004242244861025623"
+    },
+    {
+      "cause": "wallet_vs_market_notional",
+      "diagnostic": "user-SELL/fill-average-identity: actual=0.000004189216800262803, expected=0.000004242244861025623"
+    },
+    {
+      "cause": "spot_vs_average",
+      "diagnostic": "bot-SELL/trade-average-price-convention: actual=0.0000042333081661566045, expected=0.0000042342797084099105"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/1s/price-projection/bucket0/open: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/1s/price-projection/bucket0/low: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/1s/mcap-projection/bucket0/open: actual=4193.849021435229, expected=4221.503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/1s/mcap-projection/bucket0/low: actual=4193.849021435229, expected=4221.503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/15s/price-projection/bucket0/open: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/15s/price-projection/bucket0/low: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/15s/mcap-projection/bucket0/open: actual=4193.849021435229, expected=4221.503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/15s/mcap-projection/bucket0/low: actual=4193.849021435229, expected=4221.503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/30s/price-projection/bucket0/open: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/30s/price-projection/bucket0/low: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/30s/mcap-projection/bucket0/open: actual=4193.849021435229, expected=4221.503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/30s/mcap-projection/bucket0/low: actual=4193.849021435229, expected=4221.503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/60s/price-projection/bucket0/open: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/60s/price-projection/bucket0/low: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/60s/mcap-projection/bucket0/open: actual=4193.849021435229, expected=4221.503968138397"
+    },
+    {
+      "cause": "omitted_genesis",
+      "diagnostic": "execution/60s/mcap-projection/bucket0/low: actual=4193.849021435229, expected=4221.503968138397"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/1s/chronological-projection/bucket0/open: actual=0.000004193849021435229, expected=0.000005"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/1s/chronological-projection/bucket0/high: actual=0.000004193849021435229, expected=0.000005"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/1s/chronological-projection/bucket0/low: actual=0.000004193849021435229, expected=0.000005"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/1s/chronological-projection/bucket0/close: actual=0.000004193849021435229, expected=0.000005"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "tick/1s/chronological-projection/bucket1/open: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "continuity_open",
+      "diagnostic": "tick/1s/chronological-projection/bucket1/low: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/15s/chronological-projection/bucket0/open: actual=0.000004193849021435229, expected=0.000005"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/15s/chronological-projection/bucket0/high: actual=0.000004238599912732132, expected=0.000005"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/15s/chronological-projection/bucket0/low: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/30s/chronological-projection/bucket0/open: actual=0.000004193849021435229, expected=0.000005"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/30s/chronological-projection/bucket0/high: actual=0.000004238599912732132, expected=0.000005"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/30s/chronological-projection/bucket0/low: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/60s/chronological-projection/bucket0/open: actual=0.000004193849021435229, expected=0.000005"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/60s/chronological-projection/bucket0/high: actual=0.000004238599912732132, expected=0.000005"
+    },
+    {
+      "cause": "stale_tick_genesis_5000",
+      "diagnostic": "tick/60s/chronological-projection/bucket0/low: actual=0.000004193849021435229, expected=0.000004221503968138397"
+    }
+  ]
+}
