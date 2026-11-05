@@ -1,7 +1,13 @@
 import { useTokenStore } from '../store/tokenStore';
 import { useTradingStore } from '../store/tradingStore';
 import { useWalletStore } from '../store/walletStore';
+import { INITIAL_VIRTUAL_BASE_USD, INITIAL_VIRTUAL_TOKEN_RESERVES } from '../tokens/curveConstants';
 import { registry } from '../tokens/registry';
+import { SUPPLY } from '../tokens/types';
+
+// Curve open is ~$4.2k. The old $20k / 4-print gate waited for a hot coin this
+// market often never prints. Selection only needs a live, quotable token.
+const MIN_SELECT_MCAP_USD = (INITIAL_VIRTUAL_BASE_USD / INITIAL_VIRTUAL_TOKEN_RESERVES) * SUPPLY;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const BUY_TEST_AMOUNT_SOL = 0.1;
@@ -26,27 +32,24 @@ export async function runQuickLimitQa() {
     return Object.keys(tokenState.tokensById).length > 0 ? true : null;
   }, 12_000, 'token store hydration');
 
-  // Live 60s counts age out, so a coin that just qualified can dip under 4 prints.
-  // Give a fresh active launch time to clear mcap, volume, and tx60s together.
+  // Any coin at or above the curve open with a quotable buy. tx60s has to rise
+  // during the wait so a dormant bootstrap coin with a stale print is not picked.
+  const txSeen = new Map<string, number>();
   const tokenId = await waitFor(() => {
     const tokenState = useTokenStore.getState();
     const rows = Object.values(tokenState.tokensById);
     const ranked = rows
       .filter((row) => Number.isFinite(row.lastPriceUsd) && row.lastPriceUsd > 0)
-      .filter((row) => Number.isFinite(row.mcapUsd) && row.mcapUsd >= 20_000)
-      .filter((row) => Number.isFinite(row.liquidityUsd) && row.liquidityUsd >= 3_000)
-      .filter((row) => Number.isFinite(row.vol5mUsd) && row.vol5mUsd >= 1_000)
+      .filter((row) => Number.isFinite(row.mcapUsd) && row.mcapUsd + 1e-6 >= MIN_SELECT_MCAP_USD)
       .filter((row) => row.phase !== 'DEAD' && row.phase !== 'RUGGED')
       .filter((row) => {
         const market = tokenState.marketByTokenId[row.id];
         const flow = tokenState.tradeFlowByTokenId[row.id];
-        return Boolean(
-          market &&
-          Number.isFinite(market.updatedAtMs) &&
-          market.updatedAtMs > 0 &&
-          flow &&
-          flow.tx60s >= 4
-        );
+        if (!market || !flow || !Number.isFinite(market.updatedAtMs) || market.updatedAtMs <= 0) return false;
+        const tx = flow.tx60s;
+        const previous = txSeen.get(row.id);
+        txSeen.set(row.id, tx);
+        return previous != null && tx >= 1 && tx > previous;
       })
       .filter((row) => registry.quoteTrade(row.id, 'BUY', BUY_TEST_AMOUNT_SOL, TEST_SLIPPAGE_BPS).ok)
       .sort((a, b) => {
@@ -56,7 +59,9 @@ export async function runQuickLimitQa() {
           if (phase === 'NEW') return 1;
           return 0;
         };
+        const txOf = (id: string) => tokenState.tradeFlowByTokenId[id]?.tx60s ?? 0;
         return (
+          txOf(b.id) - txOf(a.id) ||
           phaseScore(b.phase) - phaseScore(a.phase) ||
           b.liquidityUsd - a.liquidityUsd ||
           b.vol5mUsd - a.vol5mUsd ||
