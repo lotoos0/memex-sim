@@ -356,6 +356,24 @@ function rollFlowSilenceSimMs(rng: RNG, fate: TokenFate): number {
   return Number.POSITIVE_INFINITY;
 }
 
+/**
+ * First dev sell on its own stream. Knots are the 2026-10-15 quantiles
+ * (p10 3s, p25 7s, p50 25s, p75 93s, p90 376s). 10% never sell, so with the
+ * ~80% of launches that buy, about 72% of launches sell.
+ * metrics.json `dev.first_sell_age_q_s` and `dev.share_dev_sold`.
+ */
+function rollDevFirstSellSimMs(rng: RNG): number {
+  if (rng.next() < 0.10) return Number.POSITIVE_INFINITY;
+  const knots = [0, 0.10, 0.25, 0.50, 0.75, 0.90, 0.995];
+  const secs = [1, 3, 7, 25, 93, 376, 1400];
+  const u = rng.next();
+  let i = 0;
+  while (i < knots.length - 2 && u > knots[i + 1]!) i += 1;
+  const span = Math.max(1e-6, knots[i + 1]! - knots[i]!);
+  const w = Math.min(1, Math.max(0, (u - knots[i]!) / span));
+  return Math.exp(Math.log(secs[i]!) + (Math.log(secs[i + 1]!) - Math.log(secs[i]!)) * w) * 1000;
+}
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -441,6 +459,8 @@ export class TokenSim {
   private baseVol = 0.04;
   private lastDevEventRealMs = 0;
   private emittedInitialDevBuy = false;
+  private emittedScheduledDevSell = false;
+  private devFirstSellAtSimMs = Number.POSITIVE_INFINITY;
   private emittedDoaSell = false;
   private devEventsUsed = 0;
   private migrationFreezeLeftMs = 0;
@@ -535,6 +555,7 @@ export class TokenSim {
     this.pushCandleTicks(this.spawnRealMs, 0);
     // Separate stream so the silence draw does not shift curve / dev rolls.
     this.flowSilentAfterSimMs = rollFlowSilenceSimMs(new RNG(`${meta.id}:flow`), meta.fate);
+    this.devFirstSellAtSimMs = rollDevFirstSellSimMs(new RNG(`${meta.id}:devsell`));
   }
 
   tick(fallbackRealDtSec: number, sessionBucket: SessionBucket = getSessionBucket(Date.now()),
@@ -1070,6 +1091,8 @@ export class TokenSim {
     if (!this.dormantFastPath) return false;
     // The launch tick has to land the dev buy before a stillborn coin goes cheap.
     if (!this.emittedInitialDevBuy) return false;
+    // Stay on the full step until the scheduled dev sell, or a silenced coin skips it.
+    if (!this.stillbornLaunch && !this.emittedScheduledDevSell && Number.isFinite(this.devFirstSellAtSimMs)) return false;
     if (this.pendingUserOrders.length > 0) return false;
     if (!this.isFlowSilent()) return false;
     if (this.rugDumpActive()) return false;
@@ -1884,7 +1907,24 @@ export class TokenSim {
       };
     }
 
-    if (this.archetype === 'DOA' && !this.emittedDoaSell && this.simTimeMs >= 120_000) {
+    if (this.stillbornLaunch) return null;
+
+    if (!this.emittedScheduledDevSell && Number.isFinite(this.devFirstSellAtSimMs)
+      && !isLaunchTick && this.simTimeMs >= this.devFirstSellAtSimMs) {
+      this.emittedScheduledDevSell = true;
+      this.lastDevEventRealMs = candleTsMs;
+      const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6) * DEV_FLOW_SCALE * devPowerMul;
+      this.devEventsUsed += 1;
+      return {
+        eventType: 'DEV_SELL',
+        externalFlow: { sellBoostUsd: sizeUsd },
+        sizeUsd,
+      };
+    }
+
+    const waitingForFirstSell = !this.stillbornLaunch && !this.emittedScheduledDevSell;
+
+    if (this.archetype === 'DOA' && !this.emittedDoaSell && this.simTimeMs >= 120_000 && !waitingForFirstSell) {
       this.emittedDoaSell = true;
       this.lastDevEventRealMs = candleTsMs;
       const sizeUsd = this.baseTradeSizeUsd * (6 + this.rng.next() * 8) * DEV_FLOW_SCALE * devPowerMul;
@@ -1902,6 +1942,7 @@ export class TokenSim {
     if (this.rng.next() >= this.getDevSignalChancePerSec() * devSignalMul * simDtSec) return null;
 
     const isBuy = this.rng.next() < buyBias;
+    if (!isBuy && waitingForFirstSell) return null;
     const sizeUsd = this.baseTradeSizeUsd * (2 + this.rng.next() * 6) * DEV_FLOW_SCALE * devPowerMul;
     this.lastDevEventRealMs = candleTsMs;
     this.devEventsUsed += 1;
