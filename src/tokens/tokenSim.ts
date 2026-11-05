@@ -336,8 +336,8 @@ function sampleExpSimMs(rng: RNG, meanSec: number): number {
 function rollFlowSilenceSimMs(rng: RNG, fate: TokenFate): number {
   const u = rng.next();
   if (fate === 'LONG_RUNNER') {
-    if (u < 0.30) return sampleExpSimMs(rng, 75);
-    if (u < 0.50) return sampleExpSimMs(rng, 520);
+    if (u < 0.12) return sampleExpSimMs(rng, 90);
+    if (u < 0.28) return sampleExpSimMs(rng, 700);
     return Number.POSITIVE_INFINITY;
   }
   if (fate === 'QUICK_RUG') {
@@ -345,8 +345,10 @@ function rollFlowSilenceSimMs(rng: RNG, fate: TokenFate): number {
     if (u < 0.92) return sampleExpSimMs(rng, 180);
     return sampleExpSimMs(rng, 420);
   }
-  if (u < 0.56) return sampleExpSimMs(rng, 50);
-  if (u < 0.80) return sampleExpSimMs(rng, 260);
+  // Short and normal. Tuned with stillborn 0.22 so about 60% of launches are
+  // crowd-silent by 5 min (real non-graduated dead-by-5-min is 60%).
+  if (u < 0.22) return sampleExpSimMs(rng, 45);
+  if (u < 0.40) return sampleExpSimMs(rng, 200);
   return Number.POSITIVE_INFINITY;
 }
 
@@ -1858,9 +1860,11 @@ export class TokenSim {
     const devPowerMul = this.getDevFlowPowerMul();
 
     // First visible dev action: seed buy that actually impacts price/volume.
+    // Stillborn launches skip it and stay on the curve start mcap.
     if (!this.emittedInitialDevBuy) {
       this.emittedInitialDevBuy = true;
       this.lastDevEventRealMs = candleTsMs;
+      if (this.stillbornLaunch) return null;
       const sizeUsd = this.baseTradeSizeUsd * (3 + this.rng.next() * 3.5) * DEV_FLOW_SCALE * devPowerMul;
       this.devEventsUsed += 1;
       return {
