@@ -21,9 +21,23 @@ type Audit = ReturnType<TokenSim['getLaunchAudit']> & { spawnMs: number };
 class Probe extends TokenRegistry {
   readonly spawnMsById = new Map<string, number>();
   readonly done: Audit[] = [];
+  readonly starts: number[] = [];
+  readonly graduations = new Map<string, { seconds: number; mcap: number }>();
+
+  observeGraduations(): void {
+    this.forEachToken((sim) => {
+      if (!this.spawnMsById.has(sim.meta.id) || this.graduations.has(sim.meta.id)) return;
+      if (sim.getPhase() === 'MIGRATED') {
+        this.graduations.set(sim.meta.id, {
+          seconds: sim.getAgeMs() / 1000, mcap: sim.getMigrationReferenceMcapUsd(),
+        });
+      }
+    });
+  }
 
   protected onFreshTokenSpawned(sim: TokenSim, nowMs: number): void {
     this.spawnMsById.set(sim.meta.id, nowMs);
+    this.starts.push(sim.getCurveDebugSnapshot().mcapCurveUsd);
   }
 
   protected onTokenEvicted(sim: TokenSim): void {
@@ -90,6 +104,7 @@ function runHour(hour: number, minutes: number): void {
     for (let i = 0; i < steps; i++) {
       now += STEP_MS;
       probe.advance(STEP_MS);
+      probe.observeGraduations();
       probe.forEachToken((sim) => {
         stepped += 1;
         if (sim.wasCheapStep()) cheap += 1;
@@ -102,6 +117,7 @@ function runHour(hour: number, minutes: number): void {
       now += TICK_PROBE_MS;
       const t0 = performance.now();
       probe.advance(TICK_PROBE_MS);
+      probe.observeGraduations();
       tickCosts.push(performance.now() - t0);
     }
 
@@ -121,6 +137,8 @@ function runHour(hour: number, minutes: number): void {
     const mcaps = rows.map((row) => row.mcapUsd);
     const stillMcaps = stillborn.map((row) => row.mcapUsd);
     const avgTick = tickCosts.reduce((sum, value) => sum + value, 0) / tickCosts.length;
+    const graduationTimes = [...probe.graduations.values()].map((g) => g.seconds);
+    const graduationMcaps = [...probe.graduations.values()].map((g) => g.mcap);
 
     console.log(
       [
@@ -129,6 +147,8 @@ function runHour(hour: number, minutes: number): void {
         `  stillborn ${pct(stillborn.length, rows.length)}, of those <=3 trades ${pct(stillbornHandful.length, stillborn.length)}, median mcap $${median(stillMcaps).toFixed(0)}`,
         `  no trades after 5 min ${pct(quiet5.length, aged5.length)} (${quiet5.length}/${aged5.length})`,
         `  graduation of launches aged >=10 min ${pct(graduated.length, matured.length)} (${graduated.length}/${matured.length})`,
+        `  start mcap min/median/max $${Math.min(...probe.starts).toFixed(2)}/$${median(probe.starts).toFixed(2)}/$${Math.max(...probe.starts).toFixed(2)}`,
+        `  observed graduation n=${graduationTimes.length}, median seconds ${median(graduationTimes).toFixed(1)}, mcap min/median/max $${Math.min(...graduationMcaps).toFixed(2)}/$${median(graduationMcaps).toFixed(2)}/$${Math.max(...graduationMcaps).toFixed(2)}`,
         `  mcap <= $6k ${pct(nearLaunch.length, rows.length)}, median mcap $${median(mcaps).toFixed(0)}`,
         `  population ${populations.map((point) => `${point.min}m:${point.size}`).join(' ')} max ${maxSize} final ${probe.size}`,
         `  cheap steps ${pct(cheap, stepped)}, tick cost after ${minutes} min ${avgTick.toFixed(2)} ms (n=${TICK_PROBE_STEPS} x ${TICK_PROBE_MS}ms)`,

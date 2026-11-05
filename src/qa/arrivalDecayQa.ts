@@ -76,6 +76,7 @@ function runQuickRugStillDumps(): void {
   Date.now = () => now;
   try {
     const sim = new TokenSim(meta('quick-rug', 'QUICK_RUG'), 2_000, 90_000);
+    const launchMcap = sim.getCurveDebugSnapshot().mcapCurveUsd;
     const steps = Math.round((5 * 60_000) / 200);
     for (let i = 0; i < steps; i++) {
       now += 200;
@@ -83,7 +84,8 @@ function runQuickRugStillDumps(): void {
     }
     const runtime = sim.getRuntime();
     check(runtime.ruggedAtSimMs != null, 'quick-rug/fate-timeout-marks-rug');
-    check(runtime.mcapUsd <= 2_100 && runtime.bondingCurvePct < 5,
+    // With no seeded real quote, selling all purchased tokens returns to launch price.
+    check(runtime.mcapUsd <= launchMcap * 1.05 && runtime.bondingCurvePct < 5,
       `quick-rug/dumps phase=${sim.getPhase()} mcap=${runtime.mcapUsd.toFixed(2)} bond=${runtime.bondingCurvePct.toFixed(2)}`);
     console.log(`quick rug: phase ${sim.getPhase()}, mcap ${runtime.mcapUsd.toFixed(2)}, bond ${runtime.bondingCurvePct.toFixed(2)}`);
   } finally {

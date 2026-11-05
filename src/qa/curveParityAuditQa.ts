@@ -1,3 +1,4 @@
+import { runOfficialCurveQa } from './officialCurveQa';
 import { CandleAggregator } from '../engine/aggregator';
 import { TokenSim } from '../tokens/tokenSim';
 import { registry } from '../tokens/registry';
@@ -19,6 +20,8 @@ function near(actual: number, expected: number, label: string): void {
   assert(Number.isFinite(actual) && Math.abs(actual - expected) <= 1e-9 * Math.max(1, Math.abs(expected)),
     `${label}: actual=${actual}, expected=${expected}`);
 }
+
+runOfficialCurveQa();
 
 const originalNow = Date.now;
 let now = 1_800_000_000_000;
@@ -50,11 +53,11 @@ try {
     // Independent inverse constant-product equation, retaining the existing fee model.
     const exhaustionNet = x * available / (y - available);
     const grossBudget = scenario === 'normal' ? 15
-      : scenario === 'exact' ? exhaustionNet / 0.99 : exhaustionNet / 0.99 * 3;
+      : scenario === 'exact' ? exhaustionNet / 0.9875 : exhaustionNet / 0.9875 * 3;
     const requestedSol = grossBudget / SOL_PRICE_USD;
-    const expectedTokens = Math.min(available, y * (grossBudget * 0.99) / (x + grossBudget * 0.99));
+    const expectedTokens = Math.min(available, y * (grossBudget * 0.9875) / (x + grossBudget * 0.9875));
     const expectedNet = x * expectedTokens / (y - expectedTokens);
-    const expectedGross = expectedNet / 0.99;
+    const expectedGross = expectedNet / 0.9875;
     const quote = sim.quoteUserTrade('BUY', requestedSol, 0);
     assert(quote.ok, `${scenario}: quote available`);
     near(quote.expectedOut, expectedTokens, `${scenario}: quote output`);
@@ -144,7 +147,7 @@ try {
     const integerOut = netInteger * y / (x + netInteger);
     const external = Number(integerOut < r ? integerOut : r) / units;
     const gross = Number(budget) / lamports * SOL_PRICE_USD;
-    const net = gross * 0.99;
+    const net = gross * 0.9875;
     const continuous = Math.min(before.rTok, before.vTok * net / (before.vBase + net));
     const sdkContinuousNet = gross / 1.01;
     const sdkContinuous = Math.min(before.rTok, before.vTok * sdkContinuousNet / (before.vBase + sdkContinuousNet));
@@ -158,7 +161,7 @@ try {
       assert(fill.ok, `${budget}/execution`);
       near(fill.filledToken, quote.expectedOut, `${budget}/quote-execution`);
       near(fill.filledUsd, gross, `${budget}/gross settlement`);
-      near(fill.feeUsd, gross * 0.01, `${budget}/gross fee`);
+      near(fill.feeUsd, gross * 0.0125, `${budget}/gross fee`);
       near(sim.getCurveDebugSnapshot().k, before.k, `${budget}/K`);
       assert(Math.abs(quote.expectedOut - external) > 0.06, `${budget}/external difference remains visible`);
     }

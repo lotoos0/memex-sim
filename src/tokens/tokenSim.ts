@@ -1,3 +1,4 @@
+import { CURVE_FEE_BPS, INITIAL_VIRTUAL_TOKEN_RESERVES, INITIAL_VIRTUAL_BASE_USD, INITIAL_REAL_TOKEN_RESERVES } from './curveConstants';
 import { RNG } from '../engine/rng';
 import { CandleAggregator } from '../engine/aggregator';
 import type { TokenFate, TokenMeta, TokenRuntime, TokenPhase } from './types';
@@ -70,10 +71,6 @@ type ArchetypeProfile = {
   volMul: number;
   driftBiasPerSec: number;
   maxDevEvents: number;
-  initialRealTokenRatioMin: number;
-  initialRealTokenRatioMax: number;
-  virtualTokenLiquidityMulMin: number;
-  virtualTokenLiquidityMulMax: number;
 };
 
 type CurveSwapDebug = {
@@ -294,7 +291,6 @@ export type UserTradeOrderStatus =
   | UserTradeExecutionNotice;
 
 const FINAL_PROGRESS = 0.8;
-const CURVE_FEE_BPS = 100;
 const CURVE_TOKEN_EPS = 1e-6;
 const MIGRATED_LIQUIDITY_FLOOR_USD = 7_500;
 const MIN_USER_LATENCY_MS = 80;
@@ -488,6 +484,7 @@ export class TokenSim {
   private marketPublishKey = '';
   private stillbornLaunch = false;
 
+  // startMcapUsd retains its legacy liquidity role; launch price comes only from curve reserves.
   constructor(meta: TokenMeta, startMcapUsd: number, fateTimeoutSimMs: number) {
     this.meta = meta;
     this.fateTimeoutSimMs = fateTimeoutSimMs;
@@ -509,7 +506,7 @@ export class TokenSim {
     this.archetype = this.rollArchetype();
     this.archetypeProfile = this.buildArchetypeProfile(this.archetype);
     this.baseQualityScore = computeBaseQualityScore(this.meta.fate, this.meta.metrics);
-    this.initCurveState(startMcapUsd);
+    this.initCurveState();
 
     this.aggr1s = new CandleAggregator(1);
     this.aggr15s = new CandleAggregator(15);
@@ -2640,61 +2637,38 @@ export class TokenSim {
         lambdaMul: 0.45,
         volMul: 0.5,
         driftBiasPerSec: -0.01,
-        maxDevEvents: 2,
-        initialRealTokenRatioMin: 0.9,
-        initialRealTokenRatioMax: 0.98,
-        virtualTokenLiquidityMulMin: 1.15,
-        virtualTokenLiquidityMulMax: 1.4,
-      };
+        maxDevEvents: 2,      };
     }
     if (archetype === 'SLOW_COOK') {
       return {
         lambdaMul: 0.9,
         volMul: 0.85,
         driftBiasPerSec: 0.0015,
-        maxDevEvents: 3,
-        initialRealTokenRatioMin: 0.72,
-        initialRealTokenRatioMax: 0.9,
-        virtualTokenLiquidityMulMin: 1.1,
-        virtualTokenLiquidityMulMax: 1.35,
-      };
+        maxDevEvents: 3,      };
     }
     if (archetype === 'CHAOS') {
       return {
         lambdaMul: 1.35,
         volMul: 1.4,
         driftBiasPerSec: 0.003,
-        maxDevEvents: 5,
-        initialRealTokenRatioMin: 0.42,
-        initialRealTokenRatioMax: 0.62,
-        virtualTokenLiquidityMulMin: 1.05,
-        virtualTokenLiquidityMulMax: 1.2,
-      };
+        maxDevEvents: 5,      };
     }
     return {
       lambdaMul: 1,
       volMul: 0.85,
       driftBiasPerSec: 0.0015,
-      maxDevEvents: 3,
-      initialRealTokenRatioMin: 0.52,
-      initialRealTokenRatioMax: 0.74,
-      virtualTokenLiquidityMulMin: 1.08,
-      virtualTokenLiquidityMulMax: 1.28,
-    };
+      maxDevEvents: 3,    };
   }
 
-  private initCurveState(startMcapUsd: number): void {
-    const initialRatio = this.archetypeProfile.initialRealTokenRatioMin
-      + (this.archetypeProfile.initialRealTokenRatioMax - this.archetypeProfile.initialRealTokenRatioMin) * this.rng.next();
-    const virtualMul = this.archetypeProfile.virtualTokenLiquidityMulMin
-      + (this.archetypeProfile.virtualTokenLiquidityMulMax - this.archetypeProfile.virtualTokenLiquidityMulMin) * this.rng.next();
-    const startPrice = Math.max(1e-12, startMcapUsd / SUPPLY);
-
-    this.curveInitialRealToken = Math.max(CURVE_TOKEN_EPS, SUPPLY * clamp(initialRatio, 0.05, 0.99));
-    this.curveRealToken = this.curveInitialRealToken;
-    this.curveVirtualToken = Math.max(CURVE_TOKEN_EPS, this.curveInitialRealToken * Math.max(1.01, virtualMul));
-    this.curveVirtualBase = Math.max(1, startPrice * this.curveVirtualToken);
-    this.curveRealBase = Math.max(0, startMcapUsd * 0.02);
+  private initCurveState(): void {
+    // Preserve historical random draws so dev and archetype behavior keep their seeds.
+    this.rng.next();
+    this.rng.next();
+    this.curveInitialRealToken = INITIAL_REAL_TOKEN_RESERVES;
+    this.curveRealToken = INITIAL_REAL_TOKEN_RESERVES;
+    this.curveVirtualToken = INITIAL_VIRTUAL_TOKEN_RESERVES;
+    this.curveVirtualBase = INITIAL_VIRTUAL_BASE_USD;
+    this.curveRealBase = 0;
     this.curveKStart = this.curveVirtualBase * this.curveVirtualToken;
     this.invalidCurveState = false;
     this.bondingProgress = 0;
