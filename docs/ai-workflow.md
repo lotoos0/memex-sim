@@ -2,9 +2,12 @@
 
 ## Roles
 
-- Human: product decisions and final PR/merge approval; explicit implementation approval in STANDARD.
-- ChatGPT: task definition, plan review, and diff/CI review with the Human.
-- Codex: analysis, technical planning, implementation, fixes, and validation within the approved scope.
+- Human: product decisions, approvals, and final PR/merge; explicit implementation approval in STANDARD.
+- Coordinating AI chat: task definition, plan review, delegating to implementing agents, and diff/CI review with the Human.
+- Implementing agents: analysis, technical planning, implementation, fixes, and validation within the approved scope (e.g. Codex, Cursor cloud agents, subagents).
+- Independent AI reviewer: separate review pass (e.g. Codex review); findings are fixed in the same PR before Human merge.
+
+Deploy, release, and merge need explicit Human authorization. Creating a PR does not authorize merge. Agents working in parallel must not touch the same files or branches.
 
 Architecture and simulation safety rules live in [AGENTS.md](../AGENTS.md).
 
@@ -23,29 +26,31 @@ Risk overrides file count and estimated time. A one-file accounting change is ST
 ## FAST workflow
 
 ```text
-Human + ChatGPT -> task definition and acceptance criteria
-Codex -> analysis, implementation and validation
-Human + ChatGPT -> diff/CI review
+Human + coordinating chat -> task definition and acceptance criteria
+Implementing agent -> analysis, implementation and validation
+Independent reviewer (optional) -> findings fixed in the same PR
+Human + coordinating chat -> diff/CI review
 Human -> final PR/merge approval
 ```
 
-A clear implementation request authorizes work within its stated scope. If review finds issues, Codex fixes them and repeats validation and review before Human approval. Escalate to STANDARD if analysis reveals risk or an architecture decision.
+A clear implementation request authorizes work within its stated scope. If review finds issues, the implementing agent fixes them and repeats validation and review before Human approval. Escalate to STANDARD if analysis reveals risk or an architecture decision.
 
 ## STANDARD workflow
 
 ```text
-Human + ChatGPT -> task definition and acceptance criteria
-Codex -> technical plan
-Human + ChatGPT -> plan review
+Human + coordinating chat -> task definition and acceptance criteria
+Implementing agent -> technical plan
+Human + coordinating chat -> plan review
 Human -> explicit implementation approval
-Codex -> implementation and regression checks
-Human + ChatGPT -> diff/CI review
+Implementing agent -> implementation and regression checks
+Independent reviewer (optional) -> findings fixed in the same PR
+Human + coordinating chat -> diff/CI review
 Human -> final PR/merge approval
 ```
 
 Plan review alone does not authorize implementation. Wait for explicit Human implementation approval. An already approved plan does not need another approval unless its scope or risks change.
 
-If the plan needs revision, Codex revises it and repeats plan review before approval. If implementation review finds issues, Codex fixes them within the approved scope, reruns regression checks, and returns the diff/CI results for review. Scope or risk changes return to technical planning and approval.
+If the plan needs revision, the implementing agent revises it and repeats plan review before approval. If implementation review finds issues, the implementing agent fixes them within the approved scope, reruns regression checks, and returns the diff/CI results for review. Scope or risk changes return to technical planning and approval.
 
 ### Technical plan format
 
@@ -72,9 +77,9 @@ Risk and validation
 
 ## Validation and handoff
 
-Codex reports files changed, validation commands/results, known existing failures, skipped checks with reasons, and what was intentionally not changed. Use the relevant checks and manual checklist in AGENTS.md; never report unrun checks as passing.
+The implementing agent reports files changed, validation commands/results, known existing failures, skipped checks with reasons, and what was intentionally not changed. Use the relevant checks and manual checklist in AGENTS.md; never report unrun checks as passing. Calibration/behavior changes must include before/after measurement (see AGENTS.md PR `## Measurement`).
 
-Human + ChatGPT review the diff, acceptance criteria, and CI results. Codex addresses feedback and repeats affected checks. The Human gives final PR/merge approval. Do not merge automatically or treat a PR request as deployment authorization.
+Human + coordinating chat review the diff, acceptance criteria, and CI results. The implementing agent addresses feedback and repeats affected checks. The Human gives final PR/merge approval. Do not merge automatically or treat a PR request as deployment authorization.
 
 ## Diagrams
 
