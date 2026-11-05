@@ -12,6 +12,7 @@ import {
   Check,
   Copy,
   Feather,
+  EyeOff,
   LoaderCircle,
   Star,
   Zap,
@@ -26,6 +27,7 @@ import { useTradingStore } from '../../store/tradingStore';
 import { usePostStore, type TokenPost } from '../../store/postStore';
 import { useFavoritesStore } from '../../store/favoritesStore';
 import TokenAvatar from '../common/TokenAvatar';
+import HoverTooltip from '../ui/HoverTooltip';
 import TweetHoverCard from '../news/TweetHoverCard';
 import './TokenCard.css';
 
@@ -64,6 +66,7 @@ function fmtQuickBuyAmount(value: number): string {
 export type PulseDisplayMode = 'comfortable' | 'dense';
 
 interface Props {
+  onHideToken: (tokenId: string) => void;
   token: TokenState;
   quickBuyAmount: number;
   quickBuyOptions: {
@@ -75,6 +78,7 @@ interface Props {
 }
 
 export default function TokenCard({
+  onHideToken,
   token,
   quickBuyAmount,
   quickBuyOptions,
@@ -363,6 +367,22 @@ export default function TokenCard({
             P {pnlLabel}
           </span>
         )}
+        <span className="pulse-token-card__hide">
+          <HoverTooltip label="Hide Token">
+            <button
+              type="button"
+              className="pulse-token-card__icon"
+              aria-label="Hide Token"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onHideToken(token.id);
+              }}
+            >
+              <EyeOff size={13} />
+            </button>
+          </HoverTooltip>
+        </span>
         <button
           type="button"
           className={`pulse-token-card__icon${isFavorite ? ' pulse-token-card__icon--favorite' : ''}`}

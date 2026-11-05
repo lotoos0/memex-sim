@@ -123,6 +123,22 @@
 .pulse-token-card__icon:hover {
   color: var(--color-ax-text);
 }
+.pulse-token-card__hide {
+  flex: none;
+  opacity: 0;
+  pointer-events: none;
+}
+.pulse-token-card:hover .pulse-token-card__hide,
+.pulse-token-card:focus-within .pulse-token-card__hide {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .pulse-token-card__hide {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
 .pulse-token-card__icon:disabled {
   opacity: 0.45;
   cursor: default;

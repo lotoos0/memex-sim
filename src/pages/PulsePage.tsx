@@ -34,6 +34,17 @@ type CompiledPulseBucketFilters = { [K in keyof PulseBucketTokenFilters]: number
 const DISPLAY_MODE_STORAGE_KEY = 'memex:pulse:display-mode';
 const PULSE_FILTERS_STORAGE_KEY = 'memex:pulse:filters:v1';
 const PULSE_SORTS_STORAGE_KEY = 'memex:pulse:sorts:v1';
+const HIDDEN_TOKENS_STORAGE_KEY = 'memex:pulse:hidden-token-ids:v1';
+
+function loadHiddenTokenIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(HIDDEN_TOKENS_STORAGE_KEY) ?? '[]');
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string' && id.length > 0) : []);
+  } catch {
+    return new Set();
+  }
+}
 
 const DEFAULT_COLUMN_FILTERS: Record<ColumnKey, PulseColumnFilters> = {
   newPairs: { newPairs: true, finalStretch: false, migrated: false },
@@ -145,6 +156,7 @@ export default function PulsePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const view = searchParams.get('view');
   const tokensById = useTokenStore(s => s.tokensById);
+  const [hiddenTokenIds, setHiddenTokenIds] = useState(loadHiddenTokenIds);
   const tradeFlowByTokenId = useTokenStore(s => s.tradeFlowByTokenId);
   const [displayMode, setDisplayMode] = useState<PulseDisplayMode>(() => loadDisplayMode());
   const [filtersModalOpen, setFiltersModalOpen] = useState(false);
@@ -177,14 +189,26 @@ export default function PulsePage() {
     window.localStorage.setItem(PULSE_SORTS_STORAGE_KEY, JSON.stringify(pulseSortsByBucket));
   }, [pulseSortsByBucket]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(HIDDEN_TOKENS_STORAGE_KEY, JSON.stringify([...hiddenTokenIds]));
+    } catch {
+      // Keep hiding usable for this session when browser storage is unavailable.
+    }
+  }, [hiddenTokenIds]);
+
+  const hideToken = (tokenId: string) => {
+    setHiddenTokenIds((current) => new Set([...current, tokenId]));
+  };
+
   const buckets = useMemo(() => {
-    const all = Object.values(tokensById);
+    const all = Object.values(tokensById).filter((token) => !hiddenTokenIds.has(token.id));
     return {
       newPairs: pulseColumnCandidates(all, 'newPairs'),
       finalStretch: pulseColumnCandidates(all, 'finalStretch'),
       migrated: pulseColumnCandidates(all, 'migrated'),
     };
-  }, [tokensById]);
+  }, [tokensById, hiddenTokenIds]);
 
   const compiledFiltersByBucket = useMemo<Record<PulseBucketKey, CompiledPulseBucketFilters>>(
     () => ({
@@ -266,6 +290,7 @@ export default function PulsePage() {
       <div className="flex flex-1 gap-3 overflow-hidden">
         <TokenColumn
           title="New Pairs"
+          onHideToken={hideToken}
           tokens={newPairs}
           accent="#00d4a1"
           filters={columnFilters.newPairs}
@@ -281,6 +306,7 @@ export default function PulsePage() {
         />
         <TokenColumn
           title="Final Stretch"
+          onHideToken={hideToken}
           tokens={finalStretch}
           accent="#f5c542"
           filters={columnFilters.finalStretch}
@@ -296,6 +322,7 @@ export default function PulsePage() {
         />
         <TokenColumn
           title="Migrated"
+          onHideToken={hideToken}
           tokens={migrated}
           accent="#6c63ff"
           filters={columnFilters.migrated}
