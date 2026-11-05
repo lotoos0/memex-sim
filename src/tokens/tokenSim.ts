@@ -532,6 +532,7 @@ export class TokenSim {
   private walletProfiles = new Map<string, HolderWalletProfile>();
   private tape: SimTapeTrade[] = [];
   private walletSeq = 0;
+  private walletRng!: RNG;
   private readonly baseQualityScore: number;
   private microburst: MicroburstState | null = null;
 
@@ -555,6 +556,9 @@ export class TokenSim {
     this.lastTickRealMs = this.spawnRealMs;
     this.sessionBucket = getSessionBucket(this.spawnRealMs);
     this.rng = new RNG(meta.id);
+    // Wallet ids and reuse rolls stay off the trade stream so a higher reuse
+    // rate does not reshuffle curve, archetype, or arrival draws.
+    this.walletRng = new RNG(`${meta.id}:wallet`);
 
     // Token-specific baseline params.
     // Historical draw. Arrival rate no longer uses it; dropping the call would
@@ -1608,23 +1612,23 @@ export class TokenSim {
 
   private createWalletId(prefix: string): string {
     this.walletSeq += 1;
-    const suffix = Math.floor(this.rng.next() * 0xFFFFFF).toString(36);
+    const suffix = Math.floor(this.walletRng.next() * 0xFFFFFF).toString(36);
     return `${prefix}_${this.walletSeq.toString(36)}${suffix}`;
   }
 
   private randomInitialSolBalance(walletId: string): number {
     if (walletId === 'you') return 120;
-    if (walletId.startsWith('dv_')) return 6 + this.rng.next() * 60;
-    if (walletId.startsWith('in_')) return 1.5 + this.rng.next() * 26;
-    if (walletId.startsWith('sn_')) return 0.7 + this.rng.next() * 16;
-    if (walletId.startsWith('se_')) return 0.9 + this.rng.next() * 20;
-    if (walletId.startsWith('mc_')) return 0.2 + this.rng.next() * 14;
-    if (walletId.startsWith('lr_')) return 0.05 + this.rng.next() * 8;
-    if (walletId.startsWith('db_')) return 0.2 + this.rng.next() * 12;
-    if (walletId.startsWith('ps_')) return 0.04 + this.rng.next() * 6;
-    if (walletId.startsWith('g_')) return 0.05 + this.rng.next() * 45;
-    if (walletId.startsWith('w_')) return 0.01 + this.rng.next() * 28;
-    return 0.01 + this.rng.next() * 20;
+    if (walletId.startsWith('dv_')) return 6 + this.walletRng.next() * 60;
+    if (walletId.startsWith('in_')) return 1.5 + this.walletRng.next() * 26;
+    if (walletId.startsWith('sn_')) return 0.7 + this.walletRng.next() * 16;
+    if (walletId.startsWith('se_')) return 0.9 + this.walletRng.next() * 20;
+    if (walletId.startsWith('mc_')) return 0.2 + this.walletRng.next() * 14;
+    if (walletId.startsWith('lr_')) return 0.05 + this.walletRng.next() * 8;
+    if (walletId.startsWith('db_')) return 0.2 + this.walletRng.next() * 12;
+    if (walletId.startsWith('ps_')) return 0.04 + this.walletRng.next() * 6;
+    if (walletId.startsWith('g_')) return 0.05 + this.walletRng.next() * 45;
+    if (walletId.startsWith('w_')) return 0.01 + this.walletRng.next() * 28;
+    return 0.01 + this.walletRng.next() * 20;
   }
 
   private getOrCreateWalletProfile(walletId: string, tsMs: number): HolderWalletProfile {
@@ -1689,13 +1693,17 @@ export class TokenSim {
   private pickWalletForBuy(actorGroup: TokenActorGroup): string {
     const prefix = getActorWalletPrefix(actorGroup);
     const matching = this.getHolderWalletIdsByPrefixes([prefix], true);
-    if (matching.length > 0 && this.rng.next() < getActorBuyReuseBias(actorGroup)) {
-      return matching[Math.floor(this.rng.next() * matching.length)]!;
+    if (matching.length > 0 && this.walletRng.next() < getActorBuyReuseBias(actorGroup)) {
+      return matching[Math.floor(this.walletRng.next() * matching.length)]!;
     }
 
     const holders = this.getHolderWalletIds(true);
-    if (holders.length > 0 && this.rng.next() < 0.38) {
-      return holders[Math.floor(this.rng.next() * holders.length)]!;
+    // Any-holder reuse. 0.38 left the median near 9 wallets/coin; real
+    // wallets_per_coin_q median is 5 (p90 40, a later pool). 0.72 lands the
+    // median at 6. 0.80 reaches 5 but drops birth graduation under 1.5%,
+    // because the migration gate still wants 5 holders.
+    if (holders.length > 0 && this.walletRng.next() < 0.72) {
+      return holders[Math.floor(this.walletRng.next() * holders.length)]!;
     }
     return this.createWalletId(prefix);
   }
