@@ -18,6 +18,7 @@ export interface MarketStepInput {
   whaleMinMul?: number;
   whaleMaxMul?: number;
   maxWhaleUsd?: number;
+  minTradeUsd?: number;
   externalFlow?: {
     buyBoostUsd?: number;
     sellBoostUsd?: number;
@@ -65,8 +66,9 @@ export function stepMarket(rng: RNG, input: MarketStepInput): MarketStepOutput {
   const whaleMinMul = Math.max(1, input.whaleMinMul ?? 4);
   const whaleMaxMul = Math.max(whaleMinMul, input.whaleMaxMul ?? 18);
   const maxWhaleUsd = Math.max(avgSize, input.maxWhaleUsd ?? avgSize * 35);
+  const minTradeUsd = Math.max(0, input.minTradeUsd ?? 0);
   for (let i = 0; i < tradeCount; i++) {
-    let size = logNormal(rng, muLog, sigma);
+    let size = Math.max(minTradeUsd, logNormal(rng, muLog, sigma));
     if (rng.next() < whaleChance) {
       const mul = whaleMinMul + (whaleMaxMul - whaleMinMul) * rng.next();
       size *= mul;
