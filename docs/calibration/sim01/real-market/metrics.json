@@ -1,0 +1,1218 @@
+{
+  "schemaVersion": 1,
+  "sourceManifest": "sources.json",
+  "definitions": "README.md#metric-contract",
+  "availability": {
+    "direction_changes_per_100_trades": true,
+    "side_quote_per_second": true,
+    "trades_per_active_second": true,
+    "individual_trade_sizes": true,
+    "buy_sell_streak_lengths": true
+  },
+  "unavailable": {
+    "real_true_readiness": "No transfer-complete holder balances or launch-mode flags",
+    "real_intrasecond_waits": "Block timestamps have one-second resolution"
+  },
+  "datasets": {
+    "real": {
+      "active_noninstant": 20319,
+      "paths": {
+        "full": {
+          "direction_changes_per_100_trades": 30.46473130194982,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 20319,
+            "p10": 5.2631578947368425,
+            "p50": 27.272727272727273,
+            "p90": 50.0,
+            "p99": 75.0
+          },
+          "buy_quote_sol_per_exposure_second": 0.012819232885523038,
+          "sell_quote_sol_per_exposure_second": 0.012071567784842224,
+          "trades_per_active_episode_second_bin": 3.05466242234735,
+          "transaction_quote_sol": {
+            "n": 2059319,
+            "p10": 0.009777777,
+            "p50": 0.161420768,
+            "p90": 1.099112,
+            "p99": 3.160493826
+          },
+          "buy_transaction_quote_sol": {
+            "n": 1103017,
+            "p10": 0.009777777,
+            "p50": 0.144728969,
+            "p90": 1.0351595496,
+            "p99": 3.061728394
+          },
+          "sell_transaction_quote_sol": {
+            "n": 956302,
+            "p10": 0.0103037233,
+            "p50": 0.1882184655,
+            "p90": 1.1554314267,
+            "p99": 3.205351282869999
+          },
+          "buy_run_length_trades": {
+            "n": 325544,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 7.0,
+            "p99": 18.0
+          },
+          "sell_run_length_trades": {
+            "n": 322141,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 6.0,
+            "p99": 17.0
+          },
+          "paths": 20319,
+          "trades": 2059319,
+          "duration_sec": 36293640.0,
+          "buy_count_share": 0.535622212974289,
+          "buy_volume_share": 0.5150189041843675,
+          "drawdown_trade_pct": {
+            "n": 20319,
+            "p10": 0.006584024861633342,
+            "p50": 16.670947248404964,
+            "p90": 62.85885530761935,
+            "p99": 86.48027158560173
+          }
+        },
+        "0_80": {
+          "direction_changes_per_100_trades": 29.41278446609099,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 23400,
+            "p10": 0.0,
+            "p50": 27.189647121606296,
+            "p90": 50.0,
+            "p99": 75.0
+          },
+          "buy_quote_sol_per_exposure_second": 0.010964476276601033,
+          "sell_quote_sol_per_exposure_second": 0.0102470423480663,
+          "trades_per_active_episode_second_bin": 2.933979178178488,
+          "transaction_quote_sol": {
+            "n": 1736279,
+            "p10": 0.009777777,
+            "p50": 0.174927459,
+            "p90": 1.0950756852,
+            "p99": 3.0891422745999986
+          },
+          "buy_transaction_quote_sol": {
+            "n": 904864,
+            "p10": 0.009777777,
+            "p50": 0.15319821849999998,
+            "p90": 1.0603155883000015,
+            "p99": 3.1412377434999996
+          },
+          "sell_transaction_quote_sol": {
+            "n": 831415,
+            "p10": 0.010240457000000003,
+            "p50": 0.189191854,
+            "p90": 1.1243591078,
+            "p99": 3.0718972208399995
+          },
+          "buy_run_length_trades": {
+            "n": 269446,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 7.0,
+            "p99": 17.0
+          },
+          "sell_run_length_trades": {
+            "n": 264642,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 6.0,
+            "p99": 19.0
+          },
+          "paths": 23402,
+          "trades": 1736279,
+          "duration_sec": 36150297.0,
+          "buy_count_share": 0.5211512665879159,
+          "buy_volume_share": 0.5169114230157102,
+          "drawdown_trade_pct": {
+            "n": 23402,
+            "p10": 0.0,
+            "p50": 12.671918011558757,
+            "p90": 59.947207916394326,
+            "p99": 81.99912723337849
+          }
+        },
+        "80_90": {
+          "direction_changes_per_100_trades": 35.19923684927773,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 4921,
+            "p10": 0.0,
+            "p50": 31.944444444444443,
+            "p90": 50.0,
+            "p99": 71.42857142857143
+          },
+          "buy_quote_sol_per_exposure_second": 0.4392115892457816,
+          "sell_quote_sol_per_exposure_second": 0.4272847041784944,
+          "trades_per_active_episode_second_bin": 3.383375444938308,
+          "transaction_quote_sol": {
+            "n": 183450,
+            "p10": 0.009777777,
+            "p50": 0.123456789,
+            "p90": 1.1982559605000005,
+            "p99": 3.4864499269000375
+          },
+          "buy_transaction_quote_sol": {
+            "n": 110339,
+            "p10": 0.009777777,
+            "p50": 0.098626127,
+            "p90": 0.98765432,
+            "p99": 2.962962962
+          },
+          "sell_transaction_quote_sol": {
+            "n": 73111,
+            "p10": 0.010771715,
+            "p50": 0.190647154,
+            "p90": 1.44250732,
+            "p99": 4.0070392883
+          },
+          "buy_run_length_trades": {
+            "n": 34801,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 7.0,
+            "p99": 17.0
+          },
+          "sell_run_length_trades": {
+            "n": 34693,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 10.0
+          },
+          "paths": 4921,
+          "trades": 183450,
+          "duration_sec": 91219.0,
+          "buy_count_share": 0.6014663396020714,
+          "buy_volume_share": 0.5068822481745154,
+          "drawdown_trade_pct": {
+            "n": 4921,
+            "p10": 0.004667748705311503,
+            "p50": 5.827639344041858,
+            "p90": 24.521709019951444,
+            "p99": 38.7035172942461
+          }
+        },
+        "90_100": {
+          "direction_changes_per_100_trades": 34.74747474747475,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 1856,
+            "p10": 0.0,
+            "p50": 33.333333333333336,
+            "p90": 50.0,
+            "p99": 66.66666666666667
+          },
+          "buy_quote_sol_per_exposure_second": 0.5529719057505378,
+          "sell_quote_sol_per_exposure_second": 0.5508216509483156,
+          "trades_per_active_episode_second_bin": 3.9184257803727824,
+          "transaction_quote_sol": {
+            "n": 139590,
+            "p10": 0.009777777,
+            "p50": 0.1019521055,
+            "p90": 1.0641371429,
+            "p99": 3.471490498859988
+          },
+          "buy_transaction_quote_sol": {
+            "n": 87814,
+            "p10": 0.009777777,
+            "p50": 0.097777777,
+            "p90": 0.977777777,
+            "p99": 2.933333333
+          },
+          "sell_transaction_quote_sol": {
+            "n": 51776,
+            "p10": 0.0108592615,
+            "p50": 0.17054696349999998,
+            "p90": 1.4254949154999998,
+            "p99": 4.306330924999999
+          },
+          "buy_run_length_trades": {
+            "n": 25016,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 7.0,
+            "p99": 21.0
+          },
+          "sell_run_length_trades": {
+            "n": 25344,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 10.0
+          },
+          "paths": 1856,
+          "trades": 139590,
+          "duration_sec": 52124.0,
+          "buy_count_share": 0.6290851780213482,
+          "buy_volume_share": 0.5009740294229715,
+          "drawdown_trade_pct": {
+            "n": 1856,
+            "p10": 1.3746596623150475,
+            "p50": 7.209328208886018,
+            "p90": 26.118949360717348,
+            "p99": 80.61032974058503
+          }
+        },
+        "from80": {
+          "direction_changes_per_100_trades": 33.104813143758605,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 685,
+            "p10": 10.895643470473582,
+            "p50": 33.333333333333336,
+            "p90": 40.9615975422427,
+            "p99": 46.01356725146197
+          },
+          "buy_quote_sol_per_exposure_second": 0.13854108339706153,
+          "sell_quote_sol_per_exposure_second": 0.14948604385439798,
+          "trades_per_active_episode_second_bin": 3.5024872998294927,
+          "transaction_quote_sol": {
+            "n": 597759,
+            "p10": 0.0090825256,
+            "p50": 0.111482777,
+            "p90": 1.0454097968000018,
+            "p99": 3.0759603467000076
+          },
+          "buy_transaction_quote_sol": {
+            "n": 319484,
+            "p10": 0.009777777,
+            "p50": 0.098765431,
+            "p90": 0.9871555715000002,
+            "p99": 2.933333333
+          },
+          "sell_transaction_quote_sol": {
+            "n": 278275,
+            "p10": 0.007277298000000001,
+            "p50": 0.136505384,
+            "p90": 1.1747245112000002,
+            "p99": 3.391110410640011
+          },
+          "buy_run_length_trades": {
+            "n": 99351,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 7.0,
+            "p99": 18.0
+          },
+          "sell_run_length_trades": {
+            "n": 99221,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 5.0,
+            "p99": 15.0
+          },
+          "paths": 685,
+          "trades": 597759,
+          "duration_sec": 816390.0,
+          "buy_count_share": 0.534469577204191,
+          "buy_volume_share": 0.48100012217290034,
+          "drawdown_trade_pct": {
+            "n": 685,
+            "p10": 17.52806553669307,
+            "p50": 82.39134257254915,
+            "p90": 91.20542316983764,
+            "p99": 92.7822090651406
+          }
+        },
+        "first80_to_first90": {
+          "direction_changes_per_100_trades": 34.14668089251751,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 399,
+            "p10": 0.0,
+            "p50": 33.333333333333336,
+            "p90": 42.857142857142854,
+            "p99": 49.8733850129199
+          },
+          "buy_quote_sol_per_exposure_second": 0.5657363075535551,
+          "sell_quote_sol_per_exposure_second": 0.4264502205917828,
+          "trades_per_active_episode_second_bin": 3.8303127221037667,
+          "transaction_quote_sol": {
+            "n": 107785,
+            "p10": 0.009777777,
+            "p50": 0.126926342,
+            "p90": 1.1614258562000008,
+            "p99": 3.289071416
+          },
+          "buy_transaction_quote_sol": {
+            "n": 67046,
+            "p10": 0.009777777,
+            "p50": 0.098765431,
+            "p90": 1.025328677,
+            "p99": 3.025277689350038
+          },
+          "sell_transaction_quote_sol": {
+            "n": 40739,
+            "p10": 0.009438491,
+            "p50": 0.177228382,
+            "p90": 1.3025085908000003,
+            "p99": 3.5259150452400245
+          },
+          "buy_run_length_trades": {
+            "n": 18758,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 8.0,
+            "p99": 20.0
+          },
+          "sell_run_length_trades": {
+            "n": 18446,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 11.0
+          },
+          "paths": 408,
+          "trades": 107785,
+          "duration_sec": 45831.0,
+          "buy_count_share": 0.6220346059284687,
+          "buy_volume_share": 0.5701914826550484,
+          "drawdown_trade_pct": {
+            "n": 408,
+            "p10": 0.0,
+            "p50": 17.262343784199743,
+            "p90": 45.05190250004677,
+            "p99": 75.74590467674714
+          }
+        }
+      },
+      "native_seconds": {
+        "0_80": {
+          "bins": 36150636,
+          "empty": 35561196,
+          "active": 589440,
+          "trades": 1714684,
+          "empty_share": 0.9836948926707679,
+          "trades_per_exposed_second_bin": 0.04743164131330912,
+          "trades_per_active_native_second_bin": 2.909005157437568,
+          "buy_quote_sol_per_native_exposed_second_bin": 0.011023701703468365,
+          "sell_quote_sol_per_native_exposed_second_bin": 0.010122020038076432
+        },
+        "80_90": {
+          "bins": 91192,
+          "empty": 40689,
+          "active": 50503,
+          "trades": 192491,
+          "empty_share": 0.44619045530309676,
+          "trades_per_exposed_second_bin": 2.1108320905342572,
+          "trades_per_active_native_second_bin": 3.8114765459477655,
+          "buy_quote_sol_per_native_exposed_second_bin": 0.4263900519039807,
+          "sell_quote_sol_per_native_exposed_second_bin": 0.44877649923760804
+        },
+        "90_100": {
+          "bins": 52117,
+          "empty": 17904,
+          "active": 34213,
+          "trades": 152144,
+          "empty_share": 0.3435347391446169,
+          "trades_per_exposed_second_bin": 2.9192777788437554,
+          "trades_per_active_native_second_bin": 4.446964604097857,
+          "buy_quote_sol_per_native_exposed_second_bin": 0.5345555990449152,
+          "sell_quote_sol_per_native_exposed_second_bin": 0.6001659135976561
+        }
+      }
+    },
+    "A": {
+      "active_noninstant": 4728,
+      "paths": {
+        "full": {
+          "direction_changes_per_100_trades": 45.39368911245593,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 4728,
+            "p10": 33.333333333333336,
+            "p50": 46.666666666666664,
+            "p90": 57.31824190350298,
+            "p99": 71.42857142857143
+          },
+          "buy_quote_sol_per_exposure_second": 0.01666885117771738,
+          "sell_quote_sol_per_exposure_second": 0.011376718346246326,
+          "trades_per_active_episode_second_bin": 1.5494998744899826,
+          "transaction_quote_sol": {
+            "n": 364196,
+            "p10": 0.028548749991687494,
+            "p50": 0.10598630548409499,
+            "p90": 1.5489595018995281,
+            "p99": 8.116140648264182
+          },
+          "buy_transaction_quote_sol": {
+            "n": 197683,
+            "p10": 0.029120262285853363,
+            "p50": 0.09878215046086145,
+            "p90": 1.6597761794776453,
+            "p99": 9.591961856873157
+          },
+          "sell_transaction_quote_sol": {
+            "n": 166513,
+            "p10": 0.027955690386996142,
+            "p50": 0.11531338571987362,
+            "p90": 1.4513019689153799,
+            "p99": 6.417038546149406
+          },
+          "buy_run_length_trades": {
+            "n": 85654,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 5.0,
+            "p99": 9.0
+          },
+          "sell_run_length_trades": {
+            "n": 84396,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 3.0,
+            "p99": 11.0
+          },
+          "paths": 4728,
+          "trades": 364196,
+          "duration_sec": 8341489.021999998,
+          "buy_count_share": 0.5427928917396128,
+          "buy_volume_share": 0.5943488208886105,
+          "drawdown_trade_pct": {
+            "n": 4728,
+            "p10": 5.849220119825126,
+            "p50": 31.051218364768438,
+            "p90": 67.22182106198737,
+            "p99": 88.87894500027491
+          }
+        },
+        "0_80": {
+          "direction_changes_per_100_trades": 45.6209024077083,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 5251,
+            "p10": 28.571428571428573,
+            "p50": 46.55172413793103,
+            "p90": 57.377049180327866,
+            "p99": 71.42857142857143
+          },
+          "buy_quote_sol_per_exposure_second": 0.016227179064432527,
+          "sell_quote_sol_per_exposure_second": 0.010843146578033563,
+          "trades_per_active_episode_second_bin": 1.5583433670939868,
+          "transaction_quote_sol": {
+            "n": 352036,
+            "p10": 0.028376479325064187,
+            "p50": 0.1019054636075124,
+            "p90": 1.4884462416377575,
+            "p99": 7.883340443809769
+          },
+          "buy_transaction_quote_sol": {
+            "n": 191511,
+            "p10": 0.02897585742547852,
+            "p50": 0.09475082342807498,
+            "p90": 1.5907724703945967,
+            "p99": 9.528810825957727
+          },
+          "sell_transaction_quote_sol": {
+            "n": 160525,
+            "p10": 0.027749470643263826,
+            "p50": 0.11126239104827013,
+            "p90": 1.3983224811235269,
+            "p99": 6.108822936883464
+          },
+          "buy_run_length_trades": {
+            "n": 83686,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 5.0,
+            "p99": 9.0
+          },
+          "sell_run_length_trades": {
+            "n": 82167,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 3.0,
+            "p99": 10.0
+          },
+          "paths": 5263,
+          "trades": 352036,
+          "duration_sec": 8089053.832999986,
+          "buy_count_share": 0.5440097035530457,
+          "buy_volume_share": 0.5994452848020575,
+          "drawdown_trade_pct": {
+            "n": 5263,
+            "p10": 3.0238033639329474,
+            "p50": 27.558959133401927,
+            "p90": 64.67753572868307,
+            "p99": 82.80361300599044
+          }
+        },
+        "80_90": {
+          "direction_changes_per_100_trades": 39.22639098617726,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 785,
+            "p10": 0.0,
+            "p50": 29.26829268292683,
+            "p90": 59.044289044289044,
+            "p99": 78.13333333333325
+          },
+          "buy_quote_sol_per_exposure_second": 0.022400751683375075,
+          "sell_quote_sol_per_exposure_second": 0.026634628077984612,
+          "trades_per_active_episode_second_bin": 1.2729557888511016,
+          "transaction_quote_sol": {
+            "n": 8609,
+            "p10": 0.042458128763728994,
+            "p50": 0.3211511887886566,
+            "p90": 3.431086505629801,
+            "p99": 12.578282988011837
+          },
+          "buy_transaction_quote_sol": {
+            "n": 3732,
+            "p10": 0.04225319821665465,
+            "p50": 0.34602150134465304,
+            "p90": 3.831498453383626,
+            "p99": 11.936460183935994
+          },
+          "sell_transaction_quote_sol": {
+            "n": 4877,
+            "p10": 0.04254517467964373,
+            "p50": 0.30084124285105646,
+            "p90": 3.133336597206711,
+            "p99": 12.703526774931168
+          },
+          "buy_run_length_trades": {
+            "n": 1971,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 7.0
+          },
+          "sell_run_length_trades": {
+            "n": 2191,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 14.0
+          },
+          "paths": 796,
+          "trades": 8609,
+          "duration_sec": 220924.744,
+          "buy_count_share": 0.43349982576373564,
+          "buy_volume_share": 0.4568283511291793,
+          "drawdown_trade_pct": {
+            "n": 796,
+            "p10": 0.39004074602252414,
+            "p50": 10.590819832919706,
+            "p90": 32.70574385570883,
+            "p99": 52.052699553301835
+          }
+        },
+        "90_100": {
+          "direction_changes_per_100_trades": 18.867924528301888,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 200,
+            "p10": 0.0,
+            "p50": 5.882352941176471,
+            "p90": 46.78571428571427,
+            "p99": 71.46428571428568
+          },
+          "buy_quote_sol_per_exposure_second": 0.08986333792807645,
+          "sell_quote_sol_per_exposure_second": 0.04137442086624372,
+          "trades_per_active_episode_second_bin": 1.3103321033210331,
+          "transaction_quote_sol": {
+            "n": 3551,
+            "p10": 0.04325027575684009,
+            "p50": 0.35542739542535856,
+            "p90": 3.0401640562535417,
+            "p99": 11.507584592320718
+          },
+          "buy_transaction_quote_sol": {
+            "n": 2440,
+            "p10": 0.045155431533702606,
+            "p50": 0.42246729660567967,
+            "p90": 3.167086643691551,
+            "p99": 8.959765367163701
+          },
+          "sell_transaction_quote_sol": {
+            "n": 1111,
+            "p10": 0.0420480090548881,
+            "p50": 0.21331410147385516,
+            "p90": 2.639289109291943,
+            "p99": 18.80126370032728
+          },
+          "buy_run_length_trades": {
+            "n": 453,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 17.80000000000001,
+            "p99": 32.48000000000002
+          },
+          "sell_run_length_trades": {
+            "n": 417,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 5.0,
+            "p99": 16.839999999999975
+          },
+          "paths": 200,
+          "trades": 3551,
+          "duration_sec": 31510.44500000001,
+          "buy_count_share": 0.687130385806815,
+          "buy_volume_share": 0.684736913778854,
+          "drawdown_trade_pct": {
+            "n": 200,
+            "p10": 0.0,
+            "p50": 3.5785220212164903,
+            "p90": 34.56423403259334,
+            "p99": 51.47446782327218
+          }
+        },
+        "from80": {
+          "direction_changes_per_100_trades": 29.24614780217382,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 464,
+            "p10": 0.0,
+            "p50": 29.737367021276597,
+            "p90": 53.333333333333336,
+            "p99": 66.66666666666667
+          },
+          "buy_quote_sol_per_exposure_second": 0.01872242993043141,
+          "sell_quote_sol_per_exposure_second": 0.026750444754436196,
+          "trades_per_active_episode_second_bin": 1.4104790050486393,
+          "transaction_quote_sol": {
+            "n": 22909,
+            "p10": 0.04324090426185043,
+            "p50": 0.34505683314601604,
+            "p90": 3.048923818738,
+            "p99": 10.587140669330788
+          },
+          "buy_transaction_quote_sol": {
+            "n": 8452,
+            "p10": 0.04465534804900543,
+            "p50": 0.37442402677691144,
+            "p90": 3.6413427930289926,
+            "p99": 11.120396022126558
+          },
+          "sell_transaction_quote_sol": {
+            "n": 14457,
+            "p10": 0.04257400323062999,
+            "p50": 0.3284597152318626,
+            "p90": 2.743555474474266,
+            "p99": 10.144052789865013
+          },
+          "buy_run_length_trades": {
+            "n": 3553,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 23.0
+          },
+          "sell_run_length_trades": {
+            "n": 3611,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 5.0,
+            "p99": 61.0
+          },
+          "paths": 469,
+          "trades": 22909,
+          "duration_sec": 583139.4890000001,
+          "buy_count_share": 0.36893797197607925,
+          "buy_volume_share": 0.41172743223691183,
+          "drawdown_trade_pct": {
+            "n": 469,
+            "p10": 2.862539193118,
+            "p50": 35.06634982607949,
+            "p90": 88.9158342321099,
+            "p99": 92.57534933804645
+          }
+        },
+        "first80_to_first90": {
+          "direction_changes_per_100_trades": 44.93468795355588,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 148,
+            "p10": 0.0,
+            "p50": 40.0,
+            "p90": 61.1455993465387,
+            "p99": 80.72222222222223
+          },
+          "buy_quote_sol_per_exposure_second": 0.1709003799540887,
+          "sell_quote_sol_per_exposure_second": 0.05485294140170234,
+          "trades_per_active_episode_second_bin": 1.4171122994652405,
+          "transaction_quote_sol": {
+            "n": 3445,
+            "p10": 0.04593643357642026,
+            "p50": 0.3149886029650709,
+            "p90": 3.8691214921678667,
+            "p99": 13.565609883949692
+          },
+          "buy_transaction_quote_sol": {
+            "n": 1845,
+            "p10": 0.047283653869861164,
+            "p50": 0.46026247583677865,
+            "p90": 5.9092467704602445,
+            "p99": 18.370799535329798
+          },
+          "sell_transaction_quote_sol": {
+            "n": 1600,
+            "p10": 0.04438161400606987,
+            "p50": 0.19929394802764971,
+            "p90": 1.8710663851041283,
+            "p99": 6.516024340865583
+          },
+          "buy_run_length_trades": {
+            "n": 892,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 8.0
+          },
+          "sell_run_length_trades": {
+            "n": 804,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 8.0
+          },
+          "paths": 173,
+          "trades": 3445,
+          "duration_sec": 20812.30299999999,
+          "buy_count_share": 0.5355587808417998,
+          "buy_volume_share": 0.7570226605204484,
+          "drawdown_trade_pct": {
+            "n": 173,
+            "p10": 0.0,
+            "p50": 4.202219422948838,
+            "p90": 27.455951540294926,
+            "p99": 52.68688831532111
+          }
+        }
+      },
+      "native_seconds": {
+        "0_80": {
+          "bins": 8089150,
+          "empty": 7863367,
+          "active": 225783,
+          "trades": 352107,
+          "empty_share": 0.9720881674836046,
+          "trades_per_exposed_second_bin": 0.04352830643516315,
+          "trades_per_active_native_second_bin": 1.559492964483597,
+          "buy_quote_sol_per_native_exposed_second_bin": 0.016241537988515017,
+          "sell_quote_sol_per_native_exposed_second_bin": 0.010849766651591415
+        },
+        "80_90": {
+          "bins": 220885,
+          "empty": 214300,
+          "active": 6585,
+          "trades": 8567,
+          "empty_share": 0.9701881069334721,
+          "trades_per_exposed_second_bin": 0.03878488806392467,
+          "trades_per_active_native_second_bin": 1.3009870918754745,
+          "buy_quote_sol_per_native_exposed_second_bin": 0.022094625417907986,
+          "sell_quote_sol_per_native_exposed_second_bin": 0.026380653926029216
+        },
+        "90_100": {
+          "bins": 31507,
+          "empty": 28834,
+          "active": 2673,
+          "trades": 3522,
+          "empty_share": 0.9151617100961691,
+          "trades_per_exposed_second_bin": 0.1117846827689085,
+          "trades_per_active_native_second_bin": 1.3176206509539843,
+          "buy_quote_sol_per_native_exposed_second_bin": 0.08831151023743755,
+          "sell_quote_sol_per_native_exposed_second_bin": 0.04146032752810238
+        }
+      }
+    },
+    "B": {
+      "active_noninstant": 4728,
+      "paths": {
+        "full": {
+          "direction_changes_per_100_trades": 45.652780297839726,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 4728,
+            "p10": 33.333333333333336,
+            "p50": 46.875,
+            "p90": 57.377049180327866,
+            "p99": 71.42857142857143
+          },
+          "buy_quote_sol_per_exposure_second": 0.016827891821081145,
+          "sell_quote_sol_per_exposure_second": 0.011699053295564265,
+          "trades_per_active_episode_second_bin": 1.5432539400600986,
+          "transaction_quote_sol": {
+            "n": 369259,
+            "p10": 0.02858409298946208,
+            "p50": 0.10837367106456235,
+            "p90": 1.5773886483200599,
+            "p99": 8.072290592894515
+          },
+          "buy_transaction_quote_sol": {
+            "n": 199683,
+            "p10": 0.02914318168860536,
+            "p50": 0.10030364400546586,
+            "p90": 1.684909063057683,
+            "p99": 9.559647403565608
+          },
+          "sell_transaction_quote_sol": {
+            "n": 169576,
+            "p10": 0.02801334520287431,
+            "p50": 0.11882083263960339,
+            "p90": 1.483645124691487,
+            "p99": 6.442239342908712
+          },
+          "buy_run_length_trades": {
+            "n": 87270,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 5.0,
+            "p99": 9.0
+          },
+          "sell_run_length_trades": {
+            "n": 86035,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 3.0,
+            "p99": 10.0
+          },
+          "paths": 4728,
+          "trades": 369259,
+          "duration_sec": 8399753.055999998,
+          "buy_count_share": 0.5407667788733653,
+          "buy_volume_share": 0.5898946330310745,
+          "drawdown_trade_pct": {
+            "n": 4728,
+            "p10": 5.9316707215636635,
+            "p50": 31.395237223928284,
+            "p90": 67.27444175010753,
+            "p99": 88.87894500027491
+          }
+        },
+        "0_80": {
+          "direction_changes_per_100_trades": 45.61901272646201,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 5264,
+            "p10": 28.571428571428573,
+            "p50": 46.51162790697674,
+            "p90": 57.36981677917068,
+            "p99": 71.42857142857143
+          },
+          "buy_quote_sol_per_exposure_second": 0.016224206868927168,
+          "sell_quote_sol_per_exposure_second": 0.010843511993933162,
+          "trades_per_active_episode_second_bin": 1.5581827595820665,
+          "transaction_quote_sol": {
+            "n": 352101,
+            "p10": 0.02837749683552829,
+            "p50": 0.10195831841270289,
+            "p90": 1.489327065044963,
+            "p99": 7.895877240434106
+          },
+          "buy_transaction_quote_sol": {
+            "n": 191540,
+            "p10": 0.028976983717809653,
+            "p50": 0.09477386645588004,
+            "p90": 1.591868141331357,
+            "p99": 9.52976356632294
+          },
+          "sell_transaction_quote_sol": {
+            "n": 160561,
+            "p10": 0.027750920927774134,
+            "p50": 0.11129794181561617,
+            "p90": 1.3988793317527841,
+            "p99": 6.1110204503737
+          },
+          "buy_run_length_trades": {
+            "n": 83704,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 5.0,
+            "p99": 9.0
+          },
+          "sell_run_length_trades": {
+            "n": 82185,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 3.0,
+            "p99": 10.0
+          },
+          "paths": 5278,
+          "trades": 352101,
+          "duration_sec": 8095523.925999985,
+          "buy_count_share": 0.5439916387627414,
+          "buy_volume_share": 0.5993932089781099,
+          "drawdown_trade_pct": {
+            "n": 5278,
+            "p10": 2.974811499651641,
+            "p50": 27.50603148829422,
+            "p90": 64.62303434460402,
+            "p99": 82.80294255983752
+          }
+        },
+        "80_90": {
+          "direction_changes_per_100_trades": 39.65480502876625,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 897,
+            "p10": 0.0,
+            "p50": 30.0,
+            "p90": 60.0,
+            "p99": 80.0
+          },
+          "buy_quote_sol_per_exposure_second": 0.021056150922716413,
+          "sell_quote_sol_per_exposure_second": 0.024499216973363443,
+          "trades_per_active_episode_second_bin": 1.2486364241053611,
+          "transaction_quote_sol": {
+            "n": 9386,
+            "p10": 0.042611055089879904,
+            "p50": 0.34024270526438016,
+            "p90": 3.514457201127995,
+            "p99": 12.240694570686879
+          },
+          "buy_transaction_quote_sol": {
+            "n": 4139,
+            "p10": 0.04247301909617692,
+            "p50": 0.3594463792262131,
+            "p90": 3.875114643054847,
+            "p99": 11.527617950207862
+          },
+          "sell_transaction_quote_sol": {
+            "n": 5247,
+            "p10": 0.04268949216955904,
+            "p50": 0.318894301535147,
+            "p90": 3.2258616795922426,
+            "p99": 12.701667363311765
+          },
+          "buy_run_length_trades": {
+            "n": 2217,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 7.0
+          },
+          "sell_run_length_trades": {
+            "n": 2402,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 13.0
+          },
+          "paths": 911,
+          "trades": 9386,
+          "duration_sec": 262312.7580000001,
+          "buy_count_share": 0.4409759215853399,
+          "buy_volume_share": 0.46221009499362076,
+          "drawdown_trade_pct": {
+            "n": 911,
+            "p10": 0.0,
+            "p50": 9.400537240946127,
+            "p90": 32.32301970497211,
+            "p99": 48.834075275976005
+          }
+        },
+        "90_100": {
+          "direction_changes_per_100_trades": 43.96551724137931,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 278,
+            "p10": 0.0,
+            "p50": 36.36363636363637,
+            "p90": 55.653594771241835,
+            "p99": 69.73626373626378
+          },
+          "buy_quote_sol_per_exposure_second": 0.10696020736213771,
+          "sell_quote_sol_per_exposure_second": 0.09683067775630631,
+          "trades_per_active_episode_second_bin": 1.2655919231395538,
+          "transaction_quote_sol": {
+            "n": 7772,
+            "p10": 0.04469827821530635,
+            "p50": 0.41995325950631623,
+            "p90": 2.9735691881646806,
+            "p99": 7.755186147575036
+          },
+          "buy_transaction_quote_sol": {
+            "n": 4004,
+            "p10": 0.04518230909572673,
+            "p50": 0.4503839927548018,
+            "p90": 3.074951229579095,
+            "p99": 7.505616476367904
+          },
+          "sell_transaction_quote_sol": {
+            "n": 3768,
+            "p10": 0.04438002269543479,
+            "p50": 0.3960974291803723,
+            "p90": 2.823255302313906,
+            "p99": 8.197566620349372
+          },
+          "buy_run_length_trades": {
+            "n": 1814,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 4.0,
+            "p99": 9.0
+          },
+          "sell_run_length_trades": {
+            "n": 1881,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 10.0
+          },
+          "paths": 278,
+          "trades": 7772,
+          "duration_sec": 41916.37200000002,
+          "buy_count_share": 0.5151827071538857,
+          "buy_volume_share": 0.5248527543318341,
+          "drawdown_trade_pct": {
+            "n": 278,
+            "p10": 2.252491937598931,
+            "p50": 11.079616617251709,
+            "p90": 34.05672562522732,
+            "p99": 50.45210035486894
+          }
+        },
+        "from80": {
+          "direction_changes_per_100_trades": 35.58916058916059,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 464,
+            "p10": 0.0,
+            "p50": 39.178477059812636,
+            "p90": 54.521103896103895,
+            "p99": 66.66666666666667
+          },
+          "buy_quote_sol_per_exposure_second": 0.020618665769867376,
+          "sell_quote_sol_per_exposure_second": 0.029575185487011366,
+          "trades_per_active_episode_second_bin": 1.36622057243333,
+          "transaction_quote_sol": {
+            "n": 27972,
+            "p10": 0.043595661010801756,
+            "p50": 0.3712139929974213,
+            "p90": 3.047308293502541,
+            "p99": 10.007187059706386
+          },
+          "buy_transaction_quote_sol": {
+            "n": 10452,
+            "p10": 0.04474679924070297,
+            "p50": 0.3946550023907788,
+            "p90": 3.560420552294181,
+            "p99": 10.513470985685553
+          },
+          "sell_transaction_quote_sol": {
+            "n": 17520,
+            "p10": 0.043125075235172214,
+            "p50": 0.3588844823137667,
+            "p90": 2.807552395562659,
+            "p99": 9.59708403634429
+          },
+          "buy_run_length_trades": {
+            "n": 5169,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 8.0
+          },
+          "sell_run_length_trades": {
+            "n": 5250,
+            "p10": 1.0,
+            "p50": 2.0,
+            "p90": 4.0,
+            "p99": 55.0
+          },
+          "paths": 469,
+          "trades": 27972,
+          "duration_sec": 641403.5229999998,
+          "buy_count_share": 0.3736593736593737,
+          "buy_volume_share": 0.41078070826537183,
+          "drawdown_trade_pct": {
+            "n": 469,
+            "p10": 7.844413700738745,
+            "p50": 39.66727438167784,
+            "p90": 88.9158342321099,
+            "p99": 92.57534933804645
+          }
+        },
+        "first80_to_first90": {
+          "direction_changes_per_100_trades": 44.93468795355588,
+          "direction_changes_per_100_trades_by_path": {
+            "n": 148,
+            "p10": 0.0,
+            "p50": 40.0,
+            "p90": 61.1455993465387,
+            "p99": 80.72222222222223
+          },
+          "buy_quote_sol_per_exposure_second": 0.1709003799540887,
+          "sell_quote_sol_per_exposure_second": 0.05485294140170234,
+          "trades_per_active_episode_second_bin": 1.4171122994652405,
+          "transaction_quote_sol": {
+            "n": 3445,
+            "p10": 0.04593643357642026,
+            "p50": 0.3149886029650709,
+            "p90": 3.8691214921678667,
+            "p99": 13.565609883949692
+          },
+          "buy_transaction_quote_sol": {
+            "n": 1845,
+            "p10": 0.047283653869861164,
+            "p50": 0.46026247583677865,
+            "p90": 5.9092467704602445,
+            "p99": 18.370799535329798
+          },
+          "sell_transaction_quote_sol": {
+            "n": 1600,
+            "p10": 0.04438161400606987,
+            "p50": 0.19929394802764971,
+            "p90": 1.8710663851041283,
+            "p99": 6.516024340865583
+          },
+          "buy_run_length_trades": {
+            "n": 892,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 8.0
+          },
+          "sell_run_length_trades": {
+            "n": 804,
+            "p10": 1.0,
+            "p50": 1.0,
+            "p90": 4.0,
+            "p99": 8.0
+          },
+          "paths": 173,
+          "trades": 3445,
+          "duration_sec": 20812.30299999999,
+          "buy_count_share": 0.5355587808417998,
+          "buy_volume_share": 0.7570226605204484,
+          "drawdown_trade_pct": {
+            "n": 173,
+            "p10": 0.0,
+            "p50": 4.202219422948838,
+            "p90": 27.455951540294926,
+            "p99": 52.68688831532111
+          }
+        }
+      },
+      "native_seconds": {
+        "0_80": {
+          "bins": 8095618,
+          "empty": 7869770,
+          "active": 225848,
+          "trades": 352172,
+          "empty_share": 0.9721024386279096,
+          "trades_per_exposed_second_bin": 0.04350155849744887,
+          "trades_per_active_native_second_bin": 1.559331940065885,
+          "buy_quote_sol_per_native_exposed_second_bin": 0.01623855855076715,
+          "sell_quote_sol_per_native_exposed_second_bin": 0.010850129577464174
+        },
+        "80_90": {
+          "bins": 262254,
+          "empty": 254922,
+          "active": 7332,
+          "trades": 9349,
+          "empty_share": 0.9720423711363793,
+          "trades_per_exposed_second_bin": 0.03564864596917492,
+          "trades_per_active_native_second_bin": 1.2750954719039826,
+          "buy_quote_sol_per_native_exposed_second_bin": 0.020746212539832696,
+          "sell_quote_sol_per_native_exposed_second_bin": 0.02431521049201217
+        },
+        "90_100": {
+          "bins": 41924,
+          "empty": 35831,
+          "active": 6093,
+          "trades": 7738,
+          "empty_share": 0.8546655853449099,
+          "trades_per_exposed_second_bin": 0.18457208281652515,
+          "trades_per_active_native_second_bin": 1.269981946495979,
+          "buy_quote_sol_per_native_exposed_second_bin": 0.10610131736233372,
+          "sell_quote_sol_per_native_exposed_second_bin": 0.09669623961690181
+        }
+      }
+    }
+  }
+}

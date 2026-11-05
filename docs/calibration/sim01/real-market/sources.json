@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "dataset": {
+    "id": "pumpdatafun/pump-fun-trades-sample",
+    "revision": "c85a7e8056d4f866b3dc9ce1e8218b8bbddb24cd",
+    "dayUtc": "2026-10-15",
+    "license": "CC-BY-4.0",
+    "attribution": "pumpdatafun / pumpdata.fun",
+    "files": [
+      {
+        "path": "data/pumpdata-2026-10-15-00000-of-00004.parquet",
+        "bytes": 434390742,
+        "sha256": "1d7ea9b89903c4db1254fe089ae0a1b89763403dac4a795d47127cecaebaf42b"
+      },
+      {
+        "path": "data/pumpdata-2026-10-15-00001-of-00004.parquet",
+        "bytes": 414831245,
+        "sha256": "86bd26bc24ce0f6080e34abb20bfc4e0e73293ee400b2d16c20285b420793a2e"
+      },
+      {
+        "path": "data/pumpdata-2026-10-15-00002-of-00004.parquet",
+        "bytes": 402788445,
+        "sha256": "881fb84c36b239c7ca80bb673274632873b5fd4c860e5addf65b9943cba64f73"
+      },
+      {
+        "path": "data/pumpdata-2026-10-15-00003-of-00004.parquet",
+        "bytes": 121411812,
+        "sha256": "c7119c26a78d7fe74974d038c19d510ae6bc1110ad0f9fa4b40d19f433ab20af"
+      },
+      {
+        "path": "launches/pumpdata-2026-10-15-launches.parquet",
+        "bytes": 3395780,
+        "sha256": "7eff82f1d3408d09488899f205de33fce36a4fbda4afa9638bf00e3ae717792c"
+      },
+      {
+        "path": "events/pumpdata-2026-10-15-events.parquet",
+        "bytes": 4580167,
+        "sha256": "a0e4c488b702faa97480a6394fadfd800c9ef4a83aea6abeceffc81e8a4fc1c8"
+      },
+      {
+        "path": "graduations/pumpdata-2026-10-15-graduations.parquet",
+        "bytes": 36568,
+        "sha256": "ebf8bf857363ee91678df9ae30090cf8325862176cf67d2456a3f6b12c7b7047"
+      }
+    ]
+  },
+  "simulation": {
+    "a": "84eca0906dc26387ca8b0fd761faad547e06a3fb",
+    "b": "8eb3b1257ab77bc179998b2b3502ae0a38dc6327",
+    "config": {
+      "seeds": [
+        "SIM01-A",
+        "SIM01-B",
+        "SIM01-C",
+        "SIM01-D",
+        "SIM01-E",
+        "SIM01-F"
+      ],
+      "tokensPerSeed": 1000,
+      "horizonSec": 1800,
+      "tickMs": 200,
+      "startUtc": "2026-10-15T00:00:00.000Z",
+      "startHoursUtc": [
+        8,
+        19
+      ]
+    },
+    "measurementSha256": {
+      "a": "5090a707062a0e79ebccd7b350a72b028eeece5528a48dd7cb672339524839b8",
+      "b": "d271a95d165843cb36831331542b68d67b6e2a5f205ece23f592800185d7e7d6"
+    }
+  },
+  "population": {
+    "quoteMint": "So11111111111111111111111111111111111111112",
+    "launchCutoffExclusiveUnix": 1792107000,
+    "horizonSeconds": 1800,
+    "instantCompletionMaxSeconds": 1,
+    "standardKMaxRelativeDeviation": 0.000001,
+    "standardK0": 32190000000,
+    "initialVirtualTokens": 1073000000,
+    "initialRealTokens": 793100000
+  },
+  "historicalEnvironment": {
+    "dataset_revision": "c85a7e8056d4f866b3dc9ce1e8218b8bbddb24cd",
+    "baseline_a": "84eca0906dc26387ca8b0fd761faad547e06a3fb",
+    "variant_b": "8eb3b1257ab77bc179998b2b3502ae0a38dc6327",
+    "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+    "numpy": "2.3.5",
+    "duckdb": "v2.0.0 d54cbbe3df",
+    "scripts_sha256": {
+      "discover.mjs": "b7f87f3dda2d700155d1abd0eea71fd5a33062db5ee4dd606d3f6a8d10f43428",
+      "download.mjs": "41dadd0e5907334c630e2c6f810cf1a7a25bda0c0dfece18821a4bd4b99ead27",
+      "graduations.mjs": "4747f2e349d321305d66e0387d69b357749516f8d531d4ecc04ca4a11f544e0d",
+      "build.sql": "948391d8240a149f3247b723a436dc4a9fe071bd3bccbbeb6535f7e88a035f79",
+      "export.sql": "cc110c9072c44ec87cc9c16160a46d489e4b2d79cebeda5998a032a0cff73488",
+      "extract-sim.mjs": "0f90de77629f1f080ea2e3e863e6d6ae5f388e446dbf6b34c4890b2425547d24",
+      "analyze.py": "f2264ea88cf0be8b5a07cf85b301fd52f76f0194773d33586c15855868267eba",
+      "analyze-b.py": "b19a5f3f782020d76462cf701e38fa3a3a7359916df1c99ee091dc7d6723a576",
+      "sensitivity.py": "a86e24b94c33e141c66c148a958f9da89803ae366f4e862a38f173041bdd144c",
+      "candle-structure.py": "b4178daa39554fab81020cdc051d302acf9e5e0eba81e984e59fae66619c4153",
+      "native-exposure.py": "5bb0e5dfbb240ff77d649221c6351a09a0d00d30533b219781078a2885374509",
+      "hours-sensitivity.py": "05190193b4d5b7b32a16e87fa10f522a9b61959609c383eab8bed94cc463bd03",
+      "validate.py": "072592eb5d8ac1fbdeea0fcace9b1e056bbb4854c3020a279caf9ce5478435d7",
+      "report.py": "09319ca8ca17cd4b5c2234aec282846737033eb01eb08935fbf2a1230e2617ac"
+    },
+    "result_sha256": {
+      "comparison.json": "3e4bf2b0cbb19e2133414fdfa9f10a86354ca8d0ffc3ce06ff3201e01ba5e939",
+      "sensitivity.json": "982be1b1e365fb2b35d6036ff4a07a95ed848fcdd05cb36d81fecab7a1c87cba",
+      "native-exposure.json": "5cf336d947df47f811a1d7e98292fba1705938a0e5f8755e602ad6c8a7e9f1bf",
+      "candle-structure.json": "803c4f823a7c689107fee709834e569fbeef5b1b91a495e22723d65e3635c0b0",
+      "hours-sensitivity.json": "387a4acf5e4ae74f4921f79107831da9e318891516db2d2d6902d178b11df4c2",
+      "validation.json": "f0c41d2d9f414fefc2ee6ead4a0fa68facd10441dac1108afc71ddb487147ea1",
+      "pre90-pairing.json": "cd6494b3de1193ff3ce526bfba598a530b48edf54d23c229aac297be523af3dd",
+      "regime-proof.json": "f62a4082cdc7f89229eda93e06a1338b98e7a0e74e216b0f4aa282aebc69436f"
+    },
+    "research_did_not_modify_tracked_files": true,
+    "known_metric_tests_passed": true
+  }
+}

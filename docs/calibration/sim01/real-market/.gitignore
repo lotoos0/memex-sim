@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.parquet
+*.duckdb
+*.duckdb.wal
+sim-*-tapes.json
+candles-*.csv
+real-standard.csv
