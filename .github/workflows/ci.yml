@@ -32,6 +32,9 @@ jobs:
       - name: QA market baseline and OHLC contracts
         run: npm run qa:sim:market-baseline:check
 
+      - name: QA real-market benchmark definitions
+        run: python docs/calibration/sim01/real-market/scripts/test_benchmark.py
+
       - name: QA sim dead floor
         run: npm run qa:sim:dead-floor
 

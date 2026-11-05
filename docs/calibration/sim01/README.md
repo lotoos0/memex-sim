@@ -3,6 +3,10 @@
 This is measurement tooling, not an engine calibration change. Runtime BUY/SELL flow,
 curve math, migration, execution, frozen contracts and dependencies are unchanged.
 
+The [persistent Real vs Sim price-structure benchmark](real-market/README.md) contains
+the raw-data source manifest, historical comparison, normalized flow/streak metrics
+and offline reproduction tools. It keeps A and draft #72's B as separate pinned sources.
+
 ## Run
 
 From the repository root, after `npm ci`:
