@@ -621,10 +621,10 @@ function withTtl(
   sessionProfile: SessionSimProfile
 ): { regime: TokenMarketRegime; ttlSec: number } {
   const [minTtl, maxTtl] = DEFAULT_TTL_RANGE_BY_REGIME[regime];
-  let ttlSec = minTtl + (maxTtl - minTtl) * rng.next();
-  if (regime === 'FIRST_PUMP' || regime === 'GRIND_UP' || regime === 'MIGRATION_SHOCK') {
-    ttlSec *= sessionProfile.impulseTtlMul;
-  }
+  // Pump length is not a session knob. EU's shorter impulse was a big part of
+  // why the same coin graduated less often at 08Z than at 19Z.
+  void sessionProfile;
+  const ttlSec = minTtl + (maxTtl - minTtl) * rng.next();
   return {
     regime,
     ttlSec: clamp(ttlSec, 1.5, 36),

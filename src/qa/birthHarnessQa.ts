@@ -159,8 +159,8 @@ function runHour(hour: number, minutes: number): void {
     if (maxSize > MAX_REGISTRY_TOKENS) failures.push(`hour ${hour} population ${maxSize}`);
     if (matured.length > 50) {
       const grad = graduated.length / matured.length;
-      // TODO(vitality): still under ~2%. Earlier dev sells pulled 08Z to ~0.2% (19Z ~1.8%).
-      if (grad < 0.001 || grad > 0.07) failures.push(`hour ${hour} graduation ${(grad * 100).toFixed(2)}%`);
+      // SOL-sized flow lands near the organic ~1.5% (08Z ~2.0%, 19Z ~1.6% in this harness).
+      if (grad < 0.015 || grad > 0.07) failures.push(`hour ${hour} graduation ${(grad * 100).toFixed(2)}%`);
     }
     if (aged5.length > 50) {
       const quiet = quiet5.length / aged5.length;
