@@ -107,7 +107,9 @@ function runDecayAndDeath(): void {
   check(early > mid * 1.8, `decay/launch-above-1m early=${early.toFixed(3)} mid=${mid.toFixed(3)}`);
   check(mid > late * 1.5, `decay/1m-above-5m mid=${mid.toFixed(3)} late=${late.toFixed(3)}`);
   check(late < 0.45, `decay/late-rate ${late.toFixed(3)}/s`);
-  check(dead >= 0.4 && dead < 0.96, `death/no-trades-after-5m ${(dead * 100).toFixed(1)}%`);
+  // Silence for short/normal/long-runner is longer, so this non-stillborn mix
+  // stays quieter than half the sample without falling back to "almost none die".
+  check(dead >= 0.2 && dead < 0.7, `death/no-trades-after-5m ${(dead * 100).toFixed(1)}%`);
   console.log(
     `arrival decay: 0-10s ${early.toFixed(3)}/s, 1-2m ${mid.toFixed(3)}/s, 5-8m ${late.toFixed(3)}/s, quiet-by-5m ${(dead * 100).toFixed(1)}%`,
   );
