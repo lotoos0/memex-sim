@@ -105,6 +105,8 @@ export interface PulseColumnFilters {
 
 interface Props {
   onHideToken: (tokenId: string) => void;
+  onUnhideToken: (tokenId: string) => void;
+  hiddenTokenIds: ReadonlySet<string>;
   title: string;
   tokens: TokenState[];
   accent?: string;
@@ -122,6 +124,8 @@ interface Props {
 
 export default function TokenColumn({
   onHideToken,
+  onUnhideToken,
+  hiddenTokenIds,
   title,
   tokens,
   accent = '#00d4a1',
@@ -451,6 +455,8 @@ export default function TokenColumn({
               key={token.id}
               token={token}
               onHideToken={onHideToken}
+              onUnhideToken={onUnhideToken}
+              isHidden={hiddenTokenIds.has(token.id)}
               quickBuyAmount={quickBuyAmount}
               quickBuyOptions={quickBuyOptions}
               displayMode={displayMode}

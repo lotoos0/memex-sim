@@ -13,6 +13,7 @@ import {
   Copy,
   Feather,
   EyeOff,
+  Eye,
   LoaderCircle,
   Star,
   Zap,
@@ -67,6 +68,8 @@ export type PulseDisplayMode = 'comfortable' | 'dense';
 
 interface Props {
   onHideToken: (tokenId: string) => void;
+  onUnhideToken: (tokenId: string) => void;
+  isHidden: boolean;
   token: TokenState;
   quickBuyAmount: number;
   quickBuyOptions: {
@@ -79,6 +82,8 @@ interface Props {
 
 export default function TokenCard({
   onHideToken,
+  onUnhideToken,
+  isHidden,
   token,
   quickBuyAmount,
   quickBuyOptions,
@@ -298,7 +303,7 @@ export default function TokenCard({
       onClick={handleClick}
       data-token-id={token.id}
       data-display-mode={displayMode}
-      className={`pulse-token-card pulse-token-card--${displayMode}${isDead ? ' pulse-token-card--dead' : ''}`}
+      className={`pulse-token-card pulse-token-card--${displayMode}${isDead ? ' pulse-token-card--dead' : ''}${isHidden ? ' pulse-token-card--hidden' : ''}`}
     >
       <div className="pulse-token-card__header">
         <div className="pulse-token-card__avatar">
@@ -368,18 +373,19 @@ export default function TokenCard({
           </span>
         )}
         <span className="pulse-token-card__hide">
-          <HoverTooltip label="Hide Token">
+          <HoverTooltip label={isHidden ? 'Unhide Token' : 'Hide Token'}>
             <button
               type="button"
               className="pulse-token-card__icon"
-              aria-label="Hide Token"
+              aria-label={isHidden ? 'Unhide Token' : 'Hide Token'}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                onHideToken(token.id);
+                if (isHidden) onUnhideToken(token.id);
+                else onHideToken(token.id);
               }}
             >
-              <EyeOff size={13} />
+              {isHidden ? <Eye size={13} /> : <EyeOff size={13} />}
             </button>
           </HoverTooltip>
         </span>

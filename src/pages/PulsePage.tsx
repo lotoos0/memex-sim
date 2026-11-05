@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Eye } from 'lucide-react';
+import HoverTooltip from '../components/ui/HoverTooltip';
 import { useTokenStore } from '../store/tokenStore';
 import TokenColumn, { type PulseColumnFilters } from '../components/pulse/TokenColumn';
 import PulseFiltersModal from '../components/pulse/PulseFiltersModal';
@@ -157,6 +159,7 @@ export default function PulsePage() {
   const view = searchParams.get('view');
   const tokensById = useTokenStore(s => s.tokensById);
   const [hiddenTokenIds, setHiddenTokenIds] = useState(loadHiddenTokenIds);
+  const [showHiddenTokens, setShowHiddenTokens] = useState(false);
   const tradeFlowByTokenId = useTokenStore(s => s.tradeFlowByTokenId);
   const [displayMode, setDisplayMode] = useState<PulseDisplayMode>(() => loadDisplayMode());
   const [filtersModalOpen, setFiltersModalOpen] = useState(false);
@@ -201,14 +204,22 @@ export default function PulsePage() {
     setHiddenTokenIds((current) => new Set([...current, tokenId]));
   };
 
+  const unhideToken = (tokenId: string) => {
+    setHiddenTokenIds((current) => {
+      const next = new Set(current);
+      next.delete(tokenId);
+      return next;
+    });
+  };
+
   const buckets = useMemo(() => {
-    const all = Object.values(tokensById).filter((token) => !hiddenTokenIds.has(token.id));
+    const all = Object.values(tokensById).filter((token) => showHiddenTokens || !hiddenTokenIds.has(token.id));
     return {
       newPairs: pulseColumnCandidates(all, 'newPairs'),
       finalStretch: pulseColumnCandidates(all, 'finalStretch'),
       migrated: pulseColumnCandidates(all, 'migrated'),
     };
-  }, [tokensById, hiddenTokenIds]);
+  }, [tokensById, hiddenTokenIds, showHiddenTokens]);
 
   const compiledFiltersByBucket = useMemo<Record<PulseBucketKey, CompiledPulseBucketFilters>>(
     () => ({
@@ -258,7 +269,27 @@ export default function PulsePage() {
 
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-hidden px-3 pt-3 pb-3">
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <HoverTooltip content={
+          <span className="block w-[240px] whitespace-normal">
+            Include hidden tokens. Active filters, sorting, and card limits still apply.
+          </span>
+        }>
+          <button
+            type="button"
+            aria-pressed={showHiddenTokens}
+            onClick={() => setShowHiddenTokens((current) => !current)}
+            className={[
+              'inline-flex h-9 items-center gap-2 rounded-md border px-2.5 text-[11px] font-semibold transition-colors',
+              showHiddenTokens
+                ? 'border-[#6e83ff55] bg-[#4f6dff2f] text-[#8fa2ff]'
+                : 'border-ax-border bg-ax-surface2/70 text-ax-text-dim hover:text-ax-text',
+            ].join(' ')}
+          >
+            <Eye size={13} />
+            Show Hidden Tokens
+          </button>
+        </HoverTooltip>
         <div className="inline-flex items-center gap-1 rounded-md border border-ax-border bg-ax-surface2/70 px-1 py-1">
           <span className="px-2 text-[11px] font-medium text-ax-text-dim">Display</span>
           <button
@@ -291,6 +322,8 @@ export default function PulsePage() {
         <TokenColumn
           title="New Pairs"
           onHideToken={hideToken}
+          onUnhideToken={unhideToken}
+          hiddenTokenIds={hiddenTokenIds}
           tokens={newPairs}
           accent="#00d4a1"
           filters={columnFilters.newPairs}
@@ -307,6 +340,8 @@ export default function PulsePage() {
         <TokenColumn
           title="Final Stretch"
           onHideToken={hideToken}
+          onUnhideToken={unhideToken}
+          hiddenTokenIds={hiddenTokenIds}
           tokens={finalStretch}
           accent="#f5c542"
           filters={columnFilters.finalStretch}
@@ -323,6 +358,8 @@ export default function PulsePage() {
         <TokenColumn
           title="Migrated"
           onHideToken={hideToken}
+          onUnhideToken={unhideToken}
+          hiddenTokenIds={hiddenTokenIds}
           tokens={migrated}
           accent="#6c63ff"
           filters={columnFilters.migrated}
