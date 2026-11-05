@@ -7,6 +7,7 @@ import {
 } from './types';
 import { toSimDtMs, wallSecForSimMs } from './simClock';
 import { stepMarket } from './marketModel';
+import { ConditionalActivity } from './conditionalActivity';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
 import { SESSION_SIM_PROFILE, getSessionBucket, type SessionBucket, type SessionSimProfile } from '../market/session';
 import {
@@ -488,6 +489,8 @@ export class TokenSim {
   private marketRegime: TokenMarketRegime = 'LAUNCH_CHAOS';
   private marketRegimeTtlSec = 0;
   private attention = 1;
+  private readonly conditionalActivity = new ConditionalActivity();
+  private pendingActivityTrades = 0;
   private flowSilentAfterSimMs = Number.POSITIVE_INFINITY;
   private baseLiquidityUsd = 25_000;
   private baseTradeSizeUsd = 350;
@@ -1111,6 +1114,8 @@ export class TokenSim {
 
     const migrationEvent = this.updatePhase(candleTsMs);
     if (migrationEvent) events.push(migrationEvent);
+    this.conditionalActivity.commit(this.simTimeMs, this.pendingActivityTrades);
+    this.pendingActivityTrades = 0;
     return events;
   }
 
@@ -1136,7 +1141,10 @@ export class TokenSim {
     const logGap = Math.log(t / ARRIVAL_HUMP_CENTER_SEC);
     const midHump = 1 + ARRIVAL_HUMP_AMP * Math.exp(-(logGap * logGap) / ARRIVAL_HUMP_WIDTH);
     const attentionMul = clamp(this.attention / 1.05, 0.65, 1.65);
-    return Math.max(0, ARRIVAL_RATE_AT_5S * ageDecay * midHump * Math.max(0, shape) * attentionMul * this.arrivalExcitement(nowMs));
+    const organic = Math.max(0, ARRIVAL_RATE_AT_5S * ageDecay * midHump * Math.max(0, shape) * attentionMul);
+    if (this.phase === 'MIGRATED') return organic * this.arrivalExcitement(nowMs);
+    if (this.stillbornLaunch || this.isFlowSilent() || this.phase === 'DEAD' || this.ruggedAtSimMs != null) return organic;
+    return organic + this.conditionalActivity.extraPerSec(this.simTimeMs, organic);
   }
 
   private arrivalExcitement(nowMs: number): number {
@@ -3223,6 +3231,7 @@ export class TokenSim {
     );
 
     this.lifetimeTrades += 1;
+    this.pendingActivityTrades += 1;
     if (this.simTimeMs >= 5 * 60_000) this.tradesAfter5Min += 1;
     this.tape.push({
       id: `T${candleTsMs.toString(36)}${Math.floor(this.rng.next() * 1e7).toString(36)}`,
