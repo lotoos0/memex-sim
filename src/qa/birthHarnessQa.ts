@@ -159,7 +159,7 @@ function runHour(hour: number, minutes: number): void {
     if (maxSize > MAX_REGISTRY_TOKENS) failures.push(`hour ${hour} population ${maxSize}`);
     if (matured.length > 50) {
       const grad = graduated.length / matured.length;
-      // TODO(vitality): restore to ~2-3% after vitality calibration PRs
+      // TODO(vitality): still under ~2% at both hours (about 0.7% at 08Z, 1.2% at 19Z).
       if (grad < 0.005 || grad > 0.07) failures.push(`hour ${hour} graduation ${(grad * 100).toFixed(2)}%`);
     }
     if (aged5.length > 50) {
