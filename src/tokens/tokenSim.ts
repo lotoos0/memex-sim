@@ -313,9 +313,13 @@ const DEV_WARMUP_SIM_MS = 60_000;
 // Organic prints per second at age 5s, before the regime/actor shape (`lambdaMul`).
 // That shape is well below 1 in the first minute (flow warmup). Age decay then
 // takes over on the sim clock.
-const ARRIVAL_RATE_AT_5S = 6.2;
+const ARRIVAL_RATE_AT_5S = 3.0;
 const ARRIVAL_AGE_FLOOR_SEC = 5;
 const ARRIVAL_AGE_DECAY = 0.85;
+// Real λ stays near 0.29/s through the second minute, then falls faster than one power law.
+const ARRIVAL_HUMP_CENTER_SEC = 80;
+const ARRIVAL_HUMP_AMP = 5.5;
+const ARRIVAL_HUMP_WIDTH = 0.32;
 // One organic print should stay near the existing bucket scale. The old tape
 // split a large stepMarket notional into many bucket fills; the notional per
 // arrival has to match a single fill now that the count is the arrival count.
@@ -903,7 +907,11 @@ export class TokenSim {
       lambdaMul *= 0.1;
     }
 
-    const arrivalPerSec = this.arrivalLambdaPerSec(lambdaMul, marketTsMs) * (isLaunchTick ? 0.15 : 1);
+    // Session tempo still scales print size. It does not scale the count:
+    // trade_rate_by_age is one day-level curve, and 19Z is busier only because
+    // more coins launch, not because each coin trades faster.
+    const arrivalShape = lambdaMul / Math.max(0.05, sessionProfile.tempoMul);
+    const arrivalPerSec = this.arrivalLambdaPerSec(arrivalShape, marketTsMs) * (isLaunchTick ? 0.15 : 1);
     const market = stepMarket(this.rng, {
       dtSec: simDtSec,
       priceUsd: prevPriceUsd,
@@ -1035,8 +1043,10 @@ export class TokenSim {
     const ageSec = Math.max(0, this.simTimeMs / 1000);
     const t = Math.max(ageSec, ARRIVAL_AGE_FLOOR_SEC);
     const ageDecay = Math.pow(t / ARRIVAL_AGE_FLOOR_SEC, -ARRIVAL_AGE_DECAY);
+    const logGap = Math.log(t / ARRIVAL_HUMP_CENTER_SEC);
+    const midHump = 1 + ARRIVAL_HUMP_AMP * Math.exp(-(logGap * logGap) / ARRIVAL_HUMP_WIDTH);
     const attentionMul = clamp(this.attention / 1.05, 0.65, 1.65);
-    return Math.max(0, ARRIVAL_RATE_AT_5S * ageDecay * Math.max(0, shape) * attentionMul * this.arrivalExcitement(nowMs));
+    return Math.max(0, ARRIVAL_RATE_AT_5S * ageDecay * midHump * Math.max(0, shape) * attentionMul * this.arrivalExcitement(nowMs));
   }
 
   private arrivalExcitement(nowMs: number): number {

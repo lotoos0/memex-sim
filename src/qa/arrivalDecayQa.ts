@@ -103,10 +103,12 @@ function runDecayAndDeath(): void {
   const mid = rate(ages, 60, 120);
   const late = rate(ages, 300, 480);
   const dead = ages.filter((token) => token.every((age) => age < 300)).length / ages.length;
-  check(early > 0.25 && early < 6, `decay/launch-rate ${early.toFixed(3)}/s`);
-  check(early > mid * 1.8, `decay/launch-above-1m early=${early.toFixed(3)} mid=${mid.toFixed(3)}`);
-  check(mid > late * 1.5, `decay/1m-above-5m mid=${mid.toFixed(3)} late=${late.toFixed(3)}`);
-  check(late < 0.45, `decay/late-rate ${late.toFixed(3)}/s`);
+  // This mix has no stillborn share, so it runs hotter than the per-launch targets
+  // (1.36 / 0.29 / 0.0074). The hump should lift the second minute above the tail.
+  check(early > 0.4 && early < 3, `decay/launch-rate ${early.toFixed(3)}/s`);
+  check(mid > 0.2 && mid < 1.2, `decay/1-2m ${mid.toFixed(3)}/s`);
+  check(mid > late * 4, `decay/1m-above-5m mid=${mid.toFixed(3)} late=${late.toFixed(3)}`);
+  check(late < 0.08, `decay/late-rate ${late.toFixed(3)}/s`);
   // Silence for short/normal/long-runner is longer, so this non-stillborn mix
   // stays quieter than half the sample without falling back to "almost none die".
   check(dead >= 0.2 && dead < 0.7, `death/no-trades-after-5m ${(dead * 100).toFixed(1)}%`);
