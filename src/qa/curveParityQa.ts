@@ -1,20 +1,20 @@
+import { runOfficialCurveQa } from './officialCurveQa';
 import { TokenSim } from '../tokens/tokenSim';
 import { CandleAggregator } from '../engine/aggregator';
 import { SOL_PRICE_USD, SUPPLY, type TokenMeta } from '../tokens/types';
 
-// Independent integer oracle for the reference SDK's legacy SOL buy quote.
-// Reference: nirholas/pump-fun-sdk/src/bondingCurve.ts, retrieved 2026-11-03.
-// Fixed protocol fee of 100 bps, no creator fee; not a live fee schedule.
+// Independent integer oracle: deduct 125 bps from the gross buy budget.
 const LAMPORTS = 1_000_000_000;
 const TOKEN_UNITS = 1_000_000;
 function referenceBuy(base: bigint, tokens: bigint, real: bigint, budget: bigint): bigint {
   if (budget === 0n) return 0n;
-  const net = (budget - 1n) * 10_000n / 10_100n;
+  const net = budget * 9_875n / 10_000n;
   const out = net * tokens / (base + net);
   return out < real ? out : real;
 }
 
 export function runCurveParityQa(): void {
+  runOfficialCurveQa();
   const failures: string[] = [];
   let checks = 0;
   function check(label: string, actual: number, expected: number, tolerance = 0): void {
