@@ -26,6 +26,13 @@
   border-color: #ff4d6a55;
   background: var(--color-ax-red-dim);
 }
+.pulse-token-card--hidden {
+  border-style: dashed;
+}
+.pulse-token-card--hidden .pulse-token-card__hide {
+  opacity: 1;
+  pointer-events: auto;
+}
 .pulse-token-card__muted,
 .pulse-token-card__subtitle,
 .pulse-token-card__risk {
