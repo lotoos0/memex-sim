@@ -2637,27 +2637,31 @@ export class TokenSim {
         lambdaMul: 0.45,
         volMul: 0.5,
         driftBiasPerSec: -0.01,
-        maxDevEvents: 2,      };
+        maxDevEvents: 2,
+      };
     }
     if (archetype === 'SLOW_COOK') {
       return {
         lambdaMul: 0.9,
         volMul: 0.85,
         driftBiasPerSec: 0.0015,
-        maxDevEvents: 3,      };
+        maxDevEvents: 3,
+      };
     }
     if (archetype === 'CHAOS') {
       return {
         lambdaMul: 1.35,
         volMul: 1.4,
         driftBiasPerSec: 0.003,
-        maxDevEvents: 5,      };
+        maxDevEvents: 5,
+      };
     }
     return {
       lambdaMul: 1,
       volMul: 0.85,
       driftBiasPerSec: 0.0015,
-      maxDevEvents: 3,    };
+      maxDevEvents: 3,
+    };
   }
 
   private initCurveState(): void {
