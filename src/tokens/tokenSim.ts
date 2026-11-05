@@ -323,7 +323,13 @@ const ARRIVAL_HUMP_WIDTH = 0.32;
 // One organic print should stay near the existing bucket scale. The old tape
 // split a large stepMarket notional into many bucket fills; the notional per
 // arrival has to match a single fill now that the count is the arrival count.
-const ARRIVAL_PRINT_USD = 0.35 * SOL_PRICE_USD;
+// Mean print before the lognormal and the regime size mul, in SOL.
+// Age buckets follow metrics.json trade_size_by_age_side (buy means ~0.57 / 0.23 / 0.30).
+const ARRIVAL_PRINT_SOL_OPEN = 0.55;
+const ARRIVAL_PRINT_SOL_MID = 0.48;
+const ARRIVAL_PRINT_SOL_LATE = 0.55;
+// Real p99 is about 3–5 SOL. A larger print finishes the 85 SOL curve in one shot.
+const ARRIVAL_PRINT_CAP_SOL = 6;
 // Rare enough that a coin silent by 5 min usually records no later trade inside a 30 min run.
 const FLOW_STRAY_PER_SEC = 0.00008;
 const RUG_DUMP_PER_SEC = 1.1;
@@ -372,6 +378,20 @@ function rollDevFirstSellSimMs(rng: RNG): number {
   const span = Math.max(1e-6, knots[i + 1]! - knots[i]!);
   const w = Math.min(1, Math.max(0, (u - knots[i]!) / span));
   return Math.exp(Math.log(secs[i]!) + (Math.log(secs[i + 1]!) - Math.log(secs[i]!)) * w) * 1000;
+}
+
+/** One draw. Quantiles are dev.init_buy_q_sol: p10 0.047, p25 0.065, p50 0.26, p75 0.99, p90 3. */
+function rollDevLaunchBuySol(rng: RNG): number {
+  const knots = [0, 0.10, 0.25, 0.50, 0.75, 0.90, 0.98];
+  const sols = [0.02, 0.047, 0.065, 0.26, 0.99, 3, 6];
+  const u = rng.next();
+  let i = 0;
+  while (i < knots.length - 2 && u > knots[i + 1]!) i += 1;
+  const span = Math.max(1e-6, knots[i + 1]! - knots[i]!);
+  const w = Math.min(1, Math.max(0, (u - knots[i]!) / span));
+  const a = Math.log(sols[i]!);
+  const b = Math.log(sols[i + 1]!);
+  return Math.exp(a + (b - a) * w);
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -631,7 +651,10 @@ export class TokenSim {
     let volMul = phaseModel.volMul * regimeBehavior.volMul;
     let liquidityMul = phaseModel.liquidityMul * regimeBehavior.liquidityMul;
     let driftPerSec = regimeBehavior.driftPerSec + this.archetypeProfile.driftBiasPerSec;
-    let effectiveBuyBias = clamp(regimeBehavior.buyBias + sessionProfile.buyBiasShift, 0.14, 0.86);
+    // Session buy-bias was the rest of the 08Z/19Z graduation gap (EU sells,
+    // NA buys) after size and whale chance were made hour-neutral. Real
+    // trade_rate_by_age is one day-level curve, with no per-coin hour split.
+    let effectiveBuyBias = clamp(regimeBehavior.buyBias, 0.14, 0.86);
 
     const cadenceBurstActive = this.advanceCadenceBurst(simDtSec, sessionProfile, flowStrength, regimeBehavior);
     if (cadenceBurstActive) {
@@ -780,7 +803,8 @@ export class TokenSim {
       const heatRatio = mcapHeat / (1 + mcapHeat);
       effectiveBuyBias = clamp(effectiveBuyBias - 0.22 * heatRatio, 0.18, 0.82);
       driftPerSec -= 0.02 * heatRatio;
-      lambdaMul *= Math.max(0.35, 1 - 0.55 * heatRatio);
+      // Heat still leans the tape. It does not cut the print count: that count
+      // was calibrated at much smaller prints, and real SOL sizes would trip it.
       volMul *= Math.max(0.45, 1 - 0.35 * heatRatio);
     }
 
@@ -847,10 +871,12 @@ export class TokenSim {
     }
 
     const heatRatio = mcapHeat / (1 + mcapHeat);
-    const sessionTradeSizeMul = 0.6 + sessionProfile.tempoMul * 0.4;
+    // Flow power still scales the print count. Size stays in SOL, with no
+    // session multiplier, so 08Z and 19Z fill the same curve.
+    const sessionTradeSizeMul = 1;
     const tradeSizeMul = Math.max(
-      0.12,
-      flowPowerMul * regimeBehavior.tradeSizeMul * (1 - 0.45 * heatRatio) * sessionTradeSizeMul
+      0.35,
+      regimeBehavior.tradeSizeMul * (1 - 0.25 * heatRatio) * sessionTradeSizeMul
     );
     const impactMul = Math.max(
       0.45,
@@ -933,6 +959,12 @@ export class TokenSim {
     // more coins launch, not because each coin trades faster.
     const arrivalShape = lambdaMul / Math.max(0.05, sessionProfile.tempoMul);
     const arrivalPerSec = this.arrivalLambdaPerSec(arrivalShape, marketTsMs) * (isLaunchTick ? 0.15 : 1);
+    const ageSecForSize = Math.max(0, this.simTimeMs / 1000);
+    const printSol = ageSecForSize < 10
+      ? ARRIVAL_PRINT_SOL_OPEN
+      : ageSecForSize < 60
+        ? ARRIVAL_PRINT_SOL_MID
+        : ARRIVAL_PRINT_SOL_LATE;
     const market = stepMarket(this.rng, {
       dtSec: simDtSec,
       priceUsd: prevPriceUsd,
@@ -940,15 +972,16 @@ export class TokenSim {
       attention: this.attention,
       // stepMarket multiplies by attention again; cancel that so the sim-clock rate is the rate.
       baseLambda: arrivalPerSec / Math.max(this.attention, 0.05),
-      baseTradeSizeUsd: ARRIVAL_PRINT_USD * tradeSizeMul,
-      tradeSigma: this.tradeSigma * regimeBehavior.tradeSigmaMul * regimeBehavior.wickinessMultiplier,
+      baseTradeSizeUsd: printSol * SOL_PRICE_USD * tradeSizeMul,
+      tradeSigma: 1.7 * regimeBehavior.tradeSigmaMul * regimeBehavior.wickinessMultiplier,
       driftPerSec,
       volatilityPerSqrtSec: isLaunchTick ? 0 : this.baseVol * volMul,
       buyBias: effectiveBuyBias,
       impactK: this.impactK * impactMul,
       whaleChance: (isLaunchTick || inMigrationFreeze || inDeadMode || inCollapseMode)
         ? 0
-        : this.getWhaleChance(inMigrationShock, sessionProfile, regimeBehavior),
+        : this.getWhaleChance(inMigrationShock, sessionProfile, regimeBehavior) / Math.max(0.05, sessionProfile.whaleMul),
+      maxWhaleUsd: ARRIVAL_PRINT_CAP_SOL * SOL_PRICE_USD,
       externalFlow: devFlow?.externalFlow,
     });
 
@@ -1898,7 +1931,7 @@ export class TokenSim {
       this.emittedInitialDevBuy = true;
       this.lastDevEventRealMs = candleTsMs;
       if (this.stillbornLaunch) return null;
-      const sizeUsd = this.baseTradeSizeUsd * (3 + this.rng.next() * 3.5) * DEV_FLOW_SCALE * devPowerMul;
+      const sizeUsd = rollDevLaunchBuySol(this.rng) * SOL_PRICE_USD;
       this.devEventsUsed += 1;
       return {
         eventType: 'DEV_BUY',

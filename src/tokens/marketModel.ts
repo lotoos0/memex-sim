@@ -69,8 +69,9 @@ export function stepMarket(rng: RNG, input: MarketStepInput): MarketStepOutput {
     let size = logNormal(rng, muLog, sigma);
     if (rng.next() < whaleChance) {
       const mul = whaleMinMul + (whaleMaxMul - whaleMinMul) * rng.next();
-      size = Math.min(maxWhaleUsd, size * mul);
+      size *= mul;
     }
+    size = Math.min(maxWhaleUsd, size);
     if (rng.next() < bias) {
       buys++;
       buyFlow += size;
