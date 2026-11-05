@@ -11,7 +11,6 @@ import { useNavigate } from 'react-router-dom';
 import {
   Check,
   Copy,
-  ExternalLink,
   Feather,
   LoaderCircle,
   Star,
@@ -310,9 +309,12 @@ export default function TokenCard({
         <button
           type="button"
           className="pulse-token-card__identity"
-          onClick={handleCopyId}
-          title={`${token.ticker} · ${token.name} · ${copyLabel}`}
-          aria-label={`${copyLabel}: ${token.ticker}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            handleClick();
+          }}
+          title={`${token.ticker} · ${token.name} · Open token page`}
+          aria-label={`Open token page: ${token.ticker}`}
         >
           <span className="pulse-token-card__title">
             <span className="pulse-token-card__ticker">{token.ticker}</span>
@@ -517,21 +519,6 @@ export default function TokenCard({
           <button type="button" onClick={handleCopyId}>
             {copyState === 'ok' ? <Check size={13} /> : <Copy size={13} />}
             {copyLabel}
-          </button>
-          <button
-            type="button"
-            title="The token ID is simulated, not an on-chain address"
-            onClick={(event) => {
-              event.stopPropagation();
-              window.open(
-                `https://solscan.io/token/${encodeURIComponent(token.id)}`,
-                '_blank',
-                'noopener,noreferrer',
-              );
-            }}
-          >
-            <ExternalLink size={13} />
-            External explorer
           </button>
         </div>
       </div>
