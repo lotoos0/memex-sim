@@ -147,3 +147,50 @@ Kupno w `slot` 457229768, `mint` `FnSScimW…` (Real C `idx` 881; Shrine sygnatu
 - Kontrola: 40,033675856 + 0,048888888 = 40,082564744; 804 073 053,927949 − 980 731,570578 = 803 092 322,357371.
 - k = 40,082564744 × 803 092 322,357371 ≈ 3,219 × 10¹⁰ = 32,19 mld, zgodne z `curveConstants.ts`.
 - Zasada: kupno zwiększa `r1` o kwotę i zmniejsza `r2` o tokeny; sprzedaż odwrotnie.
+
+## Rejestracja kryteriów końcowej walidacji (zapisana przed pobraniem nowych plików)
+
+Status: kryteria zamrożone przed obejrzeniem jakichkolwiek danych z drugiej godziny. Wcześniej sprawdzono tylko rozmiary plików (nagłówki HTTP) i dane godziny 12:00 UTC, które już wcześniej analizowano. Nie dotyczy D1/D2, nie dotyczy Engine V2.
+
+### Wybór drugiej godziny
+
+Reguła niezależna od wyników: godzina najbardziej odległa w cyklu dobowym od 12:00 UTC, z wyłączeniem godzin brzegowych doby (00 i 23, bo granica doby Real C zmienia pokrycie: tokeny sprzed doby i launch po 23:30 poza populacją główną). Odległość 12 h to 00:00 (wykluczona), następnie 01:00 i 23:00 (po 11 h); remis rozstrzygnięty wcześniejszą godziną. **Wybrana godzina: 2026-10-15 01:00–02:00 UTC.** Leży w shardzie 0 Real C (lokalnym). Nie sprawdzałem żadnych wyników ani wolumenu tej godziny.
+
+### Pliki potrzebne do granicy plików
+
+Zdarzenie o czasie bloku w godzinie H może trafić do pliku H+1, jeśli dotrze po jej końcu (opóźnienie odbioru do ok. 2 s w godzinie 12:00). Dla okna [H, H+1) potrzebne są pliki H i H+1. Godzina 12:00 ma plik 12 lokalnie, potrzebny dodatkowo plik 13.
+
+| Plik | Rozmiar (HTTP `Content-Length`) |
+|---|---|
+| `2026/10/15/01.jsonl.zst` | 266 272 064 B |
+| `2026/10/15/02.jsonl.zst` | 282 639 966 B |
+| `2026/10/15/13.jsonl.zst` | 244 039 984 B |
+| Razem | 792 952 014 B (ok. 793 MB) |
+
+### Definicje populacji
+
+- **Tokeny STANDARD:** `mint`, dla którego w plikach Shrine danej godziny nie występuje żaden wiersz `PUMPFUN_MAYHEM`. Podział jest per `mint`, bo 174 mintów w godzinie 12:00 miało wiersze obu etykiet, a podpis podaży z tabeli `events` nie odróżnia MAYHEM (wszystkie zdarzenia `create` w obserwowanej próbce mają podaż 1e15).
+- Real C: wiersze `venue='curve'`, SOL, nie `failed`, w oknie [H, H+1), tylko na mintach STANDARD (klasyfikacja z Shrine). Shrine: nogi `PUMPFUN` na tych samych mintach.
+- **MAYHEM:** raportowany osobno, bez kryteriów PASS/FAIL i bez udziału w benchmarku STANDARD.
+- Transakcje wielonogowe: osobna kohorta, nie liczą się do G2 i G3.
+
+### Kryteria (każde liczone osobno dla obu godzin: 12:00 i 01:00 UTC)
+
+| ID | Miara | PASS | FAIL | W przeciwnym razie |
+|---|---|---|---|---|
+| G1 | Real STANDARD bez odpowiednika w Shrine (pełne okno, pliki H i H+1, słaby klucz `slot`/`mint`/portfel/strona) | ≤ 0,05% | > 0,2% | INCONCLUSIVE |
+| G1b | Shrine STANDARD (transakcje jednonogowe) bez odpowiednika w Real C | ≤ 0,05% | > 0,2% | INCONCLUSIVE |
+| G2 | Transakcje jednonogowe: dokładna zgodność kwoty (lamporty) i tokenów (mikro-jednostki) | ≥ 99,9% | < 99% | INCONCLUSIVE |
+| G3 | Zgodnych par z G2: rezerwy po transakcji `r1`, `r2` w granicach 1 jednostki | ≥ 99,9% | < 99% | INCONCLUSIVE |
+| G4 | Real C STANDARD: przejścia rezerw w obrębie `mint` spełniają Δ`r1` = ±kwota i Δ`r2` = ∓tokeny (bez pierwszych wierszy) | ≥ 99,9% | < 99% | INCONCLUSIVE |
+| G5 | Rozpoznawalność transakcji wielonogowych: Shrine `nlegs>1` ⇔ wiele wierszy Real C o tym samym (`slot`,`idx`), dla zgodnych transakcji | ≥ 99% zgodności | < 95% | INCONCLUSIVE |
+| G5b | Udział wierszy Real C STANDARD w transakcjach wielonogowych (informacja, bo kohorta jest wykluczana z benchmarku) | ≤ 10% | > 25% | INCONCLUSIVE |
+| G6 | Kolejność: grupy (`slot`,`mint`) z ≥2 wierszami bez transakcji wielonogowych, rozstrzygnięte jednoznacznie łańcuchem rezerw tokenów | rozstrzygnięte ≥ 99% grup i 0 błędnych względem Real C | jakikolwiek błąd w rozstrzygniętej grupie (> 0,01% grup) | INCONCLUSIVE |
+
+Kolejność G6: kolejność wewnątrz `mint` w obrębie `slot`. Kolejność globalna między mintami nie jest wymagana do kalibracji STANDARD i nie jest kryterium.
+
+### Werdykt
+
+- **Dane:** PASS, jeśli wszystkie kryteria są PASS w obu godzinach. FAIL, jeśli którekolwiek kryterium jest FAIL w którejkolwiek godzinie. W pozostałych przypadkach INCONCLUSIVE.
+- **Licencja:** nie jest mierzalna z danych. Strona Shrine nie podaje licencji ani regulaminu. Bez pisemnego warunku użycia werdykt końcowy to najwyżej „PASS technicznie, licencja nieustalona”, a nie bezwarunkowy PASS.
+- Dwie godziny z jednej doby nie dowodzą stabilności na innych dniach (D1/D2). Werdykt dotyczy wyłącznie przydatności Shrine jako źródła o zbadanych własnościach, nie tego, że D1 i D2 będą kompletne.
