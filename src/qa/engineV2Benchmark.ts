@@ -159,10 +159,53 @@ function pathStats(paths: Path[]) {
   };
 }
 
-export function measure(seed: string, variant: 'off' | 'on' | 'fixed-launches', write: (row: object) => void) {
+export function measure(seed: string, variant: 'off' | 'on' | 'fixed-launches', write: (row: object) => void,
+  options: { sellFeeReserve?: true; streamFacts?: true } = {}) {
+  const { sellFeeReserve, streamFacts } = options;
   const world = new World({
     ...DEFAULT_WORLD, seed, social: variant !== 'off', socialLaunches: variant === 'on',
+    ...(sellFeeReserve ? { sellFeeReserve } : {}),
   });
+  const markets: Record<string, Path> = {};
+  let poolFills = 0;
+  let decisions = 0;
+  let facts = 0;
+  function collectFacts() {
+    facts += world.kernel.log.length;
+    for (const fact of world.kernel.log) {
+      if (fact.kind === 'AgentDecided') decisions++;
+      if (fact.kind === 'TokenLaunched') {
+        const { market, link } = fact.payload;
+        markets[market.tokenId] = {
+          tokenId: market.tokenId, source: link ? 'social' : 'baseline', launchAt: market.launchedAt, rows: [], migrationAge: null,
+        };
+        write({ kind: 'birth', tokenId: market.tokenId, launchAt: market.launchedAt, source: link ? 'social' : 'baseline' });
+      }
+      if (fact.kind === 'MarketMigrated') {
+        const path = markets[fact.payload.tokenId];
+        const age = fact.key.at - path.launchAt;
+        if (age <= followup) path.migrationAge = age;
+      }
+      if (fact.kind === 'TradeExecuted') {
+        const { fill, before, after, progressBefore, progressAfter } = fact.payload;
+        const path = markets[fill.tokenId];
+        const ageMs = fact.key.at - path.launchAt;
+        const priceSol = asSol(fill.spotAfter.quoteAtoms) / asTokens(fill.spotAfter.tokenAtoms);
+        write({ kind: 'fill', id: fact.id, globalSeq: fact.key.seq, ...fill, before, after, progressBefore, progressAfter,
+          priceSol, completion: fill.marketEpoch === 0 && progressAfter === 1_000_000,
+          reservationId: world.state.orders[fill.orderId].reservationId });
+        if (fill.marketEpoch > 0) poolFills++;
+        else if (ageMs <= followup) path.rows.push({
+          ageMs, priceSol, progress: progressAfter, preProgress: progressBefore,
+          quoteSol: asSol(fill.quoteAtomsExFee), side: fill.side,
+        });
+      }
+      if (fact.kind === 'AdmissionRejected') write({ kind: 'admission-rejected', ...fact.payload, at: fact.key.at });
+      if (fact.kind === 'OrderChanged' && fact.payload.order.status === 'REJECTED') {
+        write({ kind: 'attempt-rejected', ...fact.payload.order, at: fact.key.at });
+      }
+    }
+  }
   const started = performance.now();
   const durations = [];
   let maxQueue = 0;
@@ -171,50 +214,19 @@ export function measure(seed: string, variant: 'off' | 'on' | 'fixed-launches', 
     world.advanceTo(now);
     durations.push(performance.now() - start);
     if (now % 30_000 === 0) maxQueue = Math.max(maxQueue, world.kernel.snapshot().pending.length);
+    if (streamFacts && now % 30_000 === 0) {
+      collectFacts();
+      world.pruneRecordedHistory(world.kernel.log);
+    }
   }
-  const advanceMs = performance.now() - started;
+  const advanceMs = streamFacts ? durations.reduce((sum, duration) => sum + duration, 0) : performance.now() - started;
   world.ledger.assertConservation();
-  const markets: Record<string, Path> = {};
-  let poolFills = 0;
-  let decisions = 0;
-  for (const fact of world.kernel.log) {
-    if (fact.kind === 'AgentDecided') decisions++;
-    if (fact.kind === 'TokenLaunched') {
-      const { market, link } = fact.payload;
-      markets[market.tokenId] = {
-        tokenId: market.tokenId, source: link ? 'social' : 'baseline', launchAt: market.launchedAt, rows: [], migrationAge: null,
-      };
-      write({ kind: 'birth', tokenId: market.tokenId, launchAt: market.launchedAt, source: link ? 'social' : 'baseline' });
-    }
-    if (fact.kind === 'MarketMigrated') {
-      const path = markets[fact.payload.tokenId];
-      const age = fact.key.at - path.launchAt;
-      if (age <= followup) path.migrationAge = age;
-    }
-    if (fact.kind === 'TradeExecuted') {
-      const { fill, before, after, progressBefore, progressAfter } = fact.payload;
-      const path = markets[fill.tokenId];
-      const ageMs = fact.key.at - path.launchAt;
-      const priceSol = asSol(fill.spotAfter.quoteAtoms) / asTokens(fill.spotAfter.tokenAtoms);
-      write({ kind: 'fill', id: fact.id, globalSeq: fact.key.seq, ...fill, before, after, progressBefore, progressAfter,
-        priceSol, completion: fill.marketEpoch === 0 && progressAfter === 1_000_000,
-        reservationId: world.state.orders[fill.orderId].reservationId });
-      if (fill.marketEpoch > 0) poolFills++;
-      else if (ageMs <= followup) path.rows.push({
-        ageMs, priceSol, progress: progressAfter, preProgress: progressBefore,
-        quoteSol: asSol(fill.quoteAtomsExFee), side: fill.side,
-      });
-    }
-    if (fact.kind === 'AdmissionRejected') write({ kind: 'admission-rejected', ...fact.payload, at: fact.key.at });
-    if (fact.kind === 'OrderChanged' && fact.payload.order.status === 'REJECTED') {
-      write({ kind: 'attempt-rejected', ...fact.payload.order, at: fact.key.at });
-    }
-  }
+  if (!streamFacts) collectFacts();
   const paths = Object.values(markets);
   return {
     manifest: world.kernel.manifest, seed, variant, all: pathStats(paths), baseline: pathStats(paths.filter(path => path.source === 'baseline')),
-    poolFills, decisions, facts: world.kernel.log.length, advanceMs, maxSampledQueue: maxQueue,
-    advanceOneSecondMs: distribution(durations), factsPerWallSecond: world.kernel.log.length * 1000 / advanceMs,
+    poolFills, decisions, facts, advanceMs, maxSampledQueue: maxQueue,
+    advanceOneSecondMs: distribution(durations), factsPerWallSecond: facts * 1000 / advanceMs,
     simulatedMs: world.now,
     baselineSchedule: paths.filter(path => path.source === 'baseline').map(path => path.launchAt),
   };

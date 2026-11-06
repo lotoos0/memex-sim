@@ -1,8 +1,10 @@
+import { SELL_FEE_RESERVE, decideTrade, observe } from '../engineV2/agents';
 import { BASE_FEE, SOL, decimalAtoms, type Intent, type Policy } from '../engineV2/contracts';
 import type { Command } from '../engineV2/events';
 import { SWAP_COLLECTOR, TX_COLLECTOR, posting } from '../engineV2/ledger';
 import { curveAccount, escrowAccount, residualAccount, reserves, spot } from '../engineV2/marketRules';
 import { RecordedPlayback } from '../engineV2/projections';
+import { RngStreams } from '../engineV2/rng';
 import { canonical } from '../engineV2/snapshot';
 import { DEFAULT_WORLD, USER, World, type WorldConfig } from '../engineV2/world';
 
@@ -76,6 +78,67 @@ function verifyLedger(world: World) {
     }
   }
   equal(reserved.size, 0, 'Every order has ledger escrow');
+}
+
+function sellFeeReserveGate() {
+  class DecisionDraws extends RngStreams {
+    constructor(private readonly draws: number[]) { super('reserve-qa'); }
+    override int(_namespace: string, _entityId: string, _policyVersion: string, exclusive: number) {
+      const value = this.draws.shift();
+      check(value !== undefined && value >= 0 && value < exclusive, 'Expected scripted draw');
+      return value;
+    }
+  }
+  const world = new World({ ...config, agents: 1, sellFeeReserve: true });
+  world.advanceTo(0);
+  const agent = world.state.agents['agent:00000'];
+  observe(agent, world.publicMarket(world.state.markets[FIRST]), 'reserve-qa');
+  const intent = (draws: number[], protection = SELL_FEE_RESERVE) =>
+    decideTrade(agent, world.now, world.ledger, new DecisionDraws(draws), () => undefined, protection);
+  const nominal = intent([99, 0, 14]);
+  check(nominal?.side === 'BUY', 'Funded agent creates a buy');
+  equal(nominal.maxInputSol, 15n * SOL / 10n, 'Nominal size draw is unchanged');
+  const setCash = (cash: bigint) => {
+    const delta = cash - world.ledger.balance(agent.id).available;
+    world.ledger.commit([posting(USER, 'SOL', -delta), posting(agent.id, 'SOL', delta)]);
+  };
+  setCash(SELL_FEE_RESERVE + BASE_FEE + 1n);
+  const capped = intent([99, 0, 14]);
+  check(capped?.side === 'BUY', 'One spendable lamport creates a buy');
+  equal(capped.maxInputSol, 1n, 'Capped BUY preserves reserve and current fee');
+  setCash(SELL_FEE_RESERVE + BASE_FEE);
+  equal(intent([99, 0, 14]), null, 'Zero spendable lamports produce WAIT');
+  const unprotected = intent([99, 0, 14], 0n);
+  check(unprotected?.side === 'BUY', 'OFF keeps the old behavior');
+  equal(unprotected.maxInputSol, SELL_FEE_RESERVE, 'OFF can spend up to the current fee');
+
+  setCash(2n * SOL);
+  const buyCommand = buy(world, SOL) as Extract<Command, { kind: 'submit' }>;
+  submit(world, 'reserve-setup', { ...buyCommand, intent: { ...buyCommand.intent, agentId: agent.id } });
+  world.advanceTo(350);
+  setCash(SELL_FEE_RESERVE);
+  equal(intent([99, 0, 99, 14]), null, 'A blocked BUY does not become a SELL');
+  const sale = intent([99, 0, 0, 0]);
+  check(sale?.side === 'SELL', 'Standard side selection permits a sale from the protected balance');
+  const saleId = submit(world, 'reserve-sell', { kind: 'submit', intent: sale, policy: IOC });
+  equal(world.ledger.balance(agent.id).available, SELL_FEE_RESERVE - BASE_FEE, 'SELL can use protected SOL');
+  verifyLedger(world);
+  world.advanceTo(700);
+  equal(world.state.orders[saleId].status, 'FILLED', 'Protected SELL settles');
+  equal(world.state.orders[saleId].chargedFee, BASE_FEE, 'SELL pays the standard fee');
+  verifyLedger(world);
+
+  const off = new World({ ...DEFAULT_WORLD, agents: 8 });
+  const on = new World({ ...off.config, sellFeeReserve: true });
+  check(on.kernel.manifest.configHash !== off.kernel.manifest.configHash, 'ON has a distinct manifest');
+  on.advanceTo(3_000);
+  const restored = World.restore(on.snapshot());
+  equal(restored.config.sellFeeReserve, true, 'ON is retained at restore');
+  on.advanceTo(7_000);
+  restored.advanceTo(7_000);
+  same(on, restored, 'ON checkpoint replay');
+  same(on, World.rerun(on.config, [], 7_000), 'ON deterministic rerun');
+  console.log('PASS opt-in SELL fee reserve, BUY boundary, standard SELL fee and ON restore');
 }
 
 function financialGate() {
@@ -338,6 +401,7 @@ equal(decimalAtoms('0.100000000', 9), SOL / 10n, 'Decimal SOL');
 equal(decimalAtoms('0.1000000001', 9), null, 'Excess precision rejected');
 equal(decimalAtoms('1e-9', 9), 1n, 'One lamport');
 financialGate();
+sellFeeReserveGate();
 orderAndMigrationGate();
 priceCrossingGate();
 expiryAndFaultGate();

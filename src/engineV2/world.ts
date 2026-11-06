@@ -1,4 +1,4 @@
-import { AGENT_VERSION, decideTrade, newAgent, observe, type Agent } from './agents';
+import { AGENT_VERSION, SELL_FEE_RESERVE, decideTrade, newAgent, observe, type Agent } from './agents';
 import { SOL, SUPPLY, assertSimTime, type Envelope, type Manifest, type Message } from './contracts';
 import type { Ack, Command, FactMap, Launch, Link, Post, PublicMarket, TaskMap } from './events';
 import { Kernel, type Committed, type KernelState } from './kernel';
@@ -26,6 +26,8 @@ export type WorldConfig = {
   latencyMs: number;
   launchUntilMs: number;
   socialLaunches: boolean;
+  // Omit OFF so existing recordings keep their config and manifest hashes.
+  sellFeeReserve?: true;
 };
 export const DEFAULT_WORLD: WorldConfig = {
   seed: 'MEMEX-V2', epochUtcMs: 1_792_918_800_000, agents: 100,
@@ -385,7 +387,8 @@ export class World {
         ticker: (narrativeId === 'signal' ? 'SIGN' : 'ECHO') + suffix, narrativeId, sourcePostId: info.postId,
       }, decision);
     } else {
-      const intent = decideTrade(agent, this.now, this.ledger, this.rng, tokenId => this.state.social.links[tokenId]?.narrativeId);
+      const intent = decideTrade(agent, this.now, this.ledger, this.rng, tokenId => this.state.social.links[tokenId]?.narrativeId,
+        this.config.sellFeeReserve ? SELL_FEE_RESERVE : 0n);
       const decision = this.kernel.fact('AgentDecided', {
         agentId: id, ordinal: agent.ordinal, decision: intent ? 'TRADE' : 'WAIT',
       });
