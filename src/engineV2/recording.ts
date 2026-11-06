@@ -26,6 +26,8 @@ export type Frame = {
   facts: Committed<FactMap>[];
 };
 
+export class ArchiveIntegrityError extends Error {}
+
 export interface RecordingStore {
   head(): Promise<RecordingHead | undefined>;
   count(): Promise<number>;
@@ -158,14 +160,21 @@ export class Recording {
 // Each frame is independently verified so consumers can stream playback or benchmark
 // exports without retaining the archive. The caller pins a head before iteration.
 export async function* recordedFrames(store: RecordingStore, head: RecordingHead) {
-  if (head.version !== 1) throw new Error('Incompatible recording version');
+  if (head.version !== 1) throw new ArchiveIntegrityError('Incompatible recording version');
   let previous: string | null = null;
   let now = 0;
   for (let index = 0; index <= head.index; index++) {
-    const block = await store.frame(index);
-    const frame = await unpack<Frame>(block, index, index === head.index ? head.hash : undefined);
+    let block: RecordingBlock | undefined;
+    let frame: Frame;
+    try {
+      block = await store.frame(index);
+      frame = await unpack<Frame>(block, index, index === head.index ? head.hash : undefined);
+    } catch (error) {
+      throw new ArchiveIntegrityError('Cannot verify archive frame ' + index + ': ' +
+        (error instanceof Error ? error.message : String(error)));
+    }
     if (frame.previous !== previous || frame.now < now || (index === head.index && frame.now !== head.now)) {
-      throw new Error('Broken recording chain');
+      throw new ArchiveIntegrityError('Broken recording chain at frame ' + index);
     }
     previous = block!.hash;
     now = frame.now;

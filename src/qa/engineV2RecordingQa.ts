@@ -1,7 +1,7 @@
 import { SOL } from '../engineV2/contracts';
 import { IndexedRecording } from '../engineV2/indexedRecording';
 import { RecordedPlayback } from '../engineV2/projections';
-import { Recording, recordedFrames, rerunRecording, type RecordingBlock, type RecordingHead, type RecordingStore } from '../engineV2/recording';
+import { ArchiveIntegrityError, Recording, recordedFrames, rerunRecording, type RecordingBlock, type RecordingHead, type RecordingStore } from '../engineV2/recording';
 import { canonical, checksum } from '../engineV2/snapshot';
 import { DEFAULT_WORLD, USER } from '../engineV2/world';
 
@@ -113,7 +113,10 @@ export async function runRecordingQa() {
   store.state = checkpoint;
   const genesis = store.frames.get(0)!;
   store.frames.set(0, { ...genesis, data: new Blob(['invalid historical block']) });
-  await reject(() => recovered.exportTo(async () => {}), 'Corrupt historical data was exported');
+  let integrityError = false;
+  try { await recovered.exportTo(async () => {}); }
+  catch (error) { integrityError = error instanceof ArchiveIntegrityError; }
+  check(integrityError, 'Corrupt historical data did not report an integrity failure');
   store.frames.set(0, genesis);
   const frame = store.frames.get(head.index)!;
   store.frames.set(head.index, { ...frame, data: new Blob(['invalid gzip']) });

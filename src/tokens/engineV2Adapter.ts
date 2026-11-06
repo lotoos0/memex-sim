@@ -10,7 +10,7 @@ import type { Command } from '../engineV2/events';
 import { CURVE_TOKENS, quote, reserves, spot } from '../engineV2/marketRules';
 import { RecordedPlayback, priceUsd, qty, sol } from '../engineV2/projections';
 import { IndexedRecording } from '../engineV2/indexedRecording';
-import { Recording } from '../engineV2/recording';
+import { ArchiveIntegrityError, Recording } from '../engineV2/recording';
 import { DEFAULT_WORLD, USER, World } from '../engineV2/world';
 
 const FRAME_MS = 1000;
@@ -129,6 +129,7 @@ export class EngineV2Adapter {
       await writable.close();
       this.exportMessage = 'Recording exported.';
     } catch (error) {
+      if (error instanceof ArchiveIntegrityError) this.fail(error);
       await writable?.abort().catch(() => {});
       this.exportMessage = error instanceof DOMException && error.name === 'AbortError' ? null
         : 'Recording export failed. ' + (error instanceof Error ? error.message : String(error));

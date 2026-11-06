@@ -25,6 +25,7 @@ The former 160,000-fact and 20-minute stop thresholds are removed. Slow writes a
 - `npm run qa:engine-v2` covers the existing financial and deterministic fixtures plus pending orders, single migration, dormant state, scheduled repost, restart checkpoint rotation, suffix rerun, full recorded playback, full deterministic rerun, stale writers, injected quota failure, damaged gzip and missing frames.
 - Edge 156 tested native IndexedDB and a real 90 SOL UI order. A paused reload retained one pending order, available balance 9.999995 SOL and identical head hash `3d8101df45d217cb`. Resuming produced one migration and balance 19.856109548 SOL. Closing and reopening Edge with the same test profile retained the balance, marker and `PARTIAL_CLOSED` execution.
 - Lint and build pass with the existing hook and bundle-size warnings. The pre-storage deterministic fixture hashes remain `f8092dfbdd7be89f` and `edd06a22c30a0ffe`.
+- V1 market baseline, OHLC, DEAD-floor and quick-limit regressions pass. Quick-limit passed on a fresh Vite server after one local timeout waiting for a fresh market snapshot.
 
 ## Disk-backed stress
 
@@ -49,3 +50,5 @@ Edge 156 advanced the actual V2 adapter in accelerated five-second simulated bat
 Reload at 3,715 simulated seconds restored the 115-second suffix after the latest checkpoint and matched head hash `299ad03da3e1e391`. Reload, suffix verification and an injected quota failure together took 558 ms. The injected write failure kept the previous visible ledger, token view and persisted head. Native IndexedDB stale-writer abort and browser restart were exercised separately. The browser's storage quota and eviction policy remain external constraints. Gzip and checkpoint encoding still contribute main-thread latency under accelerated load.
 
 An Edge export test used the V2 button and a substituted picker that returned a real origin-private file handle. All 291 frames, 20,470 fills and one command were present in the 186,151,628-byte uncompressed export. Each frame linked to its predecessor and the final checksum matched the exported head. The OS file-picker dialog was outside this fixture.
+
+In a separate Edge fixture, corrupting the gzip payload of an archived frame caused export to abort and the running simulation to stop with the affected frame number visible in the UI.
