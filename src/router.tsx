@@ -5,11 +5,12 @@ import SubHeaderBar from './components/layout/SubHeaderBar';
 import PulsePage from './pages/PulsePage';
 import TokenPage from './pages/TokenPage';
 import ErrorBoundary from './components/layout/ErrorBoundary';
-import { engineVersion, registry, switchEngine, useSimulationFault } from './tokens/sessionBinding';
+import { downloadRecordingCheckpoint, engineVersion, registry, switchEngine, useRecordingStop, useSimulationFault } from './tokens/sessionBinding';
 
 function AppShell() {
   const [paused, setPaused] = useState(false);
   const fault = useSimulationFault();
+  const recordingStop = useRecordingStop();
   useEffect(() => {
     registry.start();
     return () => registry.stop();
@@ -21,7 +22,13 @@ function AppShell() {
       <div className="flex justify-end gap-3 px-4 py-1 text-xs text-ax-text-dim">
         <span>Engine {engineVersion.toUpperCase()}</span>
         {fault && <span role="alert" className="text-ax-red">Simulation stopped. {fault}</span>}
-        {engineVersion === 'v2' && (
+        {recordingStop && <span role="status" className="text-ax-text">{recordingStop}</span>}
+        {recordingStop && (
+          <button type="button" onClick={downloadRecordingCheckpoint} className="text-ax-green">
+            Download checkpoint
+          </button>
+        )}
+        {engineVersion === 'v2' && !recordingStop && !fault && (
           <button type="button" className="text-ax-green" onClick={() => {
             if (paused) registry.start();
             else registry.stop();

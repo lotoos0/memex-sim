@@ -196,6 +196,63 @@ function priceCrossingGate() {
   console.log('PASS below-spot trigger crosses on a committed trade without a second reservation');
 }
 
+function lateSettlementFaultGate() {
+  for (const failAt of ['TradeExecuted', 'MarketUpdated', 'log append'] as const) {
+    const world = fixture();
+    const order = submit(world, 'late-fault', buy(world, 100n * SOL));
+    const before = canonical({ state: world.state, log: world.kernel.log });
+    const pending = world.kernel.pendingCount;
+    const fact = world.kernel.fact.bind(world.kernel);
+    const error = new Error('Injected fault after ' + failAt);
+    world.kernel.fact = (...args) => {
+      const staged = fact(...args);
+      if (args[0] === failAt) {
+        equal(world.state.orders[order].status, 'PARTIAL_CLOSED', 'Injection follows settlement');
+        if (failAt === 'MarketUpdated') equal(world.state.markets[FIRST].epoch, 1, 'Market mutation is already visible inside commit');
+        throw error;
+      }
+      return staged;
+    };
+    if (failAt === 'log append') {
+      const push = world.kernel.log.push.bind(world.kernel.log);
+      world.kernel.log.push = (...facts) => {
+        push(...facts);
+        equal(world.state.markets[FIRST].epoch, 1, 'Log append follows market update');
+        throw error;
+      };
+    }
+    let caught: unknown;
+    try { world.advanceTo(350); }
+    catch (failure) { caught = failure; }
+    equal(caught, error, 'Fault reaches the host');
+    check(canonical({ state: world.state, log: world.kernel.log }) === before,
+      failAt + ' left a financial or market mutation without its commit');
+    equal(world.kernel.pendingCount, pending, 'Queue restored after a failed settlement');
+    equal(world.now, 0, 'Fault leaves the clock at its last committed boundary');
+    verifyLedger(world);
+  }
+  console.log('PASS late settlement faults roll back ledger, cost basis, order, market and staged facts');
+}
+
+function recordingBoundaryGate() {
+  const world = fixture();
+  const first = submit(world, 'budget-first', buy(world, SOL));
+  const second = submit(world, 'budget-second', buy(world, SOL, SECOND));
+  const limit = world.kernel.log.length + 1;
+  world.advanceTo(1000, () => world.kernel.log.length >= limit);
+  equal(world.now, 350, 'Budget freezes time at the complete settlement');
+  equal(world.state.orders[first].status, 'FILLED', 'The boundary settlement is complete');
+  equal(world.state.orders[second].status, 'QUEUED', 'Remaining due tasks stay queued');
+  const checkpoint = world.snapshot();
+  const restored = World.restore(checkpoint);
+  same(world, restored, 'Budget checkpoint retains the full prefix and queue');
+  verifyLedger(restored);
+  world.advanceTo(1000);
+  restored.advanceTo(1000);
+  same(world, restored, 'Deterministic continuation from a budget checkpoint');
+  console.log('PASS recording cutoff at commit boundary with lossless checkpoint and continuation');
+}
+
 function expiryAndFaultGate() {
   const world = fixture();
   const buyCommand = buy(world, 100n * SOL) as Extract<Command, { kind: 'submit' }>;
@@ -284,6 +341,8 @@ financialGate();
 orderAndMigrationGate();
 priceCrossingGate();
 expiryAndFaultGate();
+lateSettlementFaultGate();
+recordingBoundaryGate();
 export const deterministicHashes = determinismGate();
 console.log(JSON.stringify(deterministicHashes));
 socialGate();

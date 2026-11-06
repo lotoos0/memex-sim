@@ -11,6 +11,13 @@ import { CURVE_TOKENS, quote, reserves, spot } from '../engineV2/marketRules';
 import { RecordedPlayback, priceUsd, qty, sol } from '../engineV2/projections';
 import { DEFAULT_WORLD, USER, World } from '../engineV2/world';
 
+const RECORDING_BUDGET = {
+  facts: 160_000,
+  pendingTasks: 8_192,
+  commands: 1_024,
+  simMs: 20 * 60_000,
+};
+
 export class EngineV2Adapter {
   private readonly world = new World(DEFAULT_WORLD);
   private readonly playback = new RecordedPlayback(this.world.config.epochUtcMs);
@@ -25,6 +32,7 @@ export class EngineV2Adapter {
   private revision = 0;
   private override: SessionBucket | null = null;
   private fault: string | null = null;
+  private recordingStopped: string | null = null;
   readonly store: StoreApi<ReturnType<EngineV2Adapter['bundle']>>;
 
   constructor() {
@@ -34,22 +42,57 @@ export class EngineV2Adapter {
   get displayNowMs() { return this.world.config.epochUtcMs + this.world.now; }
 
   start = () => {
-    if (this.timer !== null || this.fault !== null) return;
+    if (this.timer !== null || this.fault || this.recordingStopped) return;
     this.wallStart = performance.now();
     this.simStart = this.world.now;
-    this.world.advanceTo(this.simStart);
-    this.publish();
+    this.advance(this.simStart);
+    if (this.fault || this.recordingStopped) return;
     this.timer = window.setInterval(() => {
       const target = this.simStart + Math.floor(toSimDtMs(performance.now() - this.wallStart));
       // Catch up in bounded simulation-time slices after a background tab stall.
-      try {
-        this.world.advanceTo(Math.min(target, this.world.now + 1000));
-      } catch (error) {
-        this.stop();
-        this.fault = error instanceof Error ? error.message : String(error);
-      }
-      this.publish();
+      this.advance(Math.min(target, this.world.now + 1000));
     }, 200);
+  };
+
+  private advance(target: number) {
+    try {
+      this.world.advanceTo(Math.min(target, RECORDING_BUDGET.simMs), () => this.budgetReached() !== null);
+      this.stopAtBudget();
+    } catch (error) {
+      this.fail(error);
+    }
+    this.publish();
+  }
+
+  private budgetReached() {
+    if (this.world.kernel.log.length >= RECORDING_BUDGET.facts) return '160,000 committed facts';
+    if (this.world.kernel.pendingCount >= RECORDING_BUDGET.pendingTasks) return '8,192 pending tasks';
+    if (this.world.state.ingress.length >= RECORDING_BUDGET.commands) return '1,024 recorded commands';
+    if (this.world.now >= RECORDING_BUDGET.simMs) return '20 simulated minutes';
+    return null;
+  }
+
+  private stopAtBudget() {
+    const limit = this.budgetReached();
+    if (!limit) return;
+    this.stop();
+    this.recordingStopped = 'Recording budget reached (' + limit + '). Download the checkpoint before starting a new session.';
+  }
+
+  private fail(error: unknown) {
+    this.stop();
+    this.fault = error instanceof Error ? error.message : String(error);
+  }
+
+  downloadCheckpoint = () => {
+    if (!this.recordingStopped) return;
+    const snapshot = this.world.snapshot();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(snapshot)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'memex-v2-checkpoint-' + snapshot.now + '.json';
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   stop = () => {
@@ -102,6 +145,7 @@ export class EngineV2Adapter {
   };
 
   private setOverride = (override: SessionBucket | null) => {
+    if (this.recordingStopped || this.fault) return;
     this.override = override;
     this.submit({ kind: 'session', override: override === 'OFF' ? 'quiet' : override ? 'busy' : null });
   };
@@ -109,10 +153,19 @@ export class EngineV2Adapter {
   private post = (tokenId: string, body: string) => { this.submit({ kind: 'post', tokenId, body }); };
 
   private submit(command: Command) {
-    if (this.fault) return { ok: false, reason: this.fault };
-    const ack = this.world.submit('ui:' + ++this.commandOrdinal, command);
+    const stopped = this.recordingStopped ?? this.fault;
+    if (stopped) return { ok: false, reason: stopped };
+    if (command.kind === 'post' && command.body.length > 500) return { ok: false, reason: 'Post is too long' };
+    try {
+      const ack = this.world.submit('ui:' + ++this.commandOrdinal, command);
+      this.stopAtBudget();
+      this.publish();
+      return ack;
+    } catch (error) {
+      this.fail(error);
+    }
     this.publish();
-    return ack;
+    return { ok: false, reason: this.fault ?? 'Simulation stopped' };
   }
 
   private quickBuy = (tokenId: string, amount: number, options?: QuickTradeOptions) =>
@@ -185,6 +238,7 @@ export class EngineV2Adapter {
       sessionId: 'engine-v2:' + this.world.kernel.manifest.configHash,
       revision: this.revision,
       fault: this.fault,
+      recordingStopped: this.recordingStopped,
       tokens: {
         tokensById, eventsByTokenId, marketByTokenId, tradeFlowByTokenId, activeTokenId: this.activeTokenId,
         marketSessionBucket: this.override ?? getSessionBucket(this.displayNowMs), marketSessionBucketOverride: this.override,

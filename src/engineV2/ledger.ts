@@ -18,7 +18,10 @@ export function posting(account: string, asset: string, available: bigint, reser
 }
 
 export class Ledger {
-  constructor(readonly state: LedgerState = { balances: {}, positions: {}, issued: {} }) {}
+  constructor(
+    readonly state: LedgerState = { balances: {}, positions: {}, issued: {} },
+    private readonly remember?: (target: object, key: string) => void,
+  ) {}
 
   balance(account: string, asset = 'SOL'): Readonly<Balance> {
     return Object.prototype.hasOwnProperty.call(this.state.balances, account)
@@ -73,14 +76,19 @@ export class Ledger {
         ? this.state.balances[account]
         : Object.fromEntries([]);
       for (const [asset, value] of assets) {
+        this.remember?.(balances, asset);
         if (value.available === 0n && value.reserved === 0n) delete balances[asset];
         else Object.defineProperty(balances, asset, { value, configurable: true, enumerable: true, writable: true });
       }
+      this.remember?.(this.state.balances, account);
       Object.defineProperty(this.state.balances, account, {
         value: balances, configurable: true, enumerable: true, writable: true,
       });
     }
-    if (issuance) this.state.issued[issuance.asset] = issuance.amount;
+    if (issuance) {
+      this.remember?.(this.state.issued, issuance.asset);
+      this.state.issued[issuance.asset] = issuance.amount;
+    }
   }
 
   recordCost(account: string, tokenId: string, side: 'BUY' | 'SELL', fee: bigint,
@@ -93,7 +101,10 @@ export class Ledger {
       bought: old.bought + (side === 'BUY' ? swapQuote : 0n),
       sold: old.sold + (side === 'SELL' ? swapQuote : 0n),
     };
-    (this.state.positions[account] ??= {})[tokenId] = next;
+    if (!this.state.positions[account]) this.remember?.(this.state.positions, account);
+    const positions = this.state.positions[account] ??= {};
+    this.remember?.(positions, tokenId);
+    positions[tokenId] = next;
   }
 
   assertConservation() {

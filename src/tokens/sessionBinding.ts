@@ -48,3 +48,11 @@ export const useTokenStore = bind<ReturnType<typeof v1Tokens.getState>, 'tokens'
 export const useSimulationFault = v2
   ? function useEngineV2Fault() { return useStore(v2!.store, state => state.fault); }
   : () => null;
+
+export const useRecordingStop = v2
+  ? function useEngineV2RecordingStop() { return useStore(v2!.store, state => state.recordingStopped); }
+  : () => null;
+
+export function downloadRecordingCheckpoint() {
+  v2?.downloadCheckpoint();
+}

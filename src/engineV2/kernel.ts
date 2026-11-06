@@ -49,6 +49,8 @@ class EventQueue<Q> {
   snapshot() {
     return [...this.heap].sort((a, b) => compare(a.key, b.key));
   }
+
+  get size() { return this.heap.length; }
 }
 
 export class Kernel<Q, F> {
@@ -60,6 +62,8 @@ export class Kernel<Q, F> {
   readonly clock: SimulationClock;
   private current: Message<Q> | null = null;
   private staged: Committed<F>[] = [];
+  private scheduled: Message<Q>[] = [];
+  private undo: (() => void)[] = [];
   private fault: unknown = null;
 
   constructor(readonly manifest: Manifest, state?: KernelState<Q>, log: readonly Committed<F>[] = []) {
@@ -73,14 +77,28 @@ export class Kernel<Q, F> {
     this.log = [...log];
   }
 
-  get now() { return this.clock.now; }
+  get now() { return this.current?.key.at ?? this.clock.now; }
+  get pendingCount() { return this.queue.size; }
+
+  onRollback(undo: () => void) {
+    if (this.current) this.undo.push(undo);
+  }
+
+  rememberProperty = (target: object, key: string) => {
+    if (!this.current) return;
+    const previous = Object.getOwnPropertyDescriptor(target, key);
+    this.onRollback(() => {
+      if (previous) Object.defineProperty(target, key, previous);
+      else Reflect.deleteProperty(target, key);
+    });
+  };
 
   schedule<K extends keyof Q & string>(
     at: number, phase: Phase, kind: K, payload: Q[K], cause?: Pick<Envelope<string, unknown>, 'id' | 'rootId'>,
   ) {
     if (this.fault) throw this.fault;
     assertSimTime(at);
-    if (at < this.clock.now) throw new Error('Cannot schedule in the past');
+    if (at < this.now) throw new Error('Cannot schedule in the past');
     const active = this.current?.key;
     const cursor = active ?? this.cursor;
     const round = cursor?.at === at ? cursor.round + (!active || phase <= cursor.phase ? 1 : 0) : 0;
@@ -92,7 +110,8 @@ export class Kernel<Q, F> {
       id, kind, payload, schemaVersion: 1, key: { at, round, phase, seq },
       causeIds: parent ? [parent.id] : [], rootId: parent?.rootId ?? id,
     } as Message<Q>;
-    this.queue.push(event);
+    if (this.current) this.scheduled.push(event);
+    else this.queue.push(event);
     return event;
   }
 
@@ -111,30 +130,40 @@ export class Kernel<Q, F> {
     return fact;
   }
 
-  advanceTo(target: number, process: (event: Message<Q>) => void) {
+  advanceTo(target: number, process: (event: Message<Q>) => void, shouldStop?: () => boolean) {
     if (this.fault) throw this.fault;
     assertSimTime(target);
     assertSimTime(this.clock.epochUtcMs + target);
     if (target < this.clock.now || this.current) throw new Error('Invalid advance');
     while (this.queue.peek()?.key.at <= target) {
+      if (shouldStop?.()) return;
       const event = this.queue.pop();
+      const sequence = this.sequence;
+      const logLength = this.log.length;
       this.current = event;
-      this.clock.moveTo(event.key.at);
       try {
         process(event);
         for (const fact of this.staged) this.log.push(fact);
+        for (const task of this.scheduled) this.queue.push(task);
+        this.clock.moveTo(event.key.at);
         const next = this.queue.peek();
         const closesRound = next?.key.at !== event.key.at || next.key.round !== event.key.round;
         this.cursor = closesRound ? { ...event.key, phase: 60 } : event.key;
       } catch (error) {
+        for (let i = this.undo.length - 1; i >= 0; i--) this.undo[i]();
+        this.log.length = logLength;
+        this.sequence = sequence;
+        this.queue.push(event);
         this.fault = error;
         throw error;
       } finally {
         this.staged = [];
+        this.scheduled = [];
+        this.undo = [];
         this.current = null;
       }
     }
-    this.clock.moveTo(target);
+    if (!shouldStop?.()) this.clock.moveTo(target);
   }
 
   snapshot(): KernelState<Q> {

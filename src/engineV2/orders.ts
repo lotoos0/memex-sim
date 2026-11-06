@@ -43,11 +43,25 @@ export class OrderBook {
     let set = this.active.get(order.intent.tokenId);
     if (!set) this.active.set(order.intent.tokenId, set = new Set());
     set.add(order.id);
+    this.kernel.onRollback(() => {
+      const pending = this.active.get(order.intent.tokenId);
+      pending?.delete(order.id);
+      if (!pending?.size) this.active.delete(order.intent.tokenId);
+    });
   }
 
   private update(order: Order) {
+    const tokenId = order.intent.tokenId;
+    const pending = this.active.get(tokenId);
+    if (!isPending(order) && pending?.delete(order.id)) {
+      this.kernel.onRollback(() => {
+        pending.add(order.id);
+        this.active.set(tokenId, new Set([...pending].sort((a, b) =>
+          this.state[a].acceptedSeq < this.state[b].acceptedSeq ? -1 : 1)));
+      });
+    }
+    this.kernel.rememberProperty(this.state, order.id);
     this.state[order.id] = order;
-    if (!isPending(order)) this.active.get(order.intent.tokenId)?.delete(order.id);
     this.kernel.fact('OrderChanged', { order });
   }
 

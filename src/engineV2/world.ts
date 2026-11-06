@@ -83,13 +83,13 @@ export class World {
     for (const value of [config.agents, config.userSol, config.latencyMs, config.launchUntilMs, config.epochUtcMs]) assertSimTime(value);
     if (config.latencyMs < 1) throw new Error('Execution latency must be positive');
     this.kernel = new Kernel(makeManifest(config), checkpoint?.kernel, log);
-    this.ledger = new Ledger(checkpoint?.state.ledger);
+    this.ledger = new Ledger(checkpoint?.state.ledger, this.kernel.rememberProperty);
     this.state = checkpoint?.state ?? {
       ledger: this.ledger.state, markets: {}, agents: {},
       social: { graph: { nodes: {}, edges: [] }, posts: {}, links: {}, delivered: {}, interpreted: {} },
       orders: {}, ingress: [], commandResults: {}, sessionOverride: null, lastFeedback: {},
     };
-    this.rng = new RngStreams(config.seed, checkpoint?.rng);
+    this.rng = new RngStreams(config.seed, checkpoint?.rng, this.kernel.rememberProperty);
     this.orders = new OrderBook(this.kernel, this.ledger, this.state.orders, this.state.markets, config.latencyMs,
       (market, traded) => this.activate(market, traded), id => id === USER || !!this.state.agents[id]);
     if (checkpoint) {
@@ -116,8 +116,8 @@ export class World {
 
   get now() { return this.kernel.now; }
 
-  advanceTo(target: number) {
-    this.kernel.advanceTo(target, event => this.process(event));
+  advanceTo(target: number, shouldStop?: () => boolean) {
+    this.kernel.advanceTo(target, event => this.process(event), shouldStop);
     this.hasAdvanced = true;
   }
 
@@ -157,6 +157,7 @@ export class World {
       }
       case 'Ingress': {
         const ack = this.command(payload.commandId, payload.command, event.key.seq);
+        this.kernel.rememberProperty(this.state.commandResults, 'command:' + payload.commandId);
         this.state.commandResults['command:' + payload.commandId] = ack;
         this.kernel.fact('CommandResolved', { commandId: payload.commandId, ack });
         break;
@@ -191,6 +192,7 @@ export class World {
           const id = fact.kind === 'TradeExecuted' ? fact.payload.fill.tokenId : fact.payload.tokenId;
           const last = this.state.lastFeedback[id];
           if (last === undefined || this.now - last >= 1500 || fact.kind === 'MarketMigrated') {
+            this.kernel.rememberProperty(this.state.lastFeedback, id);
             this.state.lastFeedback[id] = this.now;
             this.feedback(this.state.markets[id], [...(this.marketAudience.get(id) ?? [])].sort(), fact, 200);
           }
@@ -396,6 +398,7 @@ export class World {
   }
 
   private updateMarket(market: Market) {
+    this.kernel.rememberProperty(this.state.markets, market.tokenId);
     this.state.markets[market.tokenId] = market;
     return this.kernel.fact('MarketUpdated', { market });
   }
