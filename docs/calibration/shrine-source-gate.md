@@ -254,7 +254,7 @@ Zjawisko z poprzedniej diagnozy powtarza się w drugiej godzinie, z podobną ska
 
 Według zamrożonych kryteriów: 7 z 8 kryteriów PASS w obu godzinach, G5 INCONCLUSIVE w obu (zakres 95–99%, żadnego FAIL). Wynik nie jest „PASS”, bo kryterium rozpoznawalności transakcji wielonogowych nie osiągnęło 99%.
 
-Co jest ustalone dla tokenów STANDARD i transakcji jednonogowych (około 90–99% wierszy, zależnie od godziny): kwota bez opłat, liczba tokenów i obie rezerwy po transakcji są identyczne z Real C; zbiór zdarzeń jest niemal kompletny (utrata 0,025–0,035%); kolejność w obrębie `mint` jest odtwarzalna bez błędu w 99,9% grup kwalifikujących się. Brak odpowiednika dotyczy zdarzeń, które nie występują w żadnym pliku, nie granicy plików.
+Co jest ustalone dla tokenów STANDARD i transakcji jednonogowych (86,5% wierszy Real C STANDARD w godzinie 12:00 i 96,0% w 01:00): kwota bez opłat, liczba tokenów i obie rezerwy po transakcji są identyczne z Real C; zbiór zdarzeń jest niemal kompletny (utrata 0,025–0,035%); kolejność w obrębie `mint` jest odtwarzalna bez błędu w 99,9% grup kwalifikujących się. Brak odpowiednika dotyczy zdarzeń, które nie występują w żadnym pliku, nie granicy plików.
 
 Czego nie ustalono:
 - Znaczenia drugiej nogi w transakcjach dwunogowych (hipoteza „parametry instrukcji” niezweryfikowana, brak surowych danych instrukcji). Test hipotezy wykonano na godzinie 12:00; w 01:00 nie powtarzano.
