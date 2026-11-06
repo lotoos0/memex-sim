@@ -9,18 +9,22 @@ import { BASE_FEE, TOKEN, decimalAtoms, minAtoms, outputFloor, type Intent, type
 import type { Command } from '../engineV2/events';
 import { CURVE_TOKENS, quote, reserves, spot } from '../engineV2/marketRules';
 import { RecordedPlayback, priceUsd, qty, sol } from '../engineV2/projections';
+import { IndexedRecording } from '../engineV2/indexedRecording';
+import { Recording } from '../engineV2/recording';
 import { DEFAULT_WORLD, USER, World } from '../engineV2/world';
 
-const RECORDING_BUDGET = {
-  facts: 160_000,
-  pendingTasks: 8_192,
-  commands: 1_024,
-  simMs: 20 * 60_000,
-};
+const FRAME_MS = 1000;
+const filePicker = () => (window as Window & {
+  showSaveFilePicker?: (options: { suggestedName: string }) => Promise<FileSystemFileHandle>;
+}).showSaveFilePicker;
 
 export class EngineV2Adapter {
-  private readonly world = new World(DEFAULT_WORLD);
-  private readonly playback = new RecordedPlayback(this.world.config.epochUtcMs);
+  private world = new World(DEFAULT_WORLD);
+  private playback = new RecordedPlayback(this.world.config.epochUtcMs, true);
+  private recording: Recording | null = null;
+  private saving = false;
+  private running = false;
+  private publishedNow = 0;
   private activeTokenId: string | null = null;
   private timeframe = 1;
   private metric: ChartMetric = 'mcap';
@@ -28,74 +32,114 @@ export class EngineV2Adapter {
   private timer: number | null = null;
   private wallStart = 0;
   private simStart = 0;
-  private commandOrdinal = 0;
   private revision = 0;
-  private override: SessionBucket | null = null;
   private fault: string | null = null;
-  private recordingStopped: string | null = null;
+  private exportMessage: string | null = null;
+  private exporting = false;
   readonly store: StoreApi<ReturnType<EngineV2Adapter['bundle']>>;
 
   constructor() {
     this.store = createStore(() => this.bundle());
   }
 
-  get displayNowMs() { return this.world.config.epochUtcMs + this.world.now; }
+  get displayNowMs() { return this.world.config.epochUtcMs + this.publishedNow; }
 
   start = () => {
-    if (this.timer !== null || this.fault || this.recordingStopped) return;
+    if (this.running || this.fault) return;
+    this.running = true;
+    if (this.recording) this.armTimer();
+    else if (!this.saving) void this.open();
+  };
+
+  private async open() {
+    this.setSaving(true);
+    try {
+      const storage = await IndexedRecording.open();
+      const recording = await Recording.open(storage, DEFAULT_WORLD);
+      this.world = recording.world;
+      this.playback = recording.playback;
+      if (!recording.head) {
+        this.world.advanceTo(0);
+        await recording.save();
+      }
+      this.recording = recording;
+      this.saving = false;
+      this.publish();
+      this.armTimer();
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  private armTimer() {
+    if (!this.running || this.timer !== null || this.fault) return;
     this.wallStart = performance.now();
     this.simStart = this.world.now;
-    this.advance(this.simStart);
-    if (this.fault || this.recordingStopped) return;
     this.timer = window.setInterval(() => {
+      if (this.saving) return;
       const target = this.simStart + Math.floor(toSimDtMs(performance.now() - this.wallStart));
-      // Catch up in bounded simulation-time slices after a background tab stall.
-      this.advance(Math.min(target, this.world.now + 1000));
-    }, 200);
+      if (target > this.world.now) this.advance(Math.min(target, this.world.now + FRAME_MS));
+    }, FRAME_MS);
   };
 
   private advance(target: number) {
     try {
-      this.world.advanceTo(Math.min(target, RECORDING_BUDGET.simMs), () => this.budgetReached() !== null);
-      this.stopAtBudget();
+      this.world.advanceTo(target);
+      this.persist();
     } catch (error) {
       this.fail(error);
     }
-    this.publish();
   }
 
-  private budgetReached() {
-    if (this.world.kernel.log.length >= RECORDING_BUDGET.facts) return '160,000 committed facts';
-    if (this.world.kernel.pendingCount >= RECORDING_BUDGET.pendingTasks) return '8,192 pending tasks';
-    if (this.world.state.ingress.length >= RECORDING_BUDGET.commands) return '1,024 recorded commands';
-    if (this.world.now >= RECORDING_BUDGET.simMs) return '20 simulated minutes';
-    return null;
-  }
-
-  private stopAtBudget() {
-    const limit = this.budgetReached();
-    if (!limit) return;
-    this.stop();
-    this.recordingStopped = 'Recording budget reached (' + limit + '). Download the checkpoint before starting a new session.';
+  private persist() {
+    const recording = this.recording!;
+    this.setSaving(true);
+    // Admission returns a provisional acknowledgement synchronously. Publish
+    // ledger, fills and the new clock only after the whole IDB batch commits.
+    void Promise.resolve().then(() => recording.save()).then(() => {
+      this.saving = false;
+      this.publish();
+    }).catch(error => this.fail(error));
   }
 
   private fail(error: unknown) {
     this.stop();
+    this.saving = false;
     this.fault = error instanceof Error ? error.message : String(error);
+    this.store.setState({ saving: false, fault: this.fault });
   }
 
-  downloadCheckpoint = () => {
-    if (!this.recordingStopped) return;
-    const snapshot = this.world.snapshot();
-    const url = URL.createObjectURL(new Blob([JSON.stringify(snapshot)], { type: 'application/json' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'memex-v2-checkpoint-' + snapshot.now + '.json';
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  private setSaving(saving: boolean) {
+    this.saving = saving;
+    this.store.setState({ saving });
+  }
+
+  exportRecording = async () => {
+    const recording = this.recording;
+    const pick = filePicker();
+    if (!recording || !pick || this.exporting) return;
+    this.exporting = true;
+    this.exportMessage = 'Exporting recording…';
+    this.store.setState({ exportMessage: this.exportMessage });
+    let writable: FileSystemWritableFileStream | undefined;
+    try {
+      const file = await pick.call(window, { suggestedName: 'memex-v2-recording.ndjson' });
+      writable = await file.createWritable();
+      await recording.exportTo(line => writable!.write(line));
+      await writable.close();
+      this.exportMessage = 'Recording exported.';
+    } catch (error) {
+      await writable?.abort().catch(() => {});
+      this.exportMessage = error instanceof DOMException && error.name === 'AbortError' ? null
+        : 'Recording export failed. ' + (error instanceof Error ? error.message : String(error));
+    } finally {
+      this.exporting = false;
+      this.store.setState({ exportMessage: this.exportMessage });
+    }
   };
 
   stop = () => {
+    this.running = false;
     if (this.timer !== null) window.clearInterval(this.timer);
     this.timer = null;
   };
@@ -111,16 +155,19 @@ export class EngineV2Adapter {
     if (!this.chart || !this.activeTokenId) return;
     const token = this.store.getState().tokens.tokensById[this.activeTokenId];
     if (!token) return;
+    if (this.saving || this.fault) return;
     const candles = this.playback.candles(token.id, this.timeframe, this.metric);
     this.chart(candles, this.metric === 'price' ? token.lastPriceUsd : token.mcapUsd);
   }
 
   migrationReference = (id: string) => {
+    if (this.saving || this.fault) return null;
     const reference = this.playback.markets[id]?.market.reference;
     return reference ? priceUsd(reference) * 1_000_000_000 : null;
   };
 
   curveDebug = (id: string): CurveDebugSnapshot | null => {
+    if (this.saving || this.fault) return null;
     const market = this.playback.markets[id]?.market;
     const token = this.store.getState().tokens.tokensById[id];
     if (!market || !token) return null;
@@ -141,30 +188,34 @@ export class EngineV2Adapter {
   private setActive = (id: string | null) => {
     if (this.activeTokenId === id) return;
     this.activeTokenId = id;
-    this.publish();
+    this.store.setState(state => ({ tokens: { ...state.tokens, activeTokenId: id } }));
+    if (this.saving || this.fault) this.chart?.([], 0);
+    else this.publishChart();
   };
 
   private setOverride = (override: SessionBucket | null) => {
-    if (this.recordingStopped || this.fault) return;
-    this.override = override;
+    if (this.unavailable()) return;
+    this.recording!.override = override;
     this.submit({ kind: 'session', override: override === 'OFF' ? 'quiet' : override ? 'busy' : null });
   };
 
   private post = (tokenId: string, body: string) => { this.submit({ kind: 'post', tokenId, body }); };
 
+  private unavailable() {
+    return this.fault ?? (this.saving || !this.recording ? 'Recording is saving. Try again.' : null);
+  }
+
   private submit(command: Command) {
-    const stopped = this.recordingStopped ?? this.fault;
+    const stopped = this.unavailable();
     if (stopped) return { ok: false, reason: stopped };
     if (command.kind === 'post' && command.body.length > 500) return { ok: false, reason: 'Post is too long' };
     try {
-      const ack = this.world.submit('ui:' + ++this.commandOrdinal, command);
-      this.stopAtBudget();
-      this.publish();
+      const ack = this.world.submit('ui:' + ++this.recording!.ordinal, command);
+      this.persist();
       return ack;
     } catch (error) {
       this.fail(error);
     }
-    this.publish();
     return { ok: false, reason: this.fault ?? 'Simulation stopped' };
   }
 
@@ -177,6 +228,8 @@ export class EngineV2Adapter {
   private cancelQuickLimitOrder = (orderId: string) => this.submit({ kind: 'cancel', orderId, agentId: USER }).ok;
 
   private trade(tokenId: string, side: Side, amount: number, options?: QuickTradeOptions, limit?: number): QuickTradeResult {
+    const stopped = this.unavailable();
+    if (stopped) return { ok: false, reason: stopped };
     const market = this.world.state.markets[tokenId];
     if (!market || market.terminalReason) return { ok: false, reason: 'Market unavailable' };
     const input = decimalAtoms(String(amount), 9);
@@ -238,10 +291,13 @@ export class EngineV2Adapter {
       sessionId: 'engine-v2:' + this.world.kernel.manifest.configHash,
       revision: this.revision,
       fault: this.fault,
-      recordingStopped: this.recordingStopped,
+      saving: this.saving,
+      canExport: !!this.recording?.head && !!filePicker(),
+      exportMessage: this.exportMessage,
       tokens: {
         tokensById, eventsByTokenId, marketByTokenId, tradeFlowByTokenId, activeTokenId: this.activeTokenId,
-        marketSessionBucket: this.override ?? getSessionBucket(this.displayNowMs), marketSessionBucketOverride: this.override,
+        marketSessionBucket: this.recording?.override ?? getSessionBucket(this.displayNowMs),
+        marketSessionBucketOverride: this.recording?.override ?? null,
         setActiveToken: this.setActive, setMarketSessionBucketOverride: this.setOverride,
       },
       posts: { postsByTokenId, addUserPost: this.post },
@@ -255,7 +311,7 @@ export class EngineV2Adapter {
   }
 
   private publish() {
-    this.playback.read(this.world.kernel.log, this.world.now);
+    this.publishedNow = this.world.now;
     this.revision++;
     this.store.setState(this.bundle(), true);
     this.publishChart();

@@ -5,12 +5,17 @@ import SubHeaderBar from './components/layout/SubHeaderBar';
 import PulsePage from './pages/PulsePage';
 import TokenPage from './pages/TokenPage';
 import ErrorBoundary from './components/layout/ErrorBoundary';
-import { downloadRecordingCheckpoint, engineVersion, registry, switchEngine, useRecordingStop, useSimulationFault } from './tokens/sessionBinding';
+import {
+  engineVersion, exportRecording, registry, switchEngine, useRecordingExport,
+  useRecordingExportMessage, useRecordingSaving, useSimulationFault,
+} from './tokens/sessionBinding';
 
 function AppShell() {
   const [paused, setPaused] = useState(false);
   const fault = useSimulationFault();
-  const recordingStop = useRecordingStop();
+  const saving = useRecordingSaving();
+  const canExport = useRecordingExport();
+  const exportMessage = useRecordingExportMessage();
   useEffect(() => {
     registry.start();
     return () => registry.stop();
@@ -21,14 +26,13 @@ function AppShell() {
       <Header />
       <div className="flex justify-end gap-3 px-4 py-1 text-xs text-ax-text-dim">
         <span>Engine {engineVersion.toUpperCase()}</span>
-        {fault && <span role="alert" className="text-ax-red">Simulation stopped. {fault}</span>}
-        {recordingStop && <span role="status" className="text-ax-text">{recordingStop}</span>}
-        {recordingStop && (
-          <button type="button" onClick={downloadRecordingCheckpoint} className="text-ax-green">
-            Download checkpoint
-          </button>
+        {fault && <span role="alert" className="text-ax-red">Simulation stopped. {fault} Saved history is retained.</span>}
+        {saving && <span role="status">Saving V2 session…</span>}
+        {exportMessage && <span role="status">{exportMessage}</span>}
+        {canExport && (
+          <button type="button" onClick={exportRecording} className="text-ax-green">Export V2 recording</button>
         )}
-        {engineVersion === 'v2' && !recordingStop && !fault && (
+        {engineVersion === 'v2' && !fault && (
           <button type="button" className="text-ax-green" onClick={() => {
             if (paused) registry.start();
             else registry.stop();
@@ -38,7 +42,7 @@ function AppShell() {
           </button>
         )}
         <button type="button" onClick={switchEngine} className="text-ax-green">
-          New session with {engineVersion === 'v1' ? 'V2' : 'V1'}
+          {engineVersion === 'v1' ? 'Open V2 session' : 'Switch to V1'}
         </button>
       </div>
       <SubHeaderBar />
