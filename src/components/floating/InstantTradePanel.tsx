@@ -1,3 +1,4 @@
+import { useTradingStore, useWalletStore, engineVersion } from '../../tokens/sessionBinding';
 import {
   useCallback,
   useEffect,
@@ -18,8 +19,8 @@ import {
   X,
 } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
-import { selectQuickTradingUiStateByTokenId, useTradingStore } from '../../store/tradingStore';
-import { usdToSol, useWalletStore } from '../../store/walletStore';
+import { selectQuickTradingUiStateByTokenId } from '../../store/tradingStore';
+import { usdToSol } from '../../store/walletStore';
 import { TradingStateSummary } from '../token/tradingUiShared';
 import { fmtQty, type TradingStatUnit } from '../token/tradingUiFormatters';
 
@@ -314,7 +315,10 @@ export default function InstantTradePanel({ token, open, onClose }: Props) {
     const slippage = parseNumeric(sellSettings.slippage, true) ?? 1;
     const priority = parseNumeric(sellSettings.priority, true) ?? 0;
     const bribe = parseNumeric(sellSettings.bribe, true) ?? 0;
-    const result = quickSell(token.id, usdToSol(targetUsd), {
+    const targetSol = usdToSol(targetUsd);
+    // This display-derived size is converted to whole lamports before submitting.
+    const amountSol = engineVersion === 'v2' ? Math.ceil(targetSol * 1e9) / 1e9 : targetSol;
+    const result = quickSell(token.id, amountSol, {
       slippagePct: slippage,
       prioritySol: priority,
       bribeSol: bribe,

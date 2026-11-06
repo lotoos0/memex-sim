@@ -1,7 +1,7 @@
+import { useTokenStore, useTradingStore, displayNowMs } from '../../tokens/sessionBinding';
 import { useMemo, useState } from 'react';
 import { Funnel, RefreshCcw, User } from 'lucide-react';
-import { useTokenStore } from '../../store/tokenStore';
-import { selectQuickTradesByTokenId, useTradingStore } from '../../store/tradingStore';
+import { selectQuickTradesByTokenId } from '../../store/tradingStore';
 
 const SOL_PRICE_USD = 150;
 
@@ -43,7 +43,7 @@ function fmtUsd(v: number): string {
 
 function fmtAgo(tsMs: number): string {
   if (!Number.isFinite(tsMs) || tsMs <= 0) return '-';
-  const dMs = Math.max(0, Date.now() - tsMs);
+  const dMs = Math.max(0, displayNowMs() - tsMs);
   if (dMs < 60_000) return Math.round(dMs / 1000) + 's';
   if (dMs < 3_600_000) return Math.round(dMs / 60_000) + 'm';
   return Math.round(dMs / 3_600_000) + 'h';

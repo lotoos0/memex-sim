@@ -1,11 +1,9 @@
+import { useTokenStore, useTradingStore, displayNowMs } from '../../tokens/sessionBinding';
+import { executionLabel } from '../../engineV2/projections';
 import { useMemo } from 'react';
 import { Activity, Clock3, Wallet } from 'lucide-react';
-import { useTokenStore } from '../../store/tokenStore';
-import {
-  selectLastQuickExecutionByTokenId,
-  selectQuickPositionSummaryByTokenId,
-  useTradingStore,
-} from '../../store/tradingStore';
+import { selectLastQuickExecutionByTokenId,
+  selectQuickPositionSummaryByTokenId } from '../../store/tradingStore';
 import { usdToSol } from '../../store/walletStore';
 
 type DisplayUnit = 'usd' | 'sol';
@@ -49,7 +47,7 @@ function fmtQty(v: number): string {
 
 function fmtAgo(tsMs: number): string {
   if (!Number.isFinite(tsMs) || tsMs <= 0) return '-';
-  const dMs = Math.max(0, Date.now() - tsMs);
+  const dMs = Math.max(0, displayNowMs() - tsMs);
   if (dMs < 1_000) return `${Math.round(dMs)}ms`;
   if (dMs < 60_000) return `${Math.round(dMs / 1_000)}s`;
   if (dMs < 3_600_000) return `${Math.round(dMs / 60_000)}m`;
@@ -194,7 +192,7 @@ export default function PositionsTab({ tokenId, displayUnit }: Props) {
                   <div className="flex items-center justify-between">
                     <span className="text-ax-text-dim">Status</span>
                     <span className={executionStatusTone(lastExecution.status)}>
-                      {lastExecution.status.toUpperCase()}
+                      {executionLabel(lastExecution, true)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">

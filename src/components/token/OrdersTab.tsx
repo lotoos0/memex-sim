@@ -1,12 +1,12 @@
+import { useTradingStore, displayNowMs } from '../../tokens/sessionBinding';
+import { executionLabel, type V2Execution } from '../../engineV2/projections';
 import { useMemo } from 'react';
 import { ListOrdered } from 'lucide-react';
-import {
-  selectQuickOrderPanelStateByTokenId,
-  useTradingStore,
+import { selectQuickOrderPanelStateByTokenId,
   type QuickLimitOrder,
+  type QuickExecutionSnapshot,
   type QuickOrderAuditRow,
-  type QuickPendingOrder,
-} from '../../store/tradingStore';
+  type QuickPendingOrder } from '../../store/tradingStore';
 import { usdToSol } from '../../store/walletStore';
 
 type DisplayUnit = 'usd' | 'sol';
@@ -62,7 +62,7 @@ function fmtQty(v: number): string {
 
 function fmtAgo(tsMs: number): string {
   if (!Number.isFinite(tsMs) || tsMs <= 0) return '-';
-  const dMs = Math.max(0, Date.now() - tsMs);
+  const dMs = Math.max(0, displayNowMs() - tsMs);
   if (dMs < 1_000) return `${Math.round(dMs)}ms`;
   if (dMs < 60_000) return `${Math.round(dMs / 1_000)}s`;
   if (dMs < 3_600_000) return `${Math.round(dMs / 60_000)}m`;
@@ -282,7 +282,7 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
                 <span>Price / Cost</span>
                 <span>Age</span>
               </div>
-              {panelState.executions.map((execution) => (
+              {panelState.executions.map((execution: QuickExecutionSnapshot & Partial<V2Execution>) => (
                 <div
                   key={`${execution.orderId}-${execution.tsMs}`}
                   className="grid grid-cols-[58px_92px_92px_82px_68px_1fr_56px] gap-2 border-b border-ax-border/40 py-1 text-[11px]"
@@ -297,10 +297,16 @@ export default function OrdersTab({ tokenId, displayUnit }: Props) {
                   </span>
                   <span className="text-ax-text">{fmtQty(execution.actualOut)}</span>
                   <span className="text-ax-text">{fmtQty(execution.expectedOut)}</span>
-                  <span className={statusClass(execution.status)}>{execution.status.toUpperCase()}</span>
+                  <span className={statusClass(execution.status)}>{executionLabel(execution, true)}</span>
                   <span className="text-ax-text">
                     <div>{Number.isFinite(execution.avgPriceUsd) ? fmtMoney(execution.avgPriceUsd as number) : '-'}</div>
-                    <div className="text-[10px] text-ax-text-dim">Fee {fmtSol(execution.txCostSol)} SOL</div>
+                    <div className="text-[10px] text-ax-text-dim">{execution.v2Status ? 'Transaction fee' : 'Fee'} {execution.v2Status ? execution.txCostSol.toFixed(9) : fmtSol(execution.txCostSol)} SOL</div>
+                    {execution.v2Status === 'PARTIAL_CLOSED' && (
+                      <div className="text-[10px] text-ax-text-dim">
+                        Used {fmtQty(execution.consumedInput ?? 0)} / refunded {fmtQty(execution.refundedInput ?? 0)}
+                        {' '}{execution.side === 'buy' ? 'SOL' : 'tokens'}
+                      </div>
+                    )}
                   </span>
                   <span className="text-ax-text-dim">{fmtAgo(execution.tsMs)}</span>
                 </div>
@@ -392,7 +398,7 @@ function AuditTrailRow({
     <div className="grid grid-cols-[56px_88px_110px_110px_1fr_128px] gap-2 border-b border-ax-border/40 py-1 text-[11px] last:border-b-0">
       <span className={row.side === 'buy' ? 'text-ax-green' : 'text-ax-red'}>{row.side.toUpperCase()}</span>
       <span>
-        <span className={statusChipClass(row.status)}>{row.status}</span>
+        <span className={statusChipClass(row.status)}>{executionLabel(row)}</span>
       </span>
       <span className="text-ax-text">{requested}</span>
       <span className="text-ax-text">{limit}</span>

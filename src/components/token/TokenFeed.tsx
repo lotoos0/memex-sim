@@ -1,6 +1,5 @@
+import { useTokenStore, usePostStore } from '../../tokens/sessionBinding';
 import { useMemo, useState } from 'react';
-import { usePostStore } from '../../store/postStore';
-import { useTokenStore } from '../../store/tokenStore';
 
 interface Props {
   tokenId: string;

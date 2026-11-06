@@ -1,10 +1,9 @@
+import { useTokenStore, useTradingStore } from '../../tokens/sessionBinding';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Star } from 'lucide-react';
 import HoverTooltip from '../ui/HoverTooltip';
 import { useFavoritesStore } from '../../store/favoritesStore';
-import { useTokenStore } from '../../store/tokenStore';
-import { useTradingStore } from '../../store/tradingStore';
 import SubHeaderTokenPill from './SubHeaderTokenPill';
 
 const PREVIEW_LIMIT = 5;

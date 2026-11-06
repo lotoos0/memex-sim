@@ -1,8 +1,8 @@
+import { useTokenStore } from '../tokens/sessionBinding';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Eye } from 'lucide-react';
 import HoverTooltip from '../components/ui/HoverTooltip';
-import { useTokenStore } from '../store/tokenStore';
 import TokenColumn, { type PulseColumnFilters } from '../components/pulse/TokenColumn';
 import PulseFiltersModal from '../components/pulse/PulseFiltersModal';
 import {

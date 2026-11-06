@@ -1,7 +1,8 @@
+import { useWalletStore } from '../../tokens/sessionBinding';
 import { Link } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { useState } from 'react';
-import { useWalletStore, solToUsd } from '../../store/walletStore';
+import { solToUsd } from '../../store/walletStore';
 import SearchOverlay from './SearchOverlay';
 
 export default function Header() {
