@@ -194,3 +194,82 @@ Kolejność G6: kolejność wewnątrz `mint` w obrębie `slot`. Kolejność glob
 - **Dane:** PASS, jeśli wszystkie kryteria są PASS w obu godzinach. FAIL, jeśli którekolwiek kryterium jest FAIL w którejkolwiek godzinie. W pozostałych przypadkach INCONCLUSIVE.
 - **Licencja:** nie jest mierzalna z danych. Strona Shrine nie podaje licencji ani regulaminu. Bez pisemnego warunku użycia werdykt końcowy to najwyżej „PASS technicznie, licencja nieustalona”, a nie bezwarunkowy PASS.
 - Dwie godziny z jednej doby nie dowodzą stabilności na innych dniach (D1/D2). Werdykt dotyczy wyłącznie przydatności Shrine jako źródła o zbadanych własnościach, nie tego, że D1 i D2 będą kompletne.
+
+## Wynik końcowej walidacji (2026-11-06)
+
+Wykonane na kryteriach zamrożonych w commicie `aa65b4d`, bez zmian progów. Godzina 12:00 UTC: pliki Shrine 12 i 13. Godzina 01:00 UTC: pliki 01 i 02. Real C: shard 1 i shard 0 (lokalne), przejścia rezerw liczone na wszystkich shardach doby. Pobrano 3 pliki (792 952 014 B, rozmiary zgodne z zapowiedzią); razem z plikiem 12 w tej bramce 1 002 948 097 B (ok. 1,0 GB). Pliki: `output/shrine-gate/raw/`, tabele: `output/shrine-gate/work/final.duckdb`, wyniki: `work/final-h12.out`, `work/final-h01.out`. Skrypt SQL był parametryzowany szablonem w katalogu roboczym sesji (nie dodano go do repo).
+
+### Populacje
+
+| | 12:00 | 01:00 |
+|---|---|---|
+| Real C, wiersze krzywej SOL, STANDARD | 98 382 | 83 210 |
+| Real C, MAYHEM (mintów) | 64 964 (886) | 55 568 (654) |
+| Shrine, nogi STANDARD | 102 832 | 86 062 |
+| Shrine, nogi MAYHEM | 66 982 | 57 356 |
+
+### Granica plików godzinowych (opóźnienie odbioru względem czasu bloku)
+
+| | 12:00 | 01:00 |
+|---|---|---|
+| Nogi w oknie, które trafiły do pliku H+1 | 7 (wszystkie w ostatnich 3 s) | 5 (wszystkie w ostatnich 3 s) |
+| Wiersze w pliku H z czasem bloku przed H | 16 | 14 |
+| `localTimestamp` − `timestamp`: mediana / p99 / p99,9 / maks. | 0,84 / 1,44 / 1,61 / 1,90 s | 0,86 / 1,55 / 2,69 / 3,86 s |
+| Sygnatury w obu plikach (duplikaty na granicy) | 0 | 0 |
+
+Opóźnienie bywa dłuższe niż 2 s (do 3,86 s w godzinie 01:00), więc obcinanie okna po 2 s, użyte w pierwszej wersji bramki, było za wąskie. Plik H+1 jest potrzebny, ale ratuje tylko kilka zdarzeń na godzinę; plik H nie zawiera duplikatów z H+1.
+
+### Kryteria
+
+| ID | 12:00 | wynik | 01:00 | wynik |
+|---|---|---|---|---|
+| G1 Real STANDARD bez odpowiednika | 34 z 98 382 = 0,0346% (sam plik 12: 41) | PASS | 21 z 83 210 = 0,0252% (sam plik 01: 24) | PASS |
+| G1b Shrine STANDARD jednonogowe bez odpowiednika | 0 z 85 104 | PASS | 3 z 79 894 = 0,0038% | PASS |
+| G2 dokładna zgodność kwoty i tokenów (jednonogowe) | 85 096 z 85 104 = 99,991% | PASS | 79 894 z 79 894 = 100% | PASS |
+| G3 rezerwy po transakcji w granicy 1 jednostki | 85 096 z 85 096 = 100% | PASS | 79 894 z 79 894 = 100% | PASS |
+| G4 przejścia rezerw w Real C STANDARD | 97 142 z 97 148 = 99,994% | PASS | 81 659 z 81 676 = 99,979% | PASS |
+| G5 rozpoznawalność wielonogowych | 93 901 z 98 348 = 95,478% | INCONCLUSIVE | 80 343 z 83 189 = 96,579% | INCONCLUSIVE |
+| G5b udział wierszy w wielonogowych | 8 803 z 98 382 = 8,948% | PASS | 452 z 83 210 = 0,543% | PASS |
+| G6 kolejność per `mint` | rozstrzygnięte 13 683 z 13 694 = 99,92%, błędnych 0 z 13 682 | PASS | rozstrzygnięte 13 565 z 13 575 = 99,926%, błędnych 0 z 13 565 | PASS |
+
+Uwagi do liczb:
+- G1: wszystkie niedopasowane wiersze Real C leżą w wnętrzu godziny, nie w pierwszych ani ostatnich 3 s. To zdarzenia, których nie ma w żadnym z dwóch plików Shrine, a nie efekt granicy. Plik H+1 usunął z listy 7 (12:00) i 3 (01:00) wierszy.
+- G2, godzina 01:00: mianownik „słabego klucza” dał 79 891 (czyli 100,004%), bo 3 nogi jednonogowe sąsiadują w grupie z nogą wielonogową i zajęły jej parę. Wszystkie 79 894 nogi mają dokładną parę, więc podaję 100%. Ten sam efekt tłumaczy 3 z G1b.
+- G5: w obu godzinach 100% rozbieżności to przypadki „Real C ma jeden wiersz, Shrine ma więcej nóg” (4 447 i 2 846). Przypadków odwrotnych: 0. Przyczyną są transakcje dwunogowe, w których druga noga Shrine nie jest wykonanym swapem (hipoteza z poprzedniej sekcji). Analiza poza rejestracją (post hoc, nie zmienia werdyktu): przy regule „Shrine ma więcej niż 2 nogi” zgodność wynosi 99,817% (12:00) i 99,602% (01:00).
+- G6: grupy zawierające transakcje wielonogowe (3 645 i 2 455) są wyłączone z mianownika zgodnie z rejestracją.
+
+### MAYHEM (osobno, bez PASS/FAIL)
+
+| | 12:00 | 01:00 |
+|---|---|---|
+| Wiersze Real C z odpowiednikiem w Shrine | 64 964 z 64 964 (100%) | 55 564 z 55 568 (99,993%) |
+| Nogi Shrine w transakcjach wielonogowych | 4 036 z 66 982 | 3 584 z 57 356 |
+| Przejścia rezerw z poprzednikiem | 64 260 | 55 085 |
+| Rezerwa tokenów zgodna | 64 260 (100%) | 55 085 (100%) |
+| Rezerwa SOL zgodna | 25 482 (39,7%) | 22 073 (40,1%) |
+
+Zjawisko z poprzedniej diagnozy powtarza się w drugiej godzinie, z podobną skalą: rezerwa tokenów zawsze zgodna, rezerwa SOL w ok. 40% przejść. Mechanizm nadal niewyjaśniony. MAYHEM nie wchodzi do benchmarku STANDARD.
+
+### Werdykt końcowy: INCONCLUSIVE
+
+Według zamrożonych kryteriów: 7 z 8 kryteriów PASS w obu godzinach, G5 INCONCLUSIVE w obu (zakres 95–99%, żadnego FAIL). Wynik nie jest „PASS”, bo kryterium rozpoznawalności transakcji wielonogowych nie osiągnęło 99%.
+
+Co jest ustalone dla tokenów STANDARD i transakcji jednonogowych (około 90–99% wierszy, zależnie od godziny): kwota bez opłat, liczba tokenów i obie rezerwy po transakcji są identyczne z Real C; zbiór zdarzeń jest niemal kompletny (utrata 0,025–0,035%); kolejność w obrębie `mint` jest odtwarzalna bez błędu w 99,9% grup kwalifikujących się. Brak odpowiednika dotyczy zdarzeń, które nie występują w żadnym pliku, nie granicy plików.
+
+Czego nie ustalono:
+- Znaczenia drugiej nogi w transakcjach dwunogowych (hipoteza „parametry instrukcji” niezweryfikowana, brak surowych danych instrukcji). Test hipotezy wykonano na godzinie 12:00; w 01:00 nie powtarzano.
+- Mechanizmu skoków rezerwy SOL w MAYHEM.
+- Kolejności globalnej między mintami w obrębie `slot` (nie jest wymagana w kryteriach).
+- Licencji Shrine. Strona nie podaje licencji ani regulaminu. Bez pisemnej zgody werdykt najwyżej „INCONCLUSIVE technicznie, licencja nieustalona” dla użycia w repozytorium.
+
+### Ograniczenia
+
+- Dwie godziny z jednej doby (2026-10-15). To nie dowodzi stabilności na D1/D2 (22 i 29 października) ani na innych reżimach rynku.
+- Klasyfikacja STANDARD używa etykiet Shrine (brak wiersza `PUMPFUN_MAYHEM` w plikach godziny), więc jest częściowo zależna od ocenianego źródła. Mint, który wchodzi w fazę MAYHEM po godzinie, a wcześniej był STANDARD, trafia do STANDARD w tej godzinie. G4 (99,979–99,994%) pokazuje, że wyciek jest mały, ale nie zero.
+- G1 mierzy zgodność z Real C. Jeśli oba źródła pomijają to samo zdarzenie (np. transakcje nierozpoznane przez obu dekoderów), ta bramka tego nie wykryje.
+- Sprawdzenie rezerw na wszystkich shardach doby dotyczy Real C; Shrine nie ma niezależnego odpowiednika bez `idx`.
+- Zmiana kryterium G5 po fakcie (na przykład „więcej niż 2 nogi”) wymaga nowej rejestracji i nowej godziny; wynik post hoc z tej bramki nie może jej zastąpić.
+
+### Rekomendacja
+
+Shrine jest wiarygodnym źródłem dla tokenów STANDARD w transakcjach jednonogowych, ale formalny werdykt pozostaje INCONCLUSIVE. Aby go zamknąć bez nadinterpretacji: (1) zarejestrować przed następnym pobraniem poprawione kryterium dla transakcji dwunogowych (np. wykluczenie wszystkich transakcji Shrine z `nlegs>1` z kohorty głównej i raportowanie ich odrębnie), (2) zweryfikować je na trzeciej godzinie Real C, (3) uzyskać pisemną informację o licencji. Dni D1 i D2 pozostają niepobrane i niezamrożone poza datami z reguły.
