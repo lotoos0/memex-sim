@@ -514,15 +514,15 @@ export default function Chart({ tokenId }: Props) {
         color: c.close >= c.open ? '#00d4a136' : '#ff4d6a36',
       }));
 
-      if (candleData.length > 0) {
-        lastCandleCountRef.current = candleData.length;
-        cs.setData(candleData);
-        vs.setData(volData);
+      lastCandleCountRef.current = candleData.length;
+      cs.setData(candleData);
+      vs.setData(volData);
 
-        if (!initialized) {
-          applyDefaultViewport(candleData.length);
-          initialized = true;
-        }
+      if (candleData.length === 0) {
+        initialized = false;
+      } else if (!initialized) {
+        applyDefaultViewport(candleData.length);
+        initialized = true;
       }
     });
 
