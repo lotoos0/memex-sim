@@ -1,4 +1,8 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+
+/* Runtime exports may sit beside the app and are not class sources. */
+@source "./";
+@source "../index.html";
 
 @theme {
   --color-ax-bg:        #0a0a0f;
