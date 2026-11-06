@@ -1,9 +1,13 @@
 # Shrine STANDARD converter
 
+> **Calibration warning:** The admitted Shrine cohort is selective. Exclusions
+> vary by hour, trade side, trade size, and curve stage. This cohort is **not an
+> approved source for direct Engine V2 calibration**.
+
 This offline converter audits the 01:00 and 12:00 UTC windows on 2026-10-15 against
 Real C. It uses the local Shrine files for each hour and its following hour, then
 applies a half-open window to the source block timestamp. The published
-[Shrine source gate](https://github.com/lotoos0/memex-sim/blob/df82b31/docs/calibration/shrine-source-gate.md)
+[Shrine source gate](../shrine-source-gate.md)
 defines the windows and remains `INCONCLUSIVE`. See [quality report](quality-report.md)
 for the measured coverage and selection bias.
 
