@@ -33,7 +33,7 @@ Real uses the existing standard-K noninstant path analysis. V1 uses the measured
 
 V2 uses `ae83b794c6fe96d989b1fa8b307f7530f764a369`, Windows x64 and Node 22.18.0. Run `npm run qa:engine-v2:benchmark` to regenerate the pilot. It runs `V2-PILOT-A…F` in each of three variants, one hour of births and another 30 minutes of follow-up. Each world has 100 agents and a fixed civil epoch of 2026-10-25 09:00 UTC. The summary records source and tape SHA-256 values and each world manifest. NDJSON records births, fills, pre/post reserves and progress, fee-exclusive quote, fees, order IDs and rejections before any UI cap. The pilot pools counts within each variant and gives per-seed ranges where indicated. The independent units for uncertainty are worlds and market days.
 
-| 1,800 s pre-migration horizon | Real C | V1 A | V2 OFF | V2 ON | V2 ON, fixed launches |
+| 1.800 s pre-migration horizon | Real C | V1 A | V2 OFF | V2 ON | V2 ON, fixed launches |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | All births | 36,037 | 6,000 | 628 | 646 | 628 |
 | Quiet births | 2,204 | 1,272 | 423 | 458 | 420 |
@@ -57,7 +57,35 @@ The six ON worlds advanced 5,400 simulated seconds each in 5.50–8.32 wall seco
 ## Limits and RFC departures
 
 - The demo uses one authored scenario and lightweight strategy heuristics. Author reputation learning, broader catalog variation and empirical social calibration remain open. The initial epoch and thresholds are scenario choices. The calendar is simplified and browser session overrides map to quiet or busy policy tempo.
-- Dormant timers are sparse and records survive inactivity. The full journal and projection histories are retained in RAM. The RFC's storage-backed cold history, bounded hot-memory recording, checkpoint durability and storage-quota handling are not implemented. Checkpoint, rerun and playback are programmatic interfaces, with no product Replay UI or browser session persistence.
+- Dormant timers are sparse and records survive inactivity. The browser keeps the full journal and projections in RAM until the recording cutoff described below. The RFC's storage-backed cold history, automatic checkpoint durability and storage-quota handling remain open. The browser exports a checkpoint at the cutoff. Restore, rerun and playback use programmatic interfaces.
 - Playback reconstructs markets, balances, orders and views. Agent policy memory and pending timers require a full checkpoint. No general fork from a playback cursor is provided. Hash parity is tested for the pinned fixture on Node and Edge.
 - The compatibility UI uses existing numeric input controls before converting decimal representations to atoms. Legacy execution rows carry a V2 status extension for partial, expiry and cancel. Terminal UI can retain last-known mark values. Complete unavailable-valuation styling for terminal positions remains open.
 - The pilot is diagnostic. The export and report cover core cohorts, event and second-bin exposure, first80, streaks, concentration, drawdowns and reversals. Full §14 joint stratification, pooled path quantiles for every V2 variant, resampling intervals, D1/D2, and production-scale browser memory, GC and commit-latency profiling remain open.
+
+## PR #76 pre-merge hardening
+
+The original late-fault test failed at `TradeExecuted`. Balances, cost basis and order status had changed before the corresponding market facts were committed. The kernel now journals the financial, order, market and feedback writes for the event, stages its facts and new tasks, and publishes the clock boundary on success. A failure restores the tentative writes, sequence and popped task and discards the uncommitted facts and tasks. The run halts on a fault.
+
+The same settlement test now passes after injected faults at `TradeExecuted`, at `MarketUpdated` after the market reached pool epoch, and after the first append to the log. The test compares the entire world state and log against their pre-settlement values and checks the pending count, clock and ledger conservation. Existing fee and curve math are the reference.
+
+The browser stops V2 at the first of four thresholds. The limits are 160,000 committed facts, 8,192 pending tasks, 1,024 recorded commands and 20 simulated minutes. These are retained-record limits for the fixed browser world, with up to one complete task or ingress at the boundary. The clock, order reservations, pending queue, facts and rolling windows remain at the boundary. New commands and resume are rejected. The stopped view offers a JSON checkpoint containing the full log and pending queue. Export is on demand and creates a temporary serialization allocation. Longer sessions require durable recording beyond this cutoff.
+
+In the accelerated Edge cutoff probe, the first limit was 160,000 facts at 212.534 simulated seconds. The recording held 14,385 fills and 3,001 pending tasks. The downloaded checkpoint was 168,191,430 bytes and took 1.98 wall seconds to export and save. Node restored it with state hash `e1737c3ea6665072` and log hash `8e74ae5946fcc20d`. Replayed ORBIT data matched the stopped UI with 286 buys and 193 sells over 60 seconds and $228,560.56794764995 in five-minute volume.
+
+V2 QA, TypeScript, build, lint and V1 OHLC, DEAD-floor and quick-limit regressions passed. The Node and Edge deterministic fixture retained state hash `f8092dfbdd7be89f` and log hash `edd06a22c30a0ffe`. A separate 90 SOL Edge buy reached `PARTIAL_CLOSED` and rendered one migration marker. Replaying the recorded UI ingress in Node matched state `679795d387b2c40f` and log `9f281d44432c36b0`.
+
+### Browser soak at 1×
+
+Playwright CLI drove Edge 156.0.4314.58 against the local Vite app on Windows. A fresh V2 world ran at normal pacing for 212.534 simulated seconds, then the fact budget stopped it. The same page was observed for 14 wall minutes. The check sampled renderer JS heap via CDP, the summed working set of the Edge process tree, the UTF-8 size of the complete normalized NDJSON fact history, pending queue length, and projected fills. Search latency measures click to visible search field. Each frame p95 is from 30 consecutive animation frames. The working-set sum can count shared pages more than once. The first working-set sample is omitted because it overlapped startup of the V1 regression browser.
+
+| Wall time (s) | Sim time (s) | Fills | Facts | Log NDJSON (MiB) | Pending | JS heap (MiB) | Edge working set (MiB) | Search (ms) | Frame p95 (ms) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2.6 | 3.805 | 30 | 699 | 0.41 | 323 | 17.1 | — | 29 | 5.6 |
+| 62.6 | 63.603 | 3240 | 33083 | 20.89 | 1761 | 32.5 | 623.6 | 29 | 5.6 |
+| 182.9 | 183.605 | 12382 | 134567 | 80.64 | 2784 | 87.7 | 766.6 | 34 | 5.7 |
+| 362.4 | 212.534 | 14385 | 160000 | 94.75 | 3001 | 71.8 | 637.8 | 32 | 5.6 |
+| 542.3 | 212.534 | 14385 | 160000 | 94.75 | 3001 | 72.5 | 611.9 | 29 | 5.6 |
+| 722.2 | 212.534 | 14385 | 160000 | 94.75 | 3001 | 73.5 | 611.7 | 25 | 5.6 |
+| 842.1 | 212.534 | 14385 | 160000 | 94.75 | 3001 | 73.7 | 613.3 | 25 | 5.7 |
+
+After the cutoff, the clock, fill count, history bytes, queue and revision held constant. Search opened and dismissed successfully in every sample. The browser console reported the dev favicon 404. The trial covers one normal-pacing default world and the stopped view. The accelerated probe exercised download and restore separately. A fresh Edge session without an engine selection displayed V1.
