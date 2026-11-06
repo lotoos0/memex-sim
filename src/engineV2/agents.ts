@@ -4,6 +4,7 @@ import type { Ledger } from './ledger';
 import type { RngStreams } from './rng';
 
 export const AGENT_VERSION = 'bounded-rotation-2';
+export const SELL_FEE_RESERVE = 1000n * BASE_FEE;
 export type Agent = {
   id: string;
   strategy: 'momentum' | 'contrarian' | 'creator';
@@ -34,7 +35,7 @@ export function observe(agent: Agent, view: PublicMarket, evidence: string) {
 }
 
 export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngStreams,
-  narrativeOf: (tokenId: string) => string | undefined): Intent | null {
+  narrativeOf: (tokenId: string) => string | undefined, protectedBuySol = 0n): Intent | null {
   const draw = (exclusive: number) => rng.int('agent/decision', agent.id, AGENT_VERSION, exclusive);
   const candidates = Object.values(agent.known).filter(item => item.view.tradable);
   if (!candidates.length || draw(100) < 45) return null;
@@ -71,6 +72,7 @@ export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngS
     return { ...base, side: 'SELL', inputTokens: tokens * BigInt(1 + draw(4)) / 4n || tokens, minOutputSol: null };
   }
   if (cash <= 0n) return null;
-  const size = minAtoms(cash, SOL * BigInt(1 + draw(15)) / 10n);
+  const size = minAtoms(cash - protectedBuySol, SOL * BigInt(1 + draw(15)) / 10n);
+  if (size <= 0n) return null;
   return { ...base, side: 'BUY', maxInputSol: size, minOutputTokens: null };
 }
