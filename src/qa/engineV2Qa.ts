@@ -172,6 +172,30 @@ function orderAndMigrationGate() {
   console.log('PASS shared cash, finishing partial, pool buy/sell, migration causality, trigger/cancel/terminal, recorded playback');
 }
 
+function priceCrossingGate() {
+  const world = fixture();
+  const market = world.state.markets[FIRST];
+  const initial = spot(market, reserves(world.ledger, market));
+  submit(world, 'raise', buy(world, SOL));
+  world.advanceTo(350);
+  const policy: Policy = {
+    kind: 'TRIGGER_MARKET', trigger: 'LTE',
+    price: { ...initial, quoteAtoms: initial.quoteAtoms * 101n / 100n }, slippageBps: 500,
+  };
+  const order = submit(world, 'below-spot', buy(world, SOL, FIRST, null, policy));
+  equal(world.state.orders[order].status, 'OPEN', 'Below-spot trigger starts open');
+  submit(world, 'lower', sell(world, world.ledger.balance(USER, FIRST).available));
+  world.advanceTo(700);
+  equal(world.state.orders[order].status, 'QUEUED', 'Price crossing queues original order');
+  equal(world.ledger.balance(USER).reserved, SOL + BASE_FEE, 'Crossing reuses the original reservation');
+  world.advanceTo(1050);
+  equal(world.state.orders[order].status, 'FILLED', 'Crossed trigger settles at eligibility');
+  equal(world.kernel.log.filter(fact => fact.kind === 'TradeExecuted' && fact.payload.fill.orderId === order).length,
+    1, 'Crossed trigger fills once');
+  verifyLedger(world);
+  console.log('PASS below-spot trigger crosses on a committed trade without a second reservation');
+}
+
 function expiryAndFaultGate() {
   const world = fixture();
   const buyCommand = buy(world, 100n * SOL) as Extract<Command, { kind: 'submit' }>;
@@ -258,6 +282,7 @@ equal(decimalAtoms('0.1000000001', 9), null, 'Excess precision rejected');
 equal(decimalAtoms('1e-9', 9), 1n, 'One lamport');
 financialGate();
 orderAndMigrationGate();
+priceCrossingGate();
 expiryAndFaultGate();
 export const deterministicHashes = determinismGate();
 console.log(JSON.stringify(deterministicHashes));

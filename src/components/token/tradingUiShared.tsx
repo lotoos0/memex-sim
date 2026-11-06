@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { executionLabel as executionStatusLabel } from '../../engineV2/projections';
 import { RefreshCcw } from 'lucide-react';
 import type { QuickTradingUiState } from '../../store/tradingStore';
 import {
@@ -18,7 +19,7 @@ function lifecycleLabel(uiState: QuickTradingUiState): string {
 
 function executionLabel(uiState: QuickTradingUiState): string {
   if (!uiState.lastExecution) return 'No execution';
-  return uiState.lastExecution.status === 'filled' ? 'Last execution filled' : 'Last execution failed';
+  return `Last execution ${executionStatusLabel(uiState.lastExecution)}`;
 }
 
 function executionTone(uiState: QuickTradingUiState): string {
