@@ -1,3 +1,4 @@
+import { useTokenStore, useTradingStore, displayNowMs, registry, getMigrationReference } from '../../tokens/sessionBinding';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChart,
@@ -12,17 +13,14 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import { registry, type ChartMetric } from '../../tokens/registry';
+import type { ChartMetric } from '../../tokens/registry';
 import type { Candle } from '../../engine/types';
 import { SUPPLY } from '../../tokens/types';
-import { useTokenStore, selectMarketSessionBucket } from '../../store/tokenStore';
-import {
-  useTradingStore,
-  selectAvgEntryPriceByTokenId,
+import { selectMarketSessionBucket, type useTokenStore as v1Tokens } from '../../store/tokenStore';
+import { selectAvgEntryPriceByTokenId,
   selectAvgEntryMcapByTokenId,
   selectAvgSellPriceByTokenId,
-  selectAvgSellMcapByTokenId,
-} from '../../store/tradingStore';
+  selectAvgSellMcapByTokenId } from '../../store/tradingStore';
 import type { TokenChartEvent } from '../../chart/tokenChartEvents';
 import { toSeriesMarkers, type DisplayOptions } from '../../chart/tokenChartEvents';
 import HoverTooltip from '../ui/HoverTooltip';
@@ -139,7 +137,7 @@ export default function Chart({ tokenId }: Props) {
   const lastCandleCountRef = useRef(0);
 
   const selectTokenEvents = useCallback(
-    (s: ReturnType<typeof useTokenStore.getState>) => s.eventsByTokenId[tokenId] ?? EMPTY_EVENTS,
+    (s: ReturnType<typeof v1Tokens.getState>) => s.eventsByTokenId[tokenId] ?? EMPTY_EVENTS,
     [tokenId]
   );
   const selectAvgEntryPrice = useMemo(() => selectAvgEntryPriceByTokenId(tokenId), [tokenId]);
@@ -154,7 +152,7 @@ export default function Chart({ tokenId }: Props) {
   const avgSellMcap = useTradingStore(selectAvgSellMcap);
   const migrationMcap = useMemo(() => {
     const migration = tokenEvents.find((event) => event.type === 'MIGRATION');
-    return migration?.mcap ?? registry.getTokenSim(tokenId)?.getMigrationReferenceMcapUsd() ?? null;
+    return migration?.mcap ?? getMigrationReference(tokenId) ?? null;
   }, [tokenId, tokenEvents]);
   const migrationPrice = useMemo(() => (migrationMcap ?? 0) / SUPPLY, [migrationMcap]);
 
@@ -516,15 +514,15 @@ export default function Chart({ tokenId }: Props) {
         color: c.close >= c.open ? '#00d4a136' : '#ff4d6a36',
       }));
 
-      if (candleData.length > 0) {
-        lastCandleCountRef.current = candleData.length;
-        cs.setData(candleData);
-        vs.setData(volData);
+      lastCandleCountRef.current = candleData.length;
+      cs.setData(candleData);
+      vs.setData(volData);
 
-        if (!initialized) {
-          applyDefaultViewport(candleData.length);
-          initialized = true;
-        }
+      if (candleData.length === 0) {
+        initialized = false;
+      } else if (!initialized) {
+        applyDefaultViewport(candleData.length);
+        initialized = true;
       }
     });
 
@@ -537,7 +535,7 @@ export default function Chart({ tokenId }: Props) {
     const markerApi = markerApiRef.current;
     if (!markerApi) return;
 
-    const minTimeSec = Math.floor((Date.now() - 60 * 60 * 1000) / 1000);
+    const minTimeSec = Math.floor((displayNowMs() - 60 * 60 * 1000) / 1000);
     const markers = toSeriesMarkers(tokenEvents, displayOptions, minTimeSec);
     markerApi.setMarkers(markers);
   }, [tokenEvents, displayOptions]);

@@ -1,6 +1,6 @@
+import { useTokenStore, displayNowMs } from '../../tokens/sessionBinding';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowUpDown, Table2, Zap } from 'lucide-react';
-import { useTokenStore } from '../../store/tokenStore';
 import { usdToSol } from '../../store/walletStore';
 import TokenFeed from './TokenFeed';
 import OrdersTab from './OrdersTab';
@@ -36,7 +36,7 @@ function fmtSol(v: number): string {
 
 function fmtAgo(tsMs: number): string {
   if (!Number.isFinite(tsMs) || tsMs <= 0) return '-';
-  const dMs = Math.max(0, Date.now() - tsMs);
+  const dMs = Math.max(0, displayNowMs() - tsMs);
   if (dMs < 1_000) return `${Math.round(dMs)}ms`;
   if (dMs < 60_000) return `${Math.round(dMs / 1_000)}s`;
   return `${Math.round(dMs / 60_000)}m`;

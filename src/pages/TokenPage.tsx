@@ -1,12 +1,10 @@
+import { useTokenStore, useTradingStore, getCurveDebug } from '../tokens/sessionBinding';
 import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { ArrowLeft, LineChart, Star } from 'lucide-react';
-import {
-  useTokenStore,
-  selectActiveToken,
+import { selectActiveToken,
   selectMarketSessionBucket,
-  selectMarketSessionBucketOverride,
-} from '../store/tokenStore';
+  selectMarketSessionBucketOverride } from '../store/tokenStore';
 import Chart from '../components/chart/Chart';
 import TradeSidebar from '../components/token/TradeSidebar';
 import BottomTabs from '../components/token/BottomTabs';
@@ -14,13 +12,9 @@ import TradesTablePanel from '../components/token/TradesTablePanel';
 import InstantTradePanel from '../components/floating/InstantTradePanel';
 import TokenAvatar from '../components/common/TokenAvatar';
 import HoverTooltip from '../components/ui/HoverTooltip';
-import { registry } from '../tokens/registry';
 import type { CurveDebugSnapshot } from '../tokens/tokenSim';
-import {
-  selectQuickPositionSummaryByTokenId,
-  selectQuickTradesByTokenId,
-  useTradingStore,
-} from '../store/tradingStore';
+import { selectQuickPositionSummaryByTokenId,
+  selectQuickTradesByTokenId } from '../store/tradingStore';
 import { SESSION_BUCKET_LABEL, type SessionBucket } from '../market/session';
 import { useFavoritesStore } from '../store/favoritesStore';
 
@@ -112,8 +106,7 @@ export default function TokenPage() {
       return;
     }
     const update = () => {
-      const sim = registry.getTokenSim(id);
-      setCurveDebug(sim ? sim.getCurveDebugSnapshot() : null);
+      setCurveDebug(getCurveDebug(id));
     };
     update();
     const handle = setInterval(update, 250);

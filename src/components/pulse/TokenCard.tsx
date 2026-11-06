@@ -1,3 +1,4 @@
+import { useTokenStore, useTradingStore, usePostStore } from '../../tokens/sessionBinding';
 import {
   useCallback,
   useEffect,
@@ -19,13 +20,9 @@ import {
   Zap,
 } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
-import {
-  selectTokenAgeLabel,
-  selectTokenTradeFlow60s,
-  useTokenStore,
-} from '../../store/tokenStore';
-import { useTradingStore } from '../../store/tradingStore';
-import { usePostStore, type TokenPost } from '../../store/postStore';
+import { selectTokenAgeLabel,
+  selectTokenTradeFlow60s } from '../../store/tokenStore';
+import { type TokenPost } from '../../store/postStore';
 import { useFavoritesStore } from '../../store/favoritesStore';
 import TokenAvatar from '../common/TokenAvatar';
 import HoverTooltip from '../ui/HoverTooltip';

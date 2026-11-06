@@ -1,8 +1,7 @@
+import { useTokenStore, useTradingStore } from '../../tokens/sessionBinding';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BarChart3, Clock3, LineChart, Search, Zap } from 'lucide-react';
-import { useTokenStore } from '../../store/tokenStore';
-import { useTradingStore } from '../../store/tradingStore';
 import type { TokenState } from '../../tokens/types';
 
 const HISTORY_STORAGE_KEY = 'memex:search:history:v1';

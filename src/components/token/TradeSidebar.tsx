@@ -1,10 +1,9 @@
+import { useTradingStore, engineVersion } from '../../tokens/sessionBinding';
+import { executionLabel } from '../../engineV2/projections';
 import { useEffect, useMemo, useState } from 'react';
 import { Pencil } from 'lucide-react';
 import type { TokenState } from '../../tokens/types';
-import {
-  selectQuickTradingUiStateByTokenId,
-  useTradingStore,
-} from '../../store/tradingStore';
+import { selectQuickTradingUiStateByTokenId } from '../../store/tradingStore';
 import { TradingStateSummary } from './tradingUiShared';
 import {
   fmtPriceUsd,
@@ -81,8 +80,12 @@ export default function TradeSidebar({ token, floating = false }: Props) {
   const quickTradingUiState = useTradingStore(quickTradingUiStateSelector);
 
   useEffect(() => {
-    setLimitPrice(safePrice.toFixed(8));
+    if (engineVersion === 'v1') setLimitPrice(safePrice.toFixed(8));
   }, [safePrice, token.id]);
+
+  useEffect(() => {
+    if (engineVersion === 'v2' && orderType === 'market') setLimitPrice(safePrice.toFixed(8));
+  }, [orderType, safePrice, token.id]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -92,7 +95,8 @@ export default function TradeSidebar({ token, floating = false }: Props) {
   const ctaLabel = useMemo(() => {
     const ticker = token.ticker || 'TOKEN';
     if (orderType === 'limit') {
-      return side === 'buy' ? 'Place Buy Limit' : 'Place Sell Limit';
+      const orderLabel = engineVersion === 'v2' ? 'Trigger' : 'Limit';
+      return side === 'buy' ? 'Place Buy ' + orderLabel : 'Place Sell ' + orderLabel;
     }
     return side === 'buy' ? `Buy ${ticker}` : `Sell ${ticker}`;
   }, [orderType, side, token.ticker]);
@@ -143,7 +147,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
         return;
       }
       setLastQuote(null);
-      setStatusText(`Limit order placed @ ${fmtPriceUsd(parsedLimitPrice)}`);
+      setStatusText(`${engineVersion === 'v2' ? 'Trigger' : 'Limit'} order placed @ ${fmtPriceUsd(parsedLimitPrice)}`);
       return;
     }
     const result =
@@ -374,7 +378,7 @@ export default function TradeSidebar({ token, floating = false }: Props) {
             <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
               <div className="text-ax-text-dim">Last Execution</div>
               <div className={`${statusTone(lastExecution.status)} font-medium`}>
-                {lastExecution.status === 'filled' ? 'Filled' : `Failed${lastExecution.reason ? `: ${lastExecution.reason}` : ''}`}
+                {lastExecution.status === 'filled' || executionLabel(lastExecution) === 'cancelled' || executionLabel(lastExecution) === 'expired' ? (engineVersion === 'v2' ? executionLabel(lastExecution, true) : 'Filled') : `Failed${lastExecution.reason ? `: ${lastExecution.reason}` : ''}`}
               </div>
             </div>
             <div className="rounded border border-ax-border bg-ax-bg/70 p-1.5">
