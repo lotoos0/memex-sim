@@ -19,6 +19,12 @@ try {
     entryPoints: ['src/qa/' + entry + '.ts'], bundle: true, platform: 'node', format: 'esm', outfile, metafile: true,
   });
   const { measure } = await import(pathToFileURL(outfile));
+  if (qa) {
+    const recording = join(tmp, 'recording.mjs');
+    await build({ entryPoints: ['src/qa/engineV2RecordingQa.ts'], bundle: true, platform: 'node', format: 'esm', outfile: recording });
+    const { runRecordingQa } = await import(pathToFileURL(recording));
+    await runRecordingQa();
+  }
   if (!qa) {
     mkdirSync(out, { recursive: true });
     const inputs = Object.keys(bundle.metafile.inputs).sort();

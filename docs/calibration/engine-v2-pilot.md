@@ -1,5 +1,7 @@
 # Engine V2 slice and calibration-day pilot
 
+The [runtime and storage report](engine-v2-runtime-storage.md) covers the successor to the pilot's temporary in-memory recording cutoff.
+
 The implementation branch starts at V1 main `4b976ad94dfe04429ec3e51af188f87dec06b461`. The approved architecture is RFC Rev. 2. The source specifications are copied from the original checkout. V1 remains the default. Start a V2 session with **New session with V2** or `/?engine=v2`. Switching reloads the app and starts a fresh session.
 
 ## Implemented architecture

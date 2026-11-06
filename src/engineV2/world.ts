@@ -32,7 +32,7 @@ export const DEFAULT_WORLD: WorldConfig = {
   social: true, agentDecisions: true, userSol: 100, latencyMs: 350,
   launchUntilMs: 3_600_000, socialLaunches: true,
 };
-type Ingress = { id: string; receivedAt: number; acceptedAt: number; beforeFirstAdvance: boolean; flush: boolean; command: Command };
+export type Ingress = { id: string; receivedAt: number; acceptedAt: number; beforeFirstAdvance: boolean; flush: boolean; command: Command };
 type State = {
   ledger: LedgerState;
   markets: Record<string, Market>;
@@ -416,7 +416,7 @@ export class World {
 
   snapshot(): Snapshot {
     const kernel = this.kernel.snapshot();
-    const state = canonical({ state: this.state, kernel, rng: this.rng.snapshot(), config: this.config } satisfies Checkpoint);
+    const state = this.checkpointData();
     const log = canonical(this.kernel.log);
     const stateHash = checksum(state);
     const logPrefixHash = checksum(log);
@@ -426,6 +426,39 @@ export class World {
       stateHash, logPrefixHash,
       chunks: [{ owner: 'world', version: 1, hash: stateHash, data: state }, { owner: 'log', version: 1, hash: logPrefixHash, data: log }],
     };
+  }
+
+  checkpointData() {
+    return canonical({
+      state: this.state, kernel: this.kernel.snapshot(), rng: this.rng.snapshot(), config: this.config,
+    } satisfies Checkpoint);
+  }
+
+  static fromCheckpoint(data: string, manifest: Manifest) {
+    const checkpoint = readCanonical<Checkpoint>(data);
+    if (canonical(makeManifest(checkpoint.config)) !== canonical(manifest)) {
+      throw new Error('Incompatible recording engine manifest');
+    }
+    const world = new World(checkpoint.config, checkpoint);
+    world.ledger.assertConservation();
+    return world;
+  }
+
+  // The browser archives these before dropping them. It assigns unique, persisted
+  // ingress IDs and only issues cancel commands for orders still open in its UI.
+  pruneRecordedHistory(facts: readonly Committed<FactMap>[]) {
+    for (const fact of facts) {
+      if (fact.kind === 'OrderChanged' && fact.payload.order.finalizedAt !== null) {
+        delete this.state.orders[fact.payload.order.id];
+      }
+      if (fact.kind === 'SocialPublished' && fact.payload.tokenId !== null) {
+        delete this.state.social.posts[fact.payload.post.id];
+      }
+    }
+    for (const item of this.state.ingress) delete this.state.commandResults['command:' + item.id];
+    this.state.ingress.length = 0;
+    this.commandById.clear();
+    this.kernel.log.length = 0;
   }
 
   static restore(snapshot: Snapshot) {
@@ -446,12 +479,16 @@ export class World {
 
   static rerun(config: WorldConfig, ingress: readonly Ingress[], target: number) {
     const world = new World(config);
-    for (const item of ingress) {
-      if (item.receivedAt > world.now || (!world.hasAdvanced && !item.beforeFirstAdvance)) world.advanceTo(item.receivedAt);
-      world.enqueue(item.id, item.command, item.acceptedAt, item.flush);
-      if (item.flush) world.advanceTo(item.receivedAt);
-    }
-    world.advanceTo(target);
+    world.replayIngress(ingress, target);
     return world;
+  }
+
+  replayIngress(ingress: readonly Ingress[], target: number) {
+    for (const item of ingress) {
+      if (item.receivedAt > this.now || (!this.hasAdvanced && !item.beforeFirstAdvance)) this.advanceTo(item.receivedAt);
+      this.enqueue(item.id, item.command, item.acceptedAt, item.flush);
+      if (item.flush) this.advanceTo(item.receivedAt);
+    }
+    this.advanceTo(target);
   }
 }

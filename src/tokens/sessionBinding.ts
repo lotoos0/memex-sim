@@ -49,10 +49,16 @@ export const useSimulationFault = v2
   ? function useEngineV2Fault() { return useStore(v2!.store, state => state.fault); }
   : () => null;
 
-export const useRecordingStop = v2
-  ? function useEngineV2RecordingStop() { return useStore(v2!.store, state => state.recordingStopped); }
+export const useRecordingSaving = v2
+  ? function useEngineV2RecordingSaving() { return useStore(v2!.store, state => state.saving); }
+  : () => false;
+
+export const useRecordingExport = v2
+  ? function useEngineV2RecordingExport() { return useStore(v2!.store, state => state.canExport); }
+  : () => false;
+
+export const useRecordingExportMessage = v2
+  ? function useEngineV2ExportMessage() { return useStore(v2!.store, state => state.exportMessage); }
   : () => null;
 
-export function downloadRecordingCheckpoint() {
-  v2?.downloadCheckpoint();
-}
+export function exportRecording() { void v2?.exportRecording(); }

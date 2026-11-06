@@ -8,9 +8,9 @@ import { FINAL_STRETCH_MIN_BONDING_PCT } from '../tokens/tokenBuckets';
 import { SOL, SUPPLY, TOKEN, outputFloor, type Order, type Spot } from './contracts';
 import type { FactMap, Link, Post } from './events';
 import type { Committed } from './kernel';
-import { Ledger } from './ledger';
+import { Ledger, type LedgerState } from './ledger';
 import { progressPpm, reserves, spot, type Market } from './marketRules';
-import { inputAmount } from './orders';
+import { inputAmount, isPending } from './orders';
 import { USER } from './world';
 
 const SUPPLY_NUMBER = Number(SUPPLY / TOKEN);
@@ -31,11 +31,33 @@ type MarketRead = {
   traders: Record<string, Trader>;
   userTrades: QuickTrade[];
   userFills: Record<string, { output: number; avgPriceUsd: number }>;
+  bars: Candle[];
 };
 export type V2Execution = QuickExecutionSnapshot & {
   v2Status: Order['status']; consumedInput: number; refundedInput: number;
 };
 export type V2Audit = QuickOrderAuditRow & { v2Status: Order['status'] };
+type HotProjection = {
+  markets: Record<string, MarketRead>;
+  userOrders: Record<string, Order>;
+  userPosts: Record<string, Post[]>;
+  narrativePosts: Record<string, Post[]>;
+  audit: Record<string, V2Audit[]>;
+  finalized: Record<string, Order[]>;
+};
+
+function appendBar(rows: Candle[], time: number, value: number, volume: number, initial: number) {
+  const last = rows[rows.length - 1];
+  if (last?.time === time) {
+    last.close = value;
+    last.high = Math.max(last.high, value);
+    last.low = Math.min(last.low, value);
+    last.volume += volume;
+  } else {
+    const open = last?.close ?? initial;
+    rows.push({ time, open, high: Math.max(open, value), low: Math.min(open, value), close: value, volume });
+  }
+}
 
 function outputNumber(side: Order['intent']['side'], atoms: bigint | null) {
   return atoms === null ? 0 : side === 'BUY' ? qty(atoms) : sol(atoms);
@@ -52,31 +74,77 @@ export function executionLabel(value: QuickExecutionSnapshot | QuickOrderAuditRo
 
 // Recorded playback applies committed facts, including the original postings. No policies run here.
 export class RecordedPlayback {
-  readonly ledger = new Ledger();
-  readonly markets: Record<string, MarketRead> = {};
+  readonly ledger: Ledger;
+  readonly markets: Record<string, MarketRead>;
   readonly orders: Record<string, Order> = {};
-  private readonly userOrders: Record<string, Order> = {};
-  private readonly postById: Record<string, Post> = {};
-  private readonly userPosts: Record<string, Post[]> = {};
-  private readonly narrativePosts: Record<string, Post[]> = {};
-  private readonly audit: Record<string, V2Audit[]> = {};
-  private readonly finalized: Record<string, Order[]> = {};
+  private readonly userOrders: Record<string, Order>;
+  private readonly userPosts: Record<string, Post[]>;
+  private readonly narrativePosts: Record<string, Post[]>;
+  private readonly audit: Record<string, V2Audit[]>;
+  private readonly finalized: Record<string, Order[]>;
   private cursor = 0;
 
-  constructor(readonly epoch: number) {}
+  constructor(readonly epoch: number, private readonly hot = false, ledger?: LedgerState, view?: HotProjection) {
+    this.ledger = new Ledger(ledger);
+    this.markets = view?.markets ?? {};
+    this.userOrders = view?.userOrders ?? {};
+    this.userPosts = view?.userPosts ?? {};
+    this.narrativePosts = view?.narrativePosts ?? {};
+    this.audit = view?.audit ?? {};
+    this.finalized = view?.finalized ?? {};
+  }
+
+  hotCheckpoint(): HotProjection {
+    return { markets: this.markets, userOrders: this.userOrders, userPosts: this.userPosts,
+      narrativePosts: this.narrativePosts, audit: this.audit, finalized: this.finalized };
+  }
+
+  append(log: readonly Committed<FactMap>[], now: number) {
+    if (this.consume(log, now, 0) !== log.length) throw new Error('Recording extends beyond the batch clock');
+    if (this.hot) this.compact(now);
+  }
 
   read(log: readonly Committed<FactMap>[], now: number) {
-    while (this.cursor < log.length && log[this.cursor].key.at <= now) {
-      const first = this.cursor;
+    this.cursor = this.consume(log, now, this.cursor);
+  }
+
+  private consume(log: readonly Committed<FactMap>[], now: number, cursor: number) {
+    while (cursor < log.length && log[cursor].key.at <= now) {
+      const first = cursor;
       const commitId = log[first].commitId;
       do {
-        const fact = log[this.cursor];
-        if (fact.factOrdinal !== this.cursor - first || fact.schemaVersion !== 1) {
+        const fact = log[cursor];
+        if (fact.factOrdinal !== cursor - first || fact.schemaVersion !== 1) {
           throw new Error('Invalid recorded commit');
         }
         this.apply(fact);
-        this.cursor++;
-      } while (log[this.cursor]?.commitId === commitId);
+        cursor++;
+      } while (log[cursor]?.commitId === commitId);
+    }
+    return cursor;
+  }
+
+  private compact(now: number) {
+    const cutoff = this.epoch + now - 300_000;
+    for (const [id, market] of Object.entries(this.markets)) {
+      let remove = 0;
+      while (remove < market.trades.length - 120 && market.trades[remove].tMs < cutoff) remove++;
+      if (remove) market.trades.splice(0, remove);
+      if (market.bars.length > 3600) market.bars.splice(0, market.bars.length - 3600);
+      if (market.userTrades.length > 200) market.userTrades.splice(0, market.userTrades.length - 200);
+      if (market.events.length > 1000) {
+        const migration = market.events.find(event => event.type === 'MIGRATION');
+        market.events = market.events.slice(-999);
+        if (migration && !market.events.includes(migration)) market.events.unshift(migration);
+      }
+      const orders = this.finalized[id];
+      if (orders && orders.length > 100) {
+        for (const order of orders.splice(0, orders.length - 100)) delete market.userFills[order.id];
+      }
+      const audit = this.audit[id];
+      if (audit && audit.length > 100) audit.splice(0, audit.length - 100);
+      const posts = this.userPosts[id];
+      if (posts && posts.length > 220) posts.splice(0, posts.length - 220);
     }
   }
 
@@ -90,7 +158,7 @@ export class RecordedPlayback {
       }
       case 'TokenLaunched': {
         const { market, link } = fact.payload;
-        this.markets[market.tokenId] = { market, link, trades: [], events: [], traders: {}, userTrades: [], userFills: {} };
+        this.markets[market.tokenId] = { market, link, trades: [], events: [], traders: {}, userTrades: [], userFills: {}, bars: [] };
         break;
       }
       case 'MarketUpdated':
@@ -98,7 +166,6 @@ export class RecordedPlayback {
         break;
       case 'SocialPublished': {
         const { post, tokenId } = fact.payload;
-        this.postById[post.id] = post;
         if (tokenId) (this.userPosts[tokenId] ??= []).push(post);
         else (this.narrativePosts[post.narrativeId] ??= []).push(post);
         break;
@@ -106,9 +173,10 @@ export class RecordedPlayback {
       case 'OrderChanged': {
         const { order } = fact.payload;
         const { intent, policy } = order;
-        this.orders[order.id] = order;
+        if (!this.hot) this.orders[order.id] = order;
         if (intent.agentId !== USER) break;
-        this.userOrders[order.id] = order;
+        if (this.hot && !isPending(order)) delete this.userOrders[order.id];
+        else this.userOrders[order.id] = order;
         if (order.finalizedAt !== null) (this.finalized[intent.tokenId] ??= []).push(order);
         if (policy.kind === 'TRIGGER_MARKET') {
           const side = intent.side === 'BUY' ? 'buy' : 'sell';
@@ -117,11 +185,11 @@ export class RecordedPlayback {
             : order.status === 'REJECTED' ? 'failed' : 'cancelled';
           (this.audit[intent.tokenId] ??= []).push({
             id: fact.id, tokenId: intent.tokenId, limitOrderId: order.id, side, status, v2Status: order.status,
-            executionOrderId: order.eligibleAt === null ? undefined : order.id, limitPriceUsd: priceUsd(policy.price),
+            ...(order.eligibleAt === null ? {} : { executionOrderId: order.id }), limitPriceUsd: priceUsd(policy.price),
             requestedAmountSol: intent.side === 'BUY' ? sol(intent.maxInputSol) : 0,
             requestedTokenQty: intent.side === 'SELL' ? qty(intent.inputTokens) : 0,
             expectedOut: outputNumber(intent.side, order.expectedOut), minOut: outputNumber(intent.side, outputFloor(intent)),
-            txCostSol: sol(order.chargedFee), reason: order.reason ?? undefined, tsMs: this.epoch + fact.key.at,
+            txCostSol: sol(order.chargedFee), ...(order.reason === null ? {} : { reason: order.reason }), tsMs: this.epoch + fact.key.at,
           });
         }
         break;
@@ -134,6 +202,7 @@ export class RecordedPlayback {
         const volume = usd(fill.quoteAtomsExFee);
         const tMs = this.epoch + fill.at;
         const mcap = price * SUPPLY_NUMBER;
+        if (this.hot) appendBar(read.bars, Math.floor(tMs / 1000), mcap, volume, SPAWN_PRICE * SUPPLY_NUMBER);
         read.trades.push({
           id: fact.id, tMs, side: fill.side, walletId: fill.agentId, tokenAmount: amount,
           notionalUsd: volume, priceUsd: volume / amount, mcapUsd: mcap,
@@ -173,6 +242,22 @@ export class RecordedPlayback {
   }
 
   candles(tokenId: string, tfSec: number, metric: 'price' | 'mcap'): Candle[] {
+    if (this.hot) {
+      const result: Candle[] = [];
+      const divisor = metric === 'price' ? SUPPLY_NUMBER : 1;
+      for (const bar of this.markets[tokenId]?.bars ?? []) {
+        const time = Math.floor(bar.time / tfSec) * tfSec;
+        const last = result[result.length - 1];
+        if (last?.time === time) {
+          last.high = Math.max(last.high, bar.high / divisor);
+          last.low = Math.min(last.low, bar.low / divisor);
+          last.close = bar.close / divisor;
+          last.volume += bar.volume;
+        } else result.push({ time, open: bar.open / divisor, high: bar.high / divisor,
+          low: bar.low / divisor, close: bar.close / divisor, volume: bar.volume });
+      }
+      return result;
+    }
     const trades = this.markets[tokenId]?.trades ?? [];
     const rows: Candle[] = [];
     let previous = metric === 'price' ? SPAWN_PRICE : SPAWN_PRICE * SUPPLY_NUMBER;
