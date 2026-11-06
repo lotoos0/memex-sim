@@ -7,6 +7,7 @@ import {
 } from './types';
 import { toSimDtMs, wallSecForSimMs } from './simClock';
 import { stepMarket } from './marketModel';
+import { ParticipationCapacity } from './participationCapacity';
 import type { TokenChartEvent } from '../chart/tokenChartEvents';
 import { SESSION_SIM_PROFILE, getSessionBucket, type SessionBucket, type SessionSimProfile } from '../market/session';
 import {
@@ -488,6 +489,8 @@ export class TokenSim {
   private marketRegime: TokenMarketRegime = 'LAUNCH_CHAOS';
   private marketRegimeTtlSec = 0;
   private attention = 1;
+  private readonly participation = new ParticipationCapacity();
+  private observingParticipation = false;
   private flowSilentAfterSimMs = Number.POSITIVE_INFINITY;
   private baseLiquidityUsd = 25_000;
   private baseTradeSizeUsd = 350;
@@ -637,6 +640,7 @@ export class TokenSim {
       this.simTimeMs += simDtMs;
       const decay = this.getPhaseModel().attentionDecayPerSec;
       this.attention = Math.max(0.12, this.attention * Math.exp(-decay * simDtSec));
+      this.participation.clear();
       this.cheapStepped = true;
       return [];
     }
@@ -992,7 +996,16 @@ export class TokenSim {
     // Age decay alone leaves 10–30 min near 0.005 once prints are SOL-sized
     // (softer cadence). This puts that window back on 0.007–0.009.
     const lateRateBoost = ageSecForSize >= 600 ? 1.7 : 1;
-    const arrivalPerSec = this.arrivalLambdaPerSec(arrivalShape, marketTsMs) * (isLaunchTick ? 0.15 : 1) * openRateBoost * lateRateBoost;
+    const finishStretch = this.finishStretchActive();
+    const referenceArrival = this.arrivalLambdaPerSec(arrivalShape, marketTsMs, finishStretch) * (isLaunchTick ? 0.15 : 1) * openRateBoost * lateRateBoost;
+    const terminalParticipation = this.stillbornLaunch || inDeadMode || inCollapseMode
+      || this.hasMigrated || this.curveCompleted || this.simTimeMs >= this.flowSilentAfterSimMs;
+    const participationEligible = !terminalParticipation && !inMigrationFreeze && !finishStretch
+      && !this.rugDumpActive() && this.deadUserReboundMs <= 0;
+    if (terminalParticipation) this.participation.clear();
+    const arrivalPerSec = terminalParticipation ? referenceArrival : this.participation.begin(
+      this.simTimeMs - simDtMs, this.simTimeMs, referenceArrival, participationEligible,
+    );
     const printSol = ageSecForSize < 10
       ? ARRIVAL_PRINT_SOL_OPEN
       : ageSecForSize < 90
@@ -1032,7 +1045,6 @@ export class TokenSim {
     const actorBuyBoostUsd = actorOverlay.buyBoostUsd * actorActivityScale;
     // Near-migration actor sells were sized to fade a dense tape. Once the
     // coin has earned the gate, that overlay no longer gets to unwind the raise.
-    const finishStretch = this.finishStretchActive();
     const actorSellScale = finishStretch ? 0 : migrationReady ? MIGRATION_READY_FRICTION_SCALE : 1;
     const actorSellBoostUsd = actorOverlay.sellBoostUsd * actorActivityScale * actorSellScale;
     const actorDirectionalUsd = actorBuyBoostUsd - actorSellBoostUsd;
@@ -1083,18 +1095,23 @@ export class TokenSim {
       liquidityUsd,
     });
 
-    this.executeMarketFlowAsTape({
-      candleTsMs,
-      simDtSec,
-      targetBuyUsd: guardedFlow.targetBuyUsd,
-      targetSellUsd: guardedFlow.targetSellUsd,
-      expectedNextPriceUsd: guardedFlow.expectedNextPriceUsd,
-      previousPriceUsd: prevPriceUsd,
-      buyMix: actorOverlay.buyMix,
-      sellMix: actorOverlay.sellMix,
-      marketBuys: market.buys,
-      marketSells: market.sells,
-    });
+    this.observingParticipation = participationEligible && !devFlow;
+    try {
+      this.executeMarketFlowAsTape({
+        candleTsMs,
+        simDtSec,
+        targetBuyUsd: guardedFlow.targetBuyUsd,
+        targetSellUsd: guardedFlow.targetSellUsd,
+        expectedNextPriceUsd: guardedFlow.expectedNextPriceUsd,
+        previousPriceUsd: prevPriceUsd,
+        buyMix: actorOverlay.buyMix,
+        sellMix: actorOverlay.sellMix,
+        marketBuys: market.buys,
+        marketSells: market.sells,
+      });
+    } finally {
+      this.observingParticipation = false;
+    }
     this.migrationFreezeLeftMs = Math.max(0, this.migrationFreezeLeftMs - simDtSec * 1000);
 
     const events: TokenChartEvent[] = [...queuedEvents, ...this.botMigrationEvents.splice(0)];
@@ -1111,6 +1128,11 @@ export class TokenSim {
 
     const migrationEvent = this.updatePhase(candleTsMs);
     if (migrationEvent) events.push(migrationEvent);
+    if (this.hasMigrated || this.curveCompleted || this.getPhase() === 'DEAD' || this.ruggedAtSimMs != null) {
+      this.participation.clear();
+    } else {
+      this.participation.settle();
+    }
     return events;
   }
 
@@ -1120,9 +1142,9 @@ export class TokenSim {
    * silence are on the sim clock, so a 1s tick and five 0.2s ticks share
    * the same expected count.
    */
-  private arrivalLambdaPerSec(shape: number, nowMs: number): number {
+  private arrivalLambdaPerSec(shape: number, nowMs: number, finishStretch = this.finishStretchActive()): number {
     const organic = this.organicArrivalPerSec(shape, nowMs);
-    if (this.finishStretchActive()) return Math.max(organic, FINISH_STRETCH_MIN_PER_SEC);
+    if (finishStretch) return Math.max(organic, FINISH_STRETCH_MIN_PER_SEC);
     if (this.simTimeMs < this.flowSilentAfterSimMs) return organic;
     if (this.rugDumpActive()) return Math.max(organic, RUG_DUMP_PER_SEC);
     if (this.deadUserReboundMs > 0) return Math.max(organic, 0.8);
@@ -3202,6 +3224,9 @@ export class TokenSim {
     walletId: string,
     tokenAmount: number
   ): void {
+    if (this.observingParticipation && !this.hasMigrated) {
+      this.participation.observe(candleTsMs - this.spawnRealMs, side);
+    }
     this.pushCandleTicks(candleTsMs, marketVolumeUsd);
 
     this.statWindow.push({
