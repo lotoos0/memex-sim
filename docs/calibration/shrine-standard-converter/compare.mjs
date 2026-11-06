@@ -45,6 +45,7 @@ export function compare(converted, reference) {
   const realByShrine = new Map();
   const realBins = {};
   const shrineBins = {};
+  const recoveredPairs = { rows: 0, exactUnique: 0, reservesExact: 0, preStageEqual: 0, postStageEqual: 0 };
   const pairs = { exactUnique: 0, reserveComparable: 0, reservesExact: 0, reservesWithinOne: 0,
     sameTimestamp: 0, timestampDeltaSeconds: {}, exactPairsWithRealPoolLeg: 0,
     preStageComparable: 0, preStageEqual: 0, postStageEqual: 0 };
@@ -81,7 +82,18 @@ export function compare(converted, reference) {
     addTrade(realBins, row, status);
     if (!standardMints.has(row.mint)) add(realBins, 'unlabelled_mint', row, status);
   }
-  for (const trade of trades) addTrade(shrineBins, trade, realByShrine.has(trade) ? 'exact_unique' : 'unpaired');
+  for (const trade of trades) {
+    const paired = realByShrine.get(trade);
+    addTrade(shrineBins, trade, paired ? 'exact_unique' : 'unpaired');
+    if (!trade.recovery) continue;
+    recoveredPairs.rows++;
+    if (!paired) continue;
+    recoveredPairs.exactUnique++;
+    if (paired.r1 === trade.r1 && paired.r2 === trade.r2) recoveredPairs.reservesExact++;
+    if (paired.r2 === null) continue;
+    if (stage(statesForStage(paired)) === trade.preStage) recoveredPairs.preStageEqual++;
+    if (stage(paired.r2) === trade.postStage) recoveredPairs.postStageEqual++;
+  }
 
   const order = { groups: orderGroups.length, multiGroups: 0, resolved: 0, resolvedMulti: 0,
     rejectedNeighbor: 0, ambiguousOrGap: 0, fullyPairedMulti: 0, sameOrderMulti: 0 };
@@ -116,6 +128,7 @@ export function compare(converted, reference) {
       realTransactionsWithExactPair: pairedTransactions.size,
       realMultirowTransactionsInScope: [...realTransactions.values()].filter((rows) => rows.length > 1).length },
     pairs, order, rejectsByReason, shrineBins, realBins,
+    ...(recoveredPairs.rows > 0 ? { recoveredPairs } : {}),
   };
 }
 

@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises';
 import { createZstdDecompress } from 'node:zlib';
 import { compare, compareLifecycle, transitions } from './compare.mjs';
 import { convert, lifecycle, parseAmounts, SOL } from './normalize.mjs';
+import { recoverMultiLeg } from './recover.mjs';
 
 const DAY = '2026-10-15';
 const WINDOWS = ['01', '12'];
@@ -133,6 +134,7 @@ async function run(shrineDir, realDir, duckdb, output) {
     const end = start + 3600;
     const shrine = await readShrine(shrineDir, hour, start, end);
     const converted = convert(shrine.rows, shrine.mayhem);
+    const recovery = recoverMultiLeg(shrine.rows, converted);
     const reference = readReal(duckdb, manifest, realDir, start, end);
     const standard = reference.trades.filter((row) => !shrine.mayhem.has(row.mint));
     const events = lifecycle(shrine.rows, converted.standardMints);
@@ -141,10 +143,12 @@ async function run(shrineDir, realDir, duckdb, output) {
       protocolActions: shrine.protocolActions, separated: { ...converted.separate,
         mayhemMintsInInputFiles: shrine.mayhem.size, realMayhemRows: reference.trades.length - standard.length },
       ...compare(converted, standard), realWindowTransitions: transitions(standard),
+      recovery: { outcomes: recovery.outcomes, after: compare(recovery.after, standard) },
       realPoolSplitBasis: splitBasis(standard), lifecycle: compareLifecycle(events, realEvents),
       realLifecycleOutsideObservedStandardMints: reference.lifecycle.length - realEvents.length };
     await writeLines(resolve(output, `${hour}-trades.jsonl`), converted.trades);
     await writeLines(resolve(output, `${hour}-rejected.jsonl`), converted.rejected);
+    await writeLines(resolve(output, `${hour}-recovered.jsonl`), recovery.recovered);
     await writeLines(resolve(output, `${hour}-events.jsonl`), events);
   }
   await writeFile(resolve(output, 'quality.json'), json(report, 2) + '\n', { flag: 'wx' });
