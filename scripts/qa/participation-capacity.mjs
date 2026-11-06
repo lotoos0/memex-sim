@@ -7,11 +7,11 @@ import { dirname, relative, resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const options = { tokens: 1000, seconds: 1800, tick: 200, seeds: 'SIM01-A,SIM01-B,SIM01-C,SIM01-D,SIM01-E,SIM01-F', out: 'output/sim01-p1c', repeat: false };
+const options = { tokens: 1000, seconds: 1800, tick: 200, seeds: 'SIM01-A,SIM01-B,SIM01-C,SIM01-D,SIM01-E,SIM01-F', out: 'output/sim01-p1c', repeat: false, timing: false };
 for (let i = 2; i < process.argv.length; i++) {
   const key = process.argv[i].replace(/^--/, '');
   if (!(key in options)) throw new Error(`Unknown option ${key}`);
-  if (key === 'repeat') options[key] = true;
+  if (key === 'repeat' || key === 'timing') options[key] = true;
   else options[key] = typeof options[key] === 'number' ? Number(process.argv[++i]) : process.argv[++i];
 }
 if (![100, 200, 1000].includes(options.tick)) throw new Error('tick must be 100, 200 or 1000ms');
@@ -26,6 +26,7 @@ const provenance = { config, node: process.version,
   runnerSha256: hash(readFileSync(fileURLToPath(import.meta.url))),
   baselineCommit: '4b976ad94dfe04429ec3e51af188f87dec06b461', candidateCommit: git('rev-parse', 'HEAD'), variants: {} };
 const temp = mkdtempSync(join(tmpdir(), 'sim01-p1c-'));
+const timingHarnesses = new Map();
 try {
   for (const variant of ['A', 'B']) {
     const inputs = new Map();
@@ -39,7 +40,7 @@ try {
             ? git('show', `${provenance.baselineCommit}:${path}`) : readFileSync(args.path, 'utf8');
           contents = contents.replaceAll('\r\n', '\n');
           inputs.set(path, hash(contents));
-          if (path === 'src/qa/marketBehaviorBaseline.ts') {
+          if (path === 'src/qa/marketBehaviorBaseline.ts' && !options.timing) {
             const seam = 'const print = { ageMs:';
             if (contents.split(seam).length !== 2) throw new Error('Harness observer seam changed');
             contents = contents.replace(seam, "const print = { progress: sim['getCurveProgress'](), ready: sim['isMigrationRuntimeReady'](row.tMs), ageMs:")
@@ -51,6 +52,11 @@ try {
       } }],
     });
     const harness = await import(pathToFileURL(outfile).href);
+    if (options.timing) {
+      timingHarnesses.set(variant, harness.runMarketBehaviorBaseline);
+      provenance.variants[variant] = { runs: [] };
+      continue;
+    }
     const started = performance.now();
     const run = harness.runMarketBehaviorBaseline;
     const result = run(config);
@@ -63,6 +69,22 @@ try {
       sourceFiles: Object.fromEntries([...inputs].sort(([a], [b]) => a.localeCompare(b))) };
     writeFileSync(join(work, 'experiment.json'), JSON.stringify(provenance, null, 2) + '\n');
     console.log(`${variant}: ${result.tokens.length} tokens, ${elapsedMs.toFixed(0)}ms, ${hash(serialized)}`);
+  }
+  if (options.timing) {
+    for (let i = 0; i < 3; i++) {
+      for (const variant of i % 2 ? ['B', 'A'] : ['A', 'B']) {
+        const start = performance.now();
+        const cpuStart = process.cpuUsage();
+        const { summary } = timingHarnesses.get(variant)(config);
+        const cpu = process.cpuUsage(cpuStart);
+        provenance.variants[variant].runs.push({
+          ms: performance.now() - start,
+          cpuMs: (cpu.user + cpu.system) / 1000,
+          tokenSeconds: summary.preMigration.durationSec,
+        });
+      }
+    }
+    writeFileSync(join(work, 'experiment.json'), JSON.stringify(provenance, null, 2) + '\n');
   }
 } finally {
   rmSync(temp, { recursive: true, force: true });

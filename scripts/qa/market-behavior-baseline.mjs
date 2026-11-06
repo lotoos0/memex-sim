@@ -27,7 +27,7 @@ async function bundle(entry) {
 }
 try {
   if (options['--qa-only']) {
-    for (const entry of ['tradeOhlcQa', 'ohlcConsistencyAuditQa', 'marketBehaviorMetricsQa', 'participationCapacityQa']) await bundle(entry);
+    for (const entry of ['tradeOhlcQa', 'ohlcConsistencyAuditQa', 'marketBehaviorMetricsQa', 'participationCapacityQa', 'participationCapacityFinancialQa']) await bundle(entry);
     const official = await bundle('officialCurveQa');
     official.module.runOfficialCurveQa();
     console.log('SIM-01 QA: PASS');

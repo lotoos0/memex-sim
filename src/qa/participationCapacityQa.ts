@@ -1,4 +1,7 @@
 import { ParticipationCapacity } from '../tokens/participationCapacity';
+import { TokenSim } from '../tokens/tokenSim';
+import { RNG } from '../engine/rng';
+import { generateToken } from '../tokens/generator';
 
 function check(condition: boolean, label: string): void {
   if (!condition) throw new Error(label);
@@ -50,4 +53,26 @@ burst.settle();
 burst.begin(60_000, 60_200, 1, true);
 check(burst['capacity'] === 0, 'one burst cannot qualify');
 burst.settle();
+
+const now = Date.now;
+try {
+  let clock = 1_800_000_000_000;
+  Date.now = () => clock;
+  for (const terminal of ['stillborn', 'dead', 'silent'] as const) {
+    const meta = generateToken(new RNG(terminal), 0, 'NORMAL');
+    const token = new TokenSim(meta, 2_000, 1_800_000);
+    const capacity = token['participation'];
+    capacity.begin(60_000, 60_200, 10, true);
+    capacity.settle();
+    check(capacity['lots'].length > 0, 'terminal fixture has credit');
+    if (terminal === 'stillborn') token.markStillbornLaunch();
+    else if (terminal === 'dead') token['phase'] = 'DEAD';
+    else token['flowSilentAfterSimMs'] = 0;
+    clock += 200;
+    token.tick(0.2);
+    check(capacity['lots'].length === 0 && !capacity['pending'], `${terminal} tick clears reserve`);
+  }
+} finally {
+  Date.now = now;
+}
 console.log('Participation capacity QA: PASS');
