@@ -15,6 +15,8 @@ export const USER = 'user:player';
 const TREASURY = 'system:launch-fees';
 const LISTING_DESK = 'world:listing-desk';
 const LAUNCH_FEE = SOL / 10n;
+export const COHORT_SIZE = 25;
+export const COHORT_INTERVAL_MS = 15 * 60_000;
 
 export type WorldConfig = {
   seed: string;
@@ -28,6 +30,7 @@ export type WorldConfig = {
   socialLaunches: boolean;
   // Omit OFF so existing recordings keep their config and manifest hashes.
   sellFeeReserve?: true;
+  cohortRotation?: true;
 };
 export const DEFAULT_WORLD: WorldConfig = {
   seed: 'MEMEX-V2', epochUtcMs: 1_792_918_800_000, agents: 100,
@@ -84,6 +87,7 @@ export class World {
     config = this.config = Object.freeze({ ...config });
     for (const value of [config.agents, config.userSol, config.latencyMs, config.launchUntilMs, config.epochUtcMs]) assertSimTime(value);
     if (config.latencyMs < 1) throw new Error('Execution latency must be positive');
+    if (config.cohortRotation && config.agents !== 4 * COHORT_SIZE) throw new Error('Cohort rotation requires 100 agents');
     this.kernel = new Kernel(makeManifest(config), checkpoint?.kernel, log);
     this.ledger = new Ledger(checkpoint?.state.ledger, this.kernel.rememberProperty);
     this.state = checkpoint?.state ?? {
@@ -93,7 +97,7 @@ export class World {
     };
     this.rng = new RngStreams(config.seed, checkpoint?.rng, this.kernel.rememberProperty);
     this.orders = new OrderBook(this.kernel, this.ledger, this.state.orders, this.state.markets, config.latencyMs,
-      (market, traded) => this.activate(market, traded), id => id === USER || !!this.state.agents[id]);
+      (market, traded) => this.activate(market, traded), id => id === USER || this.isAgentActive(id));
     if (checkpoint) {
       for (const ingress of this.state.ingress) this.commandById.set(ingress.id, ingress);
       for (const link of Object.values(this.state.social.links)) this.indexLink(link);
@@ -117,6 +121,14 @@ export class World {
   }
 
   get now() { return this.kernel.now; }
+
+  isAgentActive(id: string) {
+    const agent = this.state.agents[id];
+    if (!agent) return false;
+    if (!this.config.cohortRotation) return true;
+    const index = Number(agent.id.slice('agent:'.length));
+    return this.now >= Math.floor(index / COHORT_SIZE) * COHORT_INTERVAL_MS;
+  }
 
   advanceTo(target: number, shouldStop?: () => boolean) {
     this.kernel.advanceTo(target, event => this.process(event), shouldStop);
@@ -321,6 +333,7 @@ export class World {
   private feedback(market: Market, audience: string[], cause: Cause, latency: number) {
     const view = this.publicMarket(market);
     for (const id of audience) {
+      if (!this.isAgentActive(id)) continue;
       this.kernel.schedule(this.now + latency + this.rng.int('market/feedback', id + '/' + market.tokenId, '1', 500),
         30, 'Observe', { agentId: id, market: view, evidence: cause.id }, cause);
     }
@@ -336,6 +349,7 @@ export class World {
       this.kernel.schedule(this.now + 84_000, 10, 'Publish', { post: SOCIAL_CATALOG[2], audience: true }, fact);
     }
     for (const id of Object.keys(this.state.agents).sort()) {
+      if (!this.isAgentActive(id)) continue;
       const key = id + '/' + post.id;
       if (this.state.agents[id].strategy !== 'creator' && this.rng.int('exposure/recipient', key, SOCIAL_VERSION, 100) >= 65) continue;
       const delay = 50 + this.rng.int('exposure/delivery', key, SOCIAL_VERSION, post.kind === 'ORIGINAL' ? 9500 : 6000);
@@ -363,14 +377,14 @@ export class World {
   }
 
   private wake(agent: Agent, at: number) {
-    if (!this.config.agentDecisions || (agent.nextAt !== null && agent.nextAt <= at)) return;
+    if (!this.config.agentDecisions || !this.isAgentActive(agent.id) || (agent.nextAt !== null && agent.nextAt <= at)) return;
     agent.nextAt = at;
     this.kernel.schedule(at, 40, 'Decide', { agentId: agent.id, generation: ++agent.generation });
   }
 
   private decide(id: string, generation: number) {
     const agent = this.state.agents[id];
-    if (agent.generation !== generation) return;
+    if (agent.generation !== generation || !this.isAgentActive(id)) return;
     agent.nextAt = null;
     agent.ordinal++;
     const interest = Object.entries(agent.narratives).sort(([keyA, a], [keyB, b]) => b.at - a.at || (keyA < keyB ? -1 : 1))[0];

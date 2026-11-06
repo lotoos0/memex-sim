@@ -6,7 +6,7 @@ import { curveAccount, escrowAccount, residualAccount, reserves, spot } from '..
 import { RecordedPlayback } from '../engineV2/projections';
 import { RngStreams } from '../engineV2/rng';
 import { canonical } from '../engineV2/snapshot';
-import { DEFAULT_WORLD, USER, World, type WorldConfig } from '../engineV2/world';
+import { COHORT_INTERVAL_MS, COHORT_SIZE, DEFAULT_WORLD, USER, World, type WorldConfig } from '../engineV2/world';
 
 const FIRST = 'tok_baseline_0';
 const SECOND = 'tok_qa_competitor';
@@ -139,6 +139,47 @@ function sellFeeReserveGate() {
   same(on, restored, 'ON checkpoint replay');
   same(on, World.rerun(on.config, [], 7_000), 'ON deterministic rerun');
   console.log('PASS opt-in SELL fee reserve, BUY boundary, standard SELL fee and ON restore');
+}
+
+function cohortRotationGate() {
+  const control = new World({ ...DEFAULT_WORLD, sellFeeReserve: true, agentDecisions: false });
+  const world = new World({ ...control.config, cohortRotation: true });
+  control.advanceTo(0);
+  world.advanceTo(0);
+  const ids = Object.keys(world.state.agents);
+  const balances = (candidate: World) => canonical(ids.map((id) => candidate.ledger.balance(id)));
+  const initial = balances(world);
+  equal(initial, balances(control), 'Same deterministic funding for every agent');
+  check(world.kernel.manifest.configHash !== control.kernel.manifest.configHash, 'Cohort rotation has a distinct manifest');
+  equal(ids.filter((id) => world.isAgentActive(id)).length, COHORT_SIZE, 'First cohort is active at genesis');
+  const late = ids[COHORT_SIZE];
+  const command = buy(world, SOL) as Extract<Command, { kind: 'submit' }>;
+  const blocked = world.submit('inactive-cohort-buy', { ...command, intent: { ...command.intent, agentId: late } });
+  check(!blocked.ok, 'Inactive agent cannot admit a buy');
+  equal(balances(world), initial, 'Inactive admission leaves funding intact');
+  world.advanceTo(COHORT_INTERVAL_MS - 1);
+  check(!world.isAgentActive(late), 'Inactive before the boundary');
+  equal(Object.keys(world.state.agents[late].known).length, 0, 'Inactive agent receives no discoveries');
+  equal(Object.keys(world.state.agents[late].narratives).length, 0, 'Inactive agent receives no social exposure');
+  const restored = World.restore(world.snapshot());
+  equal(restored.config.cohortRotation, true, 'Cohort mode survives checkpoint');
+  world.advanceTo(COHORT_INTERVAL_MS);
+  check(world.isAgentActive(late), 'Activates at the exact boundary');
+  equal(balances(world), initial, 'Activation does not add, transfer or reserve SOL');
+  equal(Object.keys(world.state.agents[late].known).length, 0, 'No discovery backfill on activation');
+  const target = COHORT_INTERVAL_MS + 90_000;
+  world.advanceTo(target);
+  restored.advanceTo(target);
+  same(world, restored, 'Cohort checkpoint across activation');
+  same(world, World.rerun(world.config, world.state.ingress, target), 'Cohort ingress replay');
+  const known = ids.slice(COHORT_SIZE, 2 * COHORT_SIZE).flatMap((id) => Object.keys(world.state.agents[id].known));
+  check(known.length > 0, 'The new cohort discovers ordinary launches');
+  check(known.every((id) => world.state.markets[id].launchedAt >= COHORT_INTERVAL_MS), 'Discovery uses later launch events');
+  equal(ids.filter((id) => world.isAgentActive(id)).length, 2 * COHORT_SIZE, 'Only two cohorts are active');
+  world.advanceTo(3 * COHORT_INTERVAL_MS);
+  equal(ids.filter((id) => world.isAgentActive(id)).length, 4 * COHORT_SIZE, 'All cohorts activate by minute 45');
+  verifyLedger(world);
+  console.log('PASS cohort funding, admission, discovery, activation boundaries and checkpoint replay');
 }
 
 function financialGate() {
@@ -402,6 +443,7 @@ equal(decimalAtoms('0.1000000001', 9), null, 'Excess precision rejected');
 equal(decimalAtoms('1e-9', 9), 1n, 'One lamport');
 financialGate();
 sellFeeReserveGate();
+cohortRotationGate();
 orderAndMigrationGate();
 priceCrossingGate();
 expiryAndFaultGate();
