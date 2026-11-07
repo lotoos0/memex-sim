@@ -28,6 +28,7 @@ export type WorldConfig = {
   socialLaunches: boolean;
   // Omit OFF so existing recordings keep their config and manifest hashes.
   sellFeeReserve?: true;
+  timerOnly?: true;
 };
 export const DEFAULT_WORLD: WorldConfig = {
   seed: 'MEMEX-V2', epochUtcMs: 1_792_918_800_000, agents: 100,
@@ -363,7 +364,7 @@ export class World {
   }
 
   private wake(agent: Agent, at: number) {
-    if (!this.config.agentDecisions || (agent.nextAt !== null && agent.nextAt <= at)) return;
+    if (!this.config.agentDecisions || (agent.nextAt !== null && (this.config.timerOnly || agent.nextAt <= at))) return;
     agent.nextAt = at;
     this.kernel.schedule(at, 40, 'Decide', { agentId: agent.id, generation: ++agent.generation });
   }

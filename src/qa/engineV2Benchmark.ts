@@ -160,11 +160,12 @@ function pathStats(paths: Path[]) {
 }
 
 export function measure(seed: string, variant: 'off' | 'on' | 'fixed-launches', write: (row: object) => void,
-  options: { sellFeeReserve?: true; streamFacts?: true } = {}) {
-  const { sellFeeReserve, streamFacts } = options;
+  options: { sellFeeReserve?: true; timerOnly?: true; streamFacts?: true } = {}) {
+  const { sellFeeReserve, timerOnly, streamFacts } = options;
   const world = new World({
     ...DEFAULT_WORLD, seed, social: variant !== 'off', socialLaunches: variant === 'on',
     ...(sellFeeReserve ? { sellFeeReserve } : {}),
+    ...(timerOnly ? { timerOnly } : {}),
   });
   const markets: Record<string, Path> = {};
   let poolFills = 0;

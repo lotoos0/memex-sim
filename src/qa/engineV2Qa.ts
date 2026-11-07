@@ -5,6 +5,7 @@ import { SWAP_COLLECTOR, TX_COLLECTOR, posting } from '../engineV2/ledger';
 import { curveAccount, escrowAccount, residualAccount, reserves, spot } from '../engineV2/marketRules';
 import { RecordedPlayback } from '../engineV2/projections';
 import { RngStreams } from '../engineV2/rng';
+import { SOCIAL_CATALOG } from '../engineV2/social';
 import { canonical } from '../engineV2/snapshot';
 import { DEFAULT_WORLD, USER, World, type WorldConfig } from '../engineV2/world';
 
@@ -139,6 +140,63 @@ function sellFeeReserveGate() {
   same(on, restored, 'ON checkpoint replay');
   same(on, World.rerun(on.config, [], 7_000), 'ON deterministic rerun');
   console.log('PASS opt-in SELL fee reserve, BUY boundary, standard SELL fee and ON restore');
+}
+
+function timerOnlyGate() {
+  const options: WorldConfig = { ...config, agents: 1, agentDecisions: true, sellFeeReserve: true, timerOnly: true };
+  const world = new World(options);
+  world.advanceTo(0);
+  const id = 'agent:00000';
+  equal(world.state.agents[id].nextAt, null, 'No decision before the first discovery');
+  const post = { ...SOCIAL_CATALOG[0], id: 'qa:timer-bootstrap' };
+  world.kernel.schedule(1, 10, 'Publish', { post, audience: false });
+  world.kernel.schedule(10, 30, 'Discover', { agentId: id, postId: post.id, exposureId: 'qa:exposure' });
+  world.advanceTo(11);
+  equal(world.state.agents[id].ordinal, 1, 'Discover bootstraps one decision');
+  const due = world.state.agents[id].nextAt;
+  check(due !== null && due >= 4_511 && due <= 9_510, 'Bootstrap starts the existing periodic timer');
+  const laterPost = { ...post, id: 'qa:timer-later', narrativeId: 'qa:later' };
+  world.kernel.schedule(20, 10, 'Publish', { post: laterPost, audience: false });
+  const view = world.publicMarket(world.state.markets[FIRST]);
+  const updated = { ...view, observedAt: 50, spot: { ...view.spot, quoteAtoms: view.spot.quoteAtoms + 1n } };
+  world.kernel.schedule(50, 30, 'Observe', { agentId: id, market: updated, evidence: 'qa:update' });
+  world.kernel.schedule(60, 30, 'Discover', { agentId: id, postId: laterPost.id, exposureId: 'qa:later-exposure' });
+  const restored = World.restore(world.snapshot());
+  equal(restored.config.timerOnly, true, 'Timer mode survives checkpoint');
+  world.advanceTo(60);
+  restored.advanceTo(60);
+  same(world, restored, 'Pending information and periodic timer restore');
+  equal(world.state.agents[id].known[FIRST].view.spot.quoteAtoms, updated.spot.quoteAtoms, 'Observe updates knowledge');
+  check(world.state.agents[id].narratives[laterPost.narrativeId], 'Discover updates narrative state');
+  equal(world.state.agents[id].nextAt, due, 'Information does not advance the periodic deadline');
+  equal(world.kernel.snapshot().pending.filter((event) => event.kind === 'Decide' && event.payload.agentId === id).length,
+    1, 'One decision task remains queued');
+  world.advanceTo(due - 1);
+  equal(world.state.agents[id].ordinal, 1, 'No extra decision before the deadline');
+  world.advanceTo(due);
+  restored.advanceTo(due);
+  same(world, restored, 'Decision timing and ordering survive checkpoint');
+  equal(world.state.agents[id].ordinal, 2, 'Exactly one periodic decision executes');
+  verifyLedger(world);
+
+  const observed = new World(options);
+  observed.advanceTo(0);
+  observed.kernel.schedule(100, 30, 'Observe', { agentId: id,
+    market: observed.publicMarket(observed.state.markets[FIRST]), evidence: 'qa:bootstrap' });
+  observed.advanceTo(101);
+  equal(observed.state.agents[id].ordinal, 1, 'Observe bootstraps one decision');
+
+  const normal = new World({ ...DEFAULT_WORLD, agents: 4, sellFeeReserve: true, timerOnly: true });
+  normal.advanceTo(10_000);
+  const copy = World.restore(normal.snapshot());
+  normal.advanceTo(30_000);
+  copy.advanceTo(30_000);
+  same(normal, copy, 'Timer-only periodic restore');
+  same(normal, World.rerun(normal.config, [], 30_000), 'Timer-only deterministic replay');
+  check(normal.kernel.manifest.configHash !== new World({ ...DEFAULT_WORLD, agents: 4, sellFeeReserve: true })
+    .kernel.manifest.configHash, 'Timer mode has a distinct manifest');
+  verifyLedger(normal);
+  console.log('PASS timer-only bootstrap, information updates, single timer and checkpoint/replay');
 }
 
 function financialGate() {
@@ -402,6 +460,7 @@ equal(decimalAtoms('0.1000000001', 9), null, 'Excess precision rejected');
 equal(decimalAtoms('1e-9', 9), 1n, 'One lamport');
 financialGate();
 sellFeeReserveGate();
+timerOnlyGate();
 orderAndMigrationGate();
 priceCrossingGate();
 expiryAndFaultGate();
