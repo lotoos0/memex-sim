@@ -15,6 +15,7 @@ export const USER = 'user:player';
 const TREASURY = 'system:launch-fees';
 const LISTING_DESK = 'world:listing-desk';
 const LAUNCH_FEE = SOL / 10n;
+export const BOUNDED_REACTIVE_MS = 2_000;
 
 export type WorldConfig = {
   seed: string;
@@ -28,6 +29,7 @@ export type WorldConfig = {
   socialLaunches: boolean;
   // Omit OFF so existing recordings keep their config and manifest hashes.
   sellFeeReserve?: true;
+  boundedReactive?: true;
 };
 export const DEFAULT_WORLD: WorldConfig = {
   seed: 'MEMEX-V2', epochUtcMs: 1_792_918_800_000, agents: 100,
@@ -186,7 +188,7 @@ export class World {
         this.wake(agent, this.now + 1);
         break;
       }
-      case 'Decide': this.decide(payload.agentId, payload.generation); break;
+      case 'Decide': this.decide(payload.agentId, payload.generation, payload.reactive); break;
       case 'Admit': this.orders.admit(payload.intentId, payload.intent, payload.policy, event.key.seq); break;
       case 'Execute': {
         const fact = this.orders.execute(payload.orderId);
@@ -362,16 +364,52 @@ export class World {
     this.wake(agent, this.now + 1);
   }
 
-  private wake(agent: Agent, at: number) {
-    if (!this.config.agentDecisions || (agent.nextAt !== null && agent.nextAt <= at)) return;
+  private wake(agent: Agent, at: number, periodic = false) {
+    if (!this.config.agentDecisions) return;
+    if (this.config.boundedReactive) {
+      const state = agent.boundedWake ??= { lastAt: null, reactiveAt: null, reactiveGeneration: 0 };
+      if (!periodic) {
+        if (agent.ordinal === 0) {
+          if (agent.nextAt !== null) return;
+        } else {
+          if (state.reactiveAt !== null) return;
+          const due = Math.max(at, (state.lastAt ?? at) + BOUNDED_REACTIVE_MS);
+          // Leave enough room for the unchanged periodic deadline to execute.
+          if (agent.nextAt !== null && agent.nextAt - due < BOUNDED_REACTIVE_MS) return;
+          state.reactiveAt = due;
+          this.kernel.schedule(due, 40, 'Decide', {
+            agentId: agent.id, generation: ++state.reactiveGeneration, reactive: true,
+          });
+          return;
+        }
+      }
+    }
+    if (agent.nextAt !== null && agent.nextAt <= at) return;
     agent.nextAt = at;
     this.kernel.schedule(at, 40, 'Decide', { agentId: agent.id, generation: ++agent.generation });
   }
 
-  private decide(id: string, generation: number) {
+  private decide(id: string, generation: number, reactive?: true) {
     const agent = this.state.agents[id];
-    if (agent.generation !== generation) return;
-    agent.nextAt = null;
+    const bounded = this.config.boundedReactive ? agent.boundedWake : undefined;
+    if (reactive) {
+      if (!bounded || bounded.reactiveGeneration !== generation || bounded.reactiveAt !== this.now) return;
+      bounded.reactiveAt = null;
+      if (agent.nextAt === this.now) return;
+    } else {
+      if (agent.generation !== generation) return;
+      agent.nextAt = null;
+    }
+    if (bounded) {
+      if (bounded.lastAt !== null && this.now - bounded.lastAt < BOUNDED_REACTIVE_MS) {
+        throw new Error('Bounded decision interval violated');
+      }
+      bounded.lastAt = this.now;
+      if (!reactive && bounded.reactiveAt !== null) {
+        bounded.reactiveAt = null;
+        bounded.reactiveGeneration++;
+      }
+    }
     agent.ordinal++;
     const interest = Object.entries(agent.narratives).sort(([keyA, a], [keyB, b]) => b.at - a.at || (keyA < keyB ? -1 : 1))[0];
     const canLaunch = this.config.socialLaunches && agent.strategy === 'creator' && agent.launches === 0 && interest
@@ -396,8 +434,10 @@ export class World {
         intentId: 'order:' + id + '/' + agent.ordinal, intent, policy: { kind: 'MARKET_IOC', slippageBps: 700 },
       }, decision);
     }
-    const delay = this.state.sessionOverride === 'busy' ? 2000 : this.state.sessionOverride === 'quiet' ? 8500 : 4500;
-    this.wake(agent, this.now + delay + this.rng.int('agent/timer', id, AGENT_VERSION, 5000));
+    if (!reactive) {
+      const delay = this.state.sessionOverride === 'busy' ? 2000 : this.state.sessionOverride === 'quiet' ? 8500 : 4500;
+      this.wake(agent, this.now + delay + this.rng.int('agent/timer', id, AGENT_VERSION, 5000), true);
+    }
   }
 
   private updateMarket(market: Market) {

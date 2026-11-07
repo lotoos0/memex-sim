@@ -14,6 +14,7 @@ export type Agent = {
   generation: number;
   nextAt: number | null;
   launches: number;
+  boundedWake?: { lastAt: number | null; reactiveAt: number | null; reactiveGeneration: number };
 };
 
 export function newAgent(id: string, index: number): Agent {

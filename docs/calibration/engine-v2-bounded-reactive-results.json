@@ -1,0 +1,1613 @@
+{
+  "baseRevision": "b0857fedb579dd2980d9382e4b8565b30302d3c6",
+  "fingerprints": {
+    "src/engineV2/contracts.ts": "dc76f2ae6a0220a430e1d06fcaed0dd7cf775a984d5bbaeb09a8dcfc57de703c",
+    "src/engineV2/agents.ts": "69f9cd8cebfd52e1933317e6fb227df6a4ceec2ec29eaa051b61d65d21b58e6e",
+    "src/engineV2/snapshot.ts": "bb8a779ee88d0166c8931a3d113b803481009fa4fd214062bc8bee17fadf9301",
+    "src/engineV2/simulationClock.ts": "c7071990facd8be6bd38f2b0a20a17568152846e7f25f3b05ef9208491e0da53",
+    "src/engineV2/kernel.ts": "7e85c5cc1651eda765586e438985321782bd70237bd4f1533038c4c9f6313109",
+    "src/engineV2/ledger.ts": "e39eda75960b71a60039d71893d6f40eda582a820bc470101204d3c471a77147",
+    "src/engineV2/lifecycle.ts": "c4213eb9b1b26cf92d5cefca7b016f5e2b66469f47c536b92d8f7f01ed3f4b28",
+    "src/engineV2/marketRules.ts": "a82da8f6940bd3cd1018f9d4b549149b725b193b6500346567f44118384b36ea",
+    "src/engineV2/orders.ts": "c95d13f7012e1e58368e4873d1d9b5a38ae1c5f5b3f05a47584f493d1b6c77ab",
+    "src/engineV2/rng.ts": "8c65eeac6224a848b9ee11ef74afed66a36c366a8bbf2c05bb48fc3f30485c08",
+    "src/engineV2/social.ts": "eb8c5baaa434dd2c1369382ed5a99e18308cca0071d7aa4f78539ece34b2084f",
+    "src/engineV2/world.ts": "648ba781a5d326be07b5d10f8535c8f30687f1a9fb3ba4904bbff2ec81afd4ab",
+    "src/qa/engineV2Benchmark.ts": "2cdcae3bc05588783e5d50524e4f509c5f04ff3b50586042d8710c2bd0aa0d4c"
+  },
+  "defaults": {
+    "seed": "MEMEX-V2",
+    "epochUtcMs": 1792918800000,
+    "agents": 100,
+    "social": true,
+    "agentDecisions": true,
+    "userSol": 100,
+    "latencyMs": 350,
+    "launchUntilMs": 3600000,
+    "socialLaunches": true
+  },
+  "cooldownMs": 2000,
+  "timerReferenceRevision": "b8be364dd4cbbca3ba6c087f75095f0fdee3433b",
+  "timerReferenceSha256": "b43d90df638c0283dff43dc276f05e4906c5b29e77d3998d15ffaef3c263be78",
+  "real": {
+    "native_rates": [
+      {
+        "dataset": "Real C",
+        "band": "0_80",
+        "exposed_bins": 36076744,
+        "active_bins": 589182,
+        "prints": 1714341,
+        "silence": 0.9836686481462962,
+        "trades_per_bin": 0.047519282782282124,
+        "trades_per_active_bin": 2.9096968339154965,
+        "all_bins_p50_p90_p99": [
+          0,
+          0,
+          1
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "80_90",
+        "exposed_bins": 91185,
+        "active_bins": 50496,
+        "prints": 192465,
+        "silence": 0.4462247080111861,
+        "trades_per_bin": 2.110708998190492,
+        "trades_per_active_bin": 3.8114900190114067,
+        "all_bins_p50_p90_p99": [
+          1,
+          5,
+          16
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "90_100",
+        "exposed_bins": 52114,
+        "active_bins": 34210,
+        "prints": 152139,
+        "silence": 0.34355451510150825,
+        "trades_per_bin": 2.91934988678666,
+        "trades_per_active_bin": 4.447208418591055,
+        "all_bins_p50_p90_p99": [
+          1,
+          7,
+          21
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "all",
+        "exposed_bins": 36220043,
+        "active_bins": 673888,
+        "prints": 2058945,
+        "silence": 0.9813946107131899,
+        "trades_per_bin": 0.05684545984663795,
+        "trades_per_active_bin": 3.055322249394558,
+        "all_bins_p50_p90_p99": [
+          0,
+          0,
+          1
+        ]
+      }
+    ],
+    "flow": [
+      {
+        "dataset": "Real C",
+        "band": "0_80",
+        "side": "BUY",
+        "prints": 904689,
+        "sol": 396342.5292723049,
+        "quote_p10_p50_p90_p99": [
+          0.009777777,
+          0.153339542,
+          1.0604523150000003,
+          3.1443319848799987
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "0_80",
+        "side": "SELL",
+        "prints": 831247,
+        "sol": 370369.1278598771,
+        "quote_p10_p50_p90_p99": [
+          0.010240815200000001,
+          0.189198652,
+          1.1243706684,
+          3.0721352358000087
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "80_90",
+        "side": "BUY",
+        "prints": 110325,
+        "sol": 40060.91630189365,
+        "quote_p10_p50_p90_p99": [
+          0.009777777,
+          0.098626127,
+          0.98765432,
+          2.962962962
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "80_90",
+        "side": "SELL",
+        "prints": 73099,
+        "sol": 38971.51938931104,
+        "quote_p10_p50_p90_p99": [
+          0.010770549,
+          0.19067798,
+          1.4425222915999998,
+          4.007098473800011
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "90_100",
+        "side": "BUY",
+        "prints": 87810,
+        "sol": 28822.87614714365,
+        "quote_p10_p50_p90_p99": [
+          0.009777777,
+          0.097777777,
+          0.977777777,
+          2.933333333
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "90_100",
+        "side": "SELL",
+        "prints": 51775,
+        "sol": 28710.692244520058,
+        "quote_p10_p50_p90_p99": [
+          0.010858267000000005,
+          0.170533512,
+          1.4255175681999996,
+          4.3063784633200095
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": null,
+        "side": "BUY",
+        "prints": 1102824,
+        "sol": 465226.3217213868,
+        "quote_p10_p50_p90_p99": [
+          0.009777777,
+          0.14480842049999998,
+          1.0352566495000006,
+          3.061728394
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": null,
+        "side": "SELL",
+        "prints": 956121,
+        "sol": 438051.3394937053,
+        "quote_p10_p50_p90_p99": [
+          0.010303925,
+          0.188231542,
+          1.155434577,
+          3.2053995546000027
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": null,
+        "side": null,
+        "prints": 2058945,
+        "sol": 903277.6612151298,
+        "quote_p10_p50_p90_p99": [
+          0.009777777,
+          0.161459395,
+          1.099112,
+          3.160493826
+        ]
+      }
+    ],
+    "population": [
+      {
+        "dataset": "Real C",
+        "launches": 36037,
+        "known_mayhem_launches": 2450,
+        "no_curve_prints": 2204,
+        "all_completions": 822,
+        "instant_completions": 356
+      }
+    ],
+    "lifecycle": [
+      {
+        "dataset": "Real C",
+        "active_paths": 20278,
+        "exposed_bins": 36220043,
+        "trades": 2058945,
+        "first80": 685,
+        "first90": 408,
+        "completes": 203,
+        "retreats": 602,
+        "silent_final_300_noncomplete": 18619,
+        "first_fill_p50_p90_p99": [
+          0,
+          0,
+          19
+        ],
+        "trades_p50_p90_p99": [
+          12,
+          205,
+          1695.6899999999987
+        ],
+        "sol_p50_p90_p99": [
+          6.8370987775000005,
+          99.30154128959994,
+          675.7548008595077
+        ],
+        "first80_p50_p90": [
+          74,
+          554.2000000000002
+        ],
+        "from80_to90_p50_p90": [
+          45,
+          336.20000000000005
+        ],
+        "complete_p50_p90": [
+          308,
+          1073
+        ],
+        "mdd_p50_p90": [
+          16.796320324359137,
+          62.87938186821902
+        ],
+        "reversals_per100": 30.465553960887735
+      }
+    ],
+    "active_dynamics": [
+      {
+        "dataset": "Real C",
+        "band": "0_80",
+        "bins": 589182,
+        "prints_p50_p90_p99": [
+          2,
+          6,
+          18
+        ],
+        "abs_return_p50_p90_p99": [
+          1.2823023298020375,
+          11.065932986667203,
+          55.082692301213775
+        ],
+        "range_p50_p90_p99": [
+          1.5176076261342208,
+          13.700495452190497,
+          68.25413531013783
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "80_90",
+        "bins": 50496,
+        "prints_p50_p90_p99": [
+          2,
+          8,
+          21
+        ],
+        "abs_return_p50_p90_p99": [
+          0.9968262781093307,
+          6.461226819066801,
+          19.604326158332906
+        ],
+        "range_p50_p90_p99": [
+          1.2416726301231806,
+          7.940198994340153,
+          25.618929148589892
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "90_100",
+        "bins": 34210,
+        "prints_p50_p90_p99": [
+          3,
+          8,
+          25
+        ],
+        "abs_return_p50_p90_p99": [
+          0.8483632709613498,
+          5.083541827745676,
+          16.075968262265537
+        ],
+        "range_p50_p90_p99": [
+          1.0689714592708621,
+          6.484073715886733,
+          20.949274242605657
+        ]
+      },
+      {
+        "dataset": "Real C",
+        "band": "all",
+        "bins": 673888,
+        "prints_p50_p90_p99": [
+          2,
+          7,
+          18
+        ],
+        "abs_return_p50_p90_p99": [
+          1.2177220252229004,
+          10.355948374494336,
+          50.807804335848296
+        ],
+        "range_p50_p90_p99": [
+          1.4530794838543915,
+          12.85428481911224,
+          64.09696496509903
+        ]
+      }
+    ],
+    "activity_age": [
+      {
+        "dataset": "Real C",
+        "age_band": "0000-0119",
+        "trades": 1140667
+      },
+      {
+        "dataset": "Real C",
+        "age_band": "0120-0599",
+        "trades": 667186
+      },
+      {
+        "dataset": "Real C",
+        "age_band": "0600-1199",
+        "trades": 177614
+      },
+      {
+        "dataset": "Real C",
+        "age_band": "1200-1799",
+        "trades": 73478
+      }
+    ],
+    "first120_common": [
+      {
+        "dataset": "Real C",
+        "exposure": 2430563,
+        "active_bins": 305371,
+        "trades": 1140667,
+        "trades_per_bin": 0.46930155688208863,
+        "trades_per_active_bin": 3.735348150282771,
+        "silence": 0.8743620305254379
+      }
+    ],
+    "by_seed": []
+  },
+  "pooled": {
+    "control": {
+      "common": {
+        "paths": 645,
+        "trades": 3874110,
+        "activeBins": 552057,
+        "exposure": 1161000,
+        "earlyExposure": 77400,
+        "buy": 1631867,
+        "first80": 64,
+        "first90": 27,
+        "completions": 0,
+        "ages": [
+          571154,
+          1799844,
+          1106723,
+          396389
+        ],
+        "buySol": "262191275437997",
+        "sellSol": "261831561520259"
+      },
+      "decisions": 16610108,
+      "fills": {
+        "BUY": 1688747,
+        "SELL": 2335323
+      },
+      "first120": 7.379250645994832,
+      "empty": 0.5244987080103359,
+      "activeIntensity": 7.017590574886289,
+      "intensity": 3.33687338501292,
+      "ageShares": [
+        0.14742844162917418,
+        0.4645825750946669,
+        0.28567154778774995,
+        0.10231743548840895
+      ],
+      "buyShare": 0.4212237133173813,
+      "buySolShare": 0.5003432235127633,
+      "sizesSol": [
+        0.000050757,
+        0.005506473,
+        0.41212928970000007,
+        1.48125
+      ],
+      "counters": {
+        "scheduled": {
+          "bootstrap:Observe": 385,
+          "periodic": 16610108,
+          "reactive:Observe": 16510911,
+          "reactive:Discover": 966,
+          "bootstrap:Discover": 215
+        },
+        "executed": {
+          "bootstrap:Observe": 385,
+          "reactive:Observe": 16510911,
+          "reactive:Discover": 966,
+          "bootstrap:Discover": 215,
+          "periodic": 97631
+        },
+        "stale": {
+          "periodic": 16511044
+        },
+        "queued": {
+          "periodic": 1433
+        },
+        "rejects": {
+          "BUY:execution:SLIPPAGE": 48057,
+          "SELL:execution:SLIPPAGE": 43773,
+          "SELL:execution:DUST_OR_LIQUIDITY": 11198,
+          "BUY:execution:DUST_OR_LIQUIDITY": 6
+        },
+        "attempts": {
+          "BUY": 1736810,
+          "SELL": 2390295
+        },
+        "pendingOrders": {
+          "SELL": 1
+        },
+        "impulses": 0,
+        "coalescedReactive": 0,
+        "coalescedPeriodic": 0
+      },
+      "gapsMs": [
+        15,
+        90,
+        312,
+        2257
+      ],
+      "minGapMs": 2,
+      "periodicGapsMs": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "availableSol": [
+        {
+          "minute": 0,
+          "available": 6975
+        },
+        {
+          "minute": 5,
+          "available": 1571.381221173
+        },
+        {
+          "minute": 10,
+          "available": 95.075087001
+        },
+        {
+          "minute": 15,
+          "available": 28.34534178
+        },
+        {
+          "minute": 20,
+          "available": 9.251890339
+        },
+        {
+          "minute": 30,
+          "available": 4.526421197
+        },
+        {
+          "minute": 45,
+          "available": 3.007170985
+        },
+        {
+          "minute": 60,
+          "available": 2.916156153
+        },
+        {
+          "minute": 90,
+          "available": 2.908514946
+        }
+      ],
+      "lastSwapMs": [
+        5396805,
+        5398537,
+        5372018,
+        5391857,
+        5395334,
+        5393654
+      ],
+      "socialLaunches": [
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 2797
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 5045
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 6012
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 4484
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 4647
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 5503
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_02",
+            "at": 2741
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 4142
+          },
+          {
+            "tokenId": "tok_social_01",
+            "at": 7421
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_02",
+            "at": 3917
+          },
+          {
+            "tokenId": "tok_social_01",
+            "at": 7881
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 9216
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 3665
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 4432
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 5710
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_00",
+            "at": 6459
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 7681
+          },
+          {
+            "tokenId": "tok_social_01",
+            "at": 7903
+          }
+        ]
+      ],
+      "firstMarketMs": [
+        341,
+        653,
+        10687,
+        75329.65
+      ],
+      "firstNarrativeMs": [
+        2582,
+        6662,
+        10778.800000000001,
+        89982.45999999999
+      ]
+    },
+    "timer": {
+      "common": {
+        "paths": 644,
+        "trades": 103537,
+        "activeBins": 91174,
+        "exposure": 1159200,
+        "earlyExposure": 77280,
+        "buy": 58999,
+        "first80": 64,
+        "first90": 12,
+        "completions": 0,
+        "ages": [
+          16741,
+          40881,
+          27574,
+          18341
+        ],
+        "buySol": "30527878714373",
+        "sellSol": "23742038339149"
+      },
+      "decisions": 462854,
+      "fills": {
+        "BUY": 69145,
+        "SELL": 60302
+      },
+      "first120": 0.21662784679089028,
+      "empty": 0.9213474810213941,
+      "activeIntensity": 1.1355978678131924,
+      "intensity": 0.08931763285024155,
+      "ageShares": [
+        0.16169098969450535,
+        0.39484435515805943,
+        0.2663202526632991,
+        0.1771444024841361
+      ],
+      "buyShare": 0.5698349382346407,
+      "buySolShare": 0.5625193545858167,
+      "sizesSol": [
+        0.014183271400000003,
+        0.29625,
+        1.28375,
+        2.9473370701199997
+      ],
+      "counters": {
+        "scheduled": {
+          "bootstrap:Observe": 385,
+          "periodic": 462854,
+          "bootstrap:Discover": 215
+        },
+        "executed": {
+          "bootstrap:Observe": 385,
+          "bootstrap:Discover": 215,
+          "periodic": 462254
+        },
+        "stale": {},
+        "queued": {
+          "periodic": 600
+        },
+        "rejects": {
+          "BUY:execution:SLIPPAGE": 411,
+          "SELL:execution:SLIPPAGE": 99
+        },
+        "attempts": {
+          "BUY": 69561,
+          "SELL": 60406
+        },
+        "pendingOrders": {
+          "BUY": 5,
+          "SELL": 5
+        },
+        "impulses": 0,
+        "coalescedReactive": 0,
+        "coalescedPeriodic": 0
+      },
+      "gapsMs": [
+        5000,
+        6999,
+        8996,
+        9450
+      ],
+      "minGapMs": 4500,
+      "periodicGapsMs": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "availableSol": [
+        {
+          "minute": 0,
+          "available": 6975
+        },
+        {
+          "minute": 5,
+          "available": 4156.750803651
+        },
+        {
+          "minute": 10,
+          "available": 2891.99087557
+        },
+        {
+          "minute": 15,
+          "available": 1672.991452533
+        },
+        {
+          "minute": 20,
+          "available": 988.112602881
+        },
+        {
+          "minute": 30,
+          "available": 285.149864284
+        },
+        {
+          "minute": 45,
+          "available": 46.879774138
+        },
+        {
+          "minute": 60,
+          "available": 20.122293617
+        },
+        {
+          "minute": 90,
+          "available": 17.265589781
+        }
+      ],
+      "lastSwapMs": [
+        5399972,
+        5399680,
+        5399912,
+        5399920,
+        5399840,
+        5399982
+      ],
+      "socialLaunches": [
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 2797
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 5045
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 16680
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 6625
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 8799
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 12609
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 7856
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 12924
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 18074
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_02",
+            "at": 3917
+          },
+          {
+            "tokenId": "tok_social_01",
+            "at": 9907
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 13052
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 3665
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 7829
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 13377
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_00",
+            "at": 6459
+          },
+          {
+            "tokenId": "tok_social_01",
+            "at": 9443
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 11752
+          }
+        ]
+      ],
+      "firstMarketMs": [
+        341,
+        653,
+        13451.300000000001,
+        87215.69999999998
+      ],
+      "firstNarrativeMs": [
+        2582,
+        6662,
+        10778.800000000001,
+        89982.45999999999
+      ]
+    },
+    "bounded": {
+      "common": {
+        "paths": 646,
+        "trades": 342586,
+        "activeBins": 253959,
+        "exposure": 1161188,
+        "earlyExposure": 77520,
+        "buy": 171389,
+        "first80": 86,
+        "first90": 22,
+        "completions": 1,
+        "ages": [
+          49901,
+          134503,
+          94493,
+          63689
+        ],
+        "buySol": "71384924144289",
+        "sellSol": "65831146211931"
+      },
+      "decisions": 1387308,
+      "fills": {
+        "BUY": 204297,
+        "SELL": 219882
+      },
+      "first120": 0.6437177502579979,
+      "empty": 0.78129381288818,
+      "activeIntensity": 1.3489815285144453,
+      "intensity": 0.29503060658566915,
+      "ageShares": [
+        0.14565977593947213,
+        0.39261090645852426,
+        0.27582271312896617,
+        0.18590660447303742
+      ],
+      "buyShare": 0.5002802216085888,
+      "buySolShare": 0.5202373450789697,
+      "sizesSol": [
+        0.0027078025,
+        0.1582664735,
+        1.144298711,
+        2.6884967776500006
+      ],
+      "counters": {
+        "scheduled": {
+          "bootstrap:Observe": 385,
+          "periodic": 462854,
+          "reactive": 924746,
+          "bootstrap:Discover": 215
+        },
+        "executed": {
+          "bootstrap:Observe": 385,
+          "bootstrap:Discover": 215,
+          "reactive": 924454,
+          "periodic": 462254
+        },
+        "stale": {},
+        "queued": {
+          "reactive": 292,
+          "periodic": 600
+        },
+        "rejects": {
+          "BUY:execution:SLIPPAGE": 1349,
+          "SELL:execution:SLIPPAGE": 1022,
+          "SELL:execution:DUST_OR_LIQUIDITY": 3
+        },
+        "attempts": {
+          "BUY": 205654,
+          "SELL": 220929
+        },
+        "pendingOrders": {
+          "SELL": 22,
+          "BUY": 8
+        },
+        "impulses": 12226896,
+        "coalescedReactive": 6074668,
+        "coalescedPeriodic": 5227482
+      },
+      "gapsMs": [
+        2000,
+        2000,
+        3334,
+        3925
+      ],
+      "minGapMs": 2000,
+      "periodicGapsMs": [
+        5000,
+        6999,
+        8996,
+        9450
+      ],
+      "availableSol": [
+        {
+          "minute": 0,
+          "available": 6975
+        },
+        {
+          "minute": 5,
+          "available": 3665.777305295
+        },
+        {
+          "minute": 10,
+          "available": 2102.154489764
+        },
+        {
+          "minute": 15,
+          "available": 1053.283816072
+        },
+        {
+          "minute": 20,
+          "available": 504.81571261
+        },
+        {
+          "minute": 30,
+          "available": 132.428358806
+        },
+        {
+          "minute": 45,
+          "available": 27.389528478
+        },
+        {
+          "minute": 60,
+          "available": 10.434783999
+        },
+        {
+          "minute": 90,
+          "available": 9.205421625
+        }
+      ],
+      "lastSwapMs": [
+        5399972,
+        5399962,
+        5399797,
+        5399995,
+        5399962,
+        5399808
+      ],
+      "socialLaunches": [
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 2797
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 5045
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 9537
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 4507
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 6605
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 6690
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_02",
+            "at": 4499
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 7715
+          },
+          {
+            "tokenId": "tok_social_01",
+            "at": 7856
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_02",
+            "at": 3917
+          },
+          {
+            "tokenId": "tok_social_01",
+            "at": 9907
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 10955
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_01",
+            "at": 3665
+          },
+          {
+            "tokenId": "tok_social_00",
+            "at": 5038
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 7829
+          }
+        ],
+        [
+          {
+            "tokenId": "tok_social_00",
+            "at": 6459
+          },
+          {
+            "tokenId": "tok_social_02",
+            "at": 8224
+          },
+          {
+            "tokenId": "tok_social_01",
+            "at": 9443
+          }
+        ]
+      ],
+      "firstMarketMs": [
+        341,
+        653,
+        11389.4,
+        85926.87999999999
+      ],
+      "firstNarrativeMs": [
+        2582,
+        6662,
+        10778.800000000001,
+        89982.45999999999
+      ]
+    }
+  },
+  "hashes": [
+    {
+      "off": {
+        "seed": "V2-PILOT-A",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-A",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "dd669f1e38e0a06a",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "7b8a434e35d502251c4e15c14eb20eb2333c6f7a9fc869345807b0b65f241667",
+        "fullTapeSha256": "511a85be179c35644aeac9f5eaf8e27dca95b6066c43fe021e5bc02641891614"
+      },
+      "control": {
+        "seed": "V2-PILOT-A",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-A",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "200d9880be06d174",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "fbe2183b58b74e8e6a420044314208413c7cc561316635104d680c8119e33e12",
+        "fullTapeSha256": "b4ed624dd0b754451502bb1cccfeb19af80b9b1e6ea2826812260ee120521468"
+      },
+      "timer": {
+        "seed": "V2-PILOT-A",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-A",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "ca906225e9fe8ba9",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "9d6ee4a92359aea35af757496f6697fb0164a106e73c6482f7e7786626cd0987",
+        "fullTapeSha256": "9babdd6d4ae6c17b9d12e61a768bffd1dccac6b545549c4d345d230e221ee8d0"
+      },
+      "bounded": {
+        "seed": "V2-PILOT-A",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-A",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "de4e1ae2a2806236",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "531a7440f509b8ec19828873cdc9b6cb30119be351760c8f8a0b5772cdd1cb77",
+        "fullTapeSha256": "d1409677d8a4c8015d80265368dac9962b5494f8cd7904290cc1179f860fd61d"
+      }
+    },
+    {
+      "off": {
+        "seed": "V2-PILOT-B",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-B",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "e699235d5e28dd39",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "69f6c095137f73eb917eff5b5ec3f7366ae046fc936f93254cb830bc8755bfe5",
+        "fullTapeSha256": "3864d48732822a7fce808d99cf9c087d7cae8d65d06bbacce800ce1a6de249fc"
+      },
+      "control": {
+        "seed": "V2-PILOT-B",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-B",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "78400eef87cae253",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "8635259f2c1bc2ccb2d481ccaa3ba33566e68f1e6544f2b9ad82dfb58c57a13c",
+        "fullTapeSha256": "9c9c21c119dcebe6b7f1970566081035722e9cbb93d54c7324371546140d8b72"
+      },
+      "timer": {
+        "seed": "V2-PILOT-B",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-B",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "ffd82210781265dc",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "462a01e2e2d1287ce5fa4337043af827bc797f123d675db81a92bacaabf53df9",
+        "fullTapeSha256": "df256f2fd5aac0399c5b98a7148e4bf9eab786b25f3c70e70f6abff06e86ff05"
+      },
+      "bounded": {
+        "seed": "V2-PILOT-B",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-B",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "4393f5558ccd28a9",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "11485f243c20bf414500c6aa5ae3be10cb966dbbb87ba499d833871900feb3a5",
+        "fullTapeSha256": "6deed02d32239171d5e7954b132fc23f255767d71efd2079168518f82f9574e9"
+      }
+    },
+    {
+      "off": {
+        "seed": "V2-PILOT-C",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-C",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "43946574d25040c0",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "8f3dda4297d12228e9731a454c3d531108bcd912df765bbcb536f732a04b973d",
+        "fullTapeSha256": "e2a22b2167acfcabcd8dff8a141256c542b7bd311c95288c6ba9aad8b7d16c21"
+      },
+      "control": {
+        "seed": "V2-PILOT-C",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-C",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "f88af46e5d01e8e2",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "f718525c0e87d7dc8a8187adc49aa5696c4ecaaaa7a1b922792a078102e710ef",
+        "fullTapeSha256": "0df9d96a89c3c78f093a86f7c770442702bca6b1613fab0a8e65826d2a5609d2"
+      },
+      "timer": {
+        "seed": "V2-PILOT-C",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-C",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "8aef0f9bd659b5cf",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "52e264716593dc854d77f119f5b5042d9066e6e7bd83b1ef24ab35fba6f67210",
+        "fullTapeSha256": "f039c6f25569db7f2f54f6e32a5bef544c5defa3af9756cabd451834dcd9f566"
+      },
+      "bounded": {
+        "seed": "V2-PILOT-C",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-C",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "78f79974c2fa48e8",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "72846d8cf0e4fdbc3c7576c0c871aa67ecd29fec25d3a28bf28fd072dd62c6da",
+        "fullTapeSha256": "a0cb356119b62ae562165ab895fced0561c362704d9d834ec1b629023698404d"
+      }
+    },
+    {
+      "off": {
+        "seed": "V2-PILOT-D",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-D",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "30ce2f3b44c3813f",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "7ddb9ec03461ffdb7c7839ffb4b8b1ca2d2151e6396cc30f321fbc7c477d1028",
+        "fullTapeSha256": "d33aec221da6a35ad25d4390e31ab99b69187799ed404ef35f8d118fc1ee7a02"
+      },
+      "control": {
+        "seed": "V2-PILOT-D",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-D",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "f3f832952ad80be1",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "0e553fd95a3d14f59a8bae966e7f90e65b9c4f24c90dee8a55103ec3153a3e91",
+        "fullTapeSha256": "921cec9fc5c8b153753bfc05fcd2b0bd9d50b01cbb29b27c1fa73c4c5ddfea42"
+      },
+      "timer": {
+        "seed": "V2-PILOT-D",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-D",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "d9226faec80dff52",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "cdd1b632e76898007325b756318037e99aedff1cc5f4857a93c57ab59d778d44",
+        "fullTapeSha256": "21209dfa982ca1fb662a1299f0f96c4f5f289f3ea99bfc42a08f7f52d0ee4457"
+      },
+      "bounded": {
+        "seed": "V2-PILOT-D",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-D",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "35d6a5af88904a5b",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "b8996d3df9077bf0fd475e145cce13093234ed93330ee1fd3a14ae7320c0d1c6",
+        "fullTapeSha256": "8390d92c6a24481294b7bf886ecade5325068490c55792f1c33e3225786ffe90"
+      }
+    },
+    {
+      "off": {
+        "seed": "V2-PILOT-E",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-E",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "131054325f8549f6",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "9103dc106dc2856ce2ed6baf581944251d9acc25983f87cb605c4c8917e687d2",
+        "fullTapeSha256": "68140d6ae6ee28a07904aae8398ec62d5bbcac9902b00048336266173b7df2cf"
+      },
+      "control": {
+        "seed": "V2-PILOT-E",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-E",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "31da7fb4cefa1640",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "d782993905063e6df80732daaf1d8ee348d910800781524965ec47a8cb54b2a3",
+        "fullTapeSha256": "a1490ff74052af268fd6015d0ecac6647cb951a8fc264f5337f78c2b3d6c1cd3"
+      },
+      "timer": {
+        "seed": "V2-PILOT-E",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-E",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "21831da1dc1ee6ed",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "4a7aac9c54369e8828ae67a700135dc13c4b90c0dfa0154d8bdd595d555c3a58",
+        "fullTapeSha256": "5f272ed154e6f8e6a5b87f9a56851ee6dbb52f6f1bc045e1a18b56b910cf4ff5"
+      },
+      "bounded": {
+        "seed": "V2-PILOT-E",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-E",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "ae13f22e447aa50a",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "c3034af84b0e3e0cf936a9df0c4d08a778604738ad4df861499e730194cb58db",
+        "fullTapeSha256": "574f22e5c50b578a32be2256da6603545a667b0978881761c986a1dcb22b4c96"
+      }
+    },
+    {
+      "off": {
+        "seed": "V2-PILOT-F",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-F",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "70b309f1978cc0c5",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "9956af62c9b2ebfb18a38ff79c7ce51c6f9843d8abeb37d3c8848fd80b374e1a",
+        "fullTapeSha256": "3e785fd19bacfe41e9f1cddcfe8add2c37a244409315a9b85497468ba35d3c56"
+      },
+      "control": {
+        "seed": "V2-PILOT-F",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-F",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "d2c031a319eec13f",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "f13d1664abd9d1f8c5391a92557b9167fdb7d114cbfe5a132b8e2322e6b8551f",
+        "fullTapeSha256": "8cda10e75c8093c59dfefb3c1c5c2bf1a2b5a9181f5ad0daabf8aff0d334b553"
+      },
+      "timer": {
+        "seed": "V2-PILOT-F",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-F",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "573c261c0a571390",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "e16e005bf140d44e35f3ab2492cec9b745f64583e2834f9d84bb408e83f6e3ef",
+        "fullTapeSha256": "fbf8b0174e623b693d424d7e72f5ac227e71e0e33e503842dd26e2456681c74d"
+      },
+      "bounded": {
+        "seed": "V2-PILOT-F",
+        "manifest": {
+          "engineVersion": "2.0.0-slice.1",
+          "schedulerVersion": "round-heap-1",
+          "rngVersion": "mulberry32-counter-1",
+          "arithmeticVersion": "standard-1",
+          "seed": "V2-PILOT-F",
+          "epochUtcMs": 1792918800000,
+          "catalogHash": "aa63ea548c05f758",
+          "configHash": "6bfa5ad1e0cedaed",
+          "policyVersions": {
+            "agents": "bounded-rotation-2",
+            "social": "scenario-1",
+            "lifecycle": "idle-deadlines-2",
+            "fee": "fixed-1"
+          }
+        },
+        "tapeSha256": "f42b5748adc7a476eacc15195e7a84cc37cb3046945a078be5e5b8f3e901e4db",
+        "fullTapeSha256": "205247e6a4c3d8a8968be308ed90858f80dab05fc3d084bbcc36b8f56cdfcf6f"
+      }
+    }
+  ]
+}
