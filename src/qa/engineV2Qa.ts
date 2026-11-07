@@ -1,12 +1,13 @@
-import { SELL_FEE_RESERVE, decideTrade, observe } from '../engineV2/agents';
+import { SELL_FEE_RESERVE, decideTrade, newAgent, observe } from '../engineV2/agents';
 import { BASE_FEE, SOL, decimalAtoms, type Intent, type Policy } from '../engineV2/contracts';
 import type { Command } from '../engineV2/events';
 import { SWAP_COLLECTOR, TX_COLLECTOR, posting } from '../engineV2/ledger';
 import { curveAccount, escrowAccount, residualAccount, reserves, spot } from '../engineV2/marketRules';
 import { RecordedPlayback } from '../engineV2/projections';
 import { RngStreams } from '../engineV2/rng';
+import { SOCIAL_CATALOG } from '../engineV2/social';
 import { canonical } from '../engineV2/snapshot';
-import { DEFAULT_WORLD, USER, World, type WorldConfig } from '../engineV2/world';
+import { BOUNDED_REACTIVE_MS, DEFAULT_WORLD, USER, World, type WorldConfig } from '../engineV2/world';
 
 const FIRST = 'tok_baseline_0';
 const SECOND = 'tok_qa_competitor';
@@ -139,6 +140,79 @@ function sellFeeReserveGate() {
   same(on, restored, 'ON checkpoint replay');
   same(on, World.rerun(on.config, [], 7_000), 'ON deterministic rerun');
   console.log('PASS opt-in SELL fee reserve, BUY boundary, standard SELL fee and ON restore');
+}
+
+function boundedReactiveGate() {
+  const world = fixture({ boundedReactive: true, agentDecisions: true, sellFeeReserve: true });
+  const id = 'agent:00000';
+  world.state.agents[id] = newAgent(id, 0);
+  const observeAt = (candidate: World, at: number) => candidate.kernel.schedule(at, 30, 'Observe', {
+    agentId: id, market: { ...candidate.publicMarket(candidate.state.markets[FIRST]), observedAt: at }, evidence: 'qa:bounded',
+  });
+  observeAt(world, 1);
+  world.advanceTo(2);
+  const agent = world.state.agents[id];
+  equal(agent.ordinal, 1, 'First discovery bootstraps one decision');
+  const due = agent.nextAt;
+  const periodicGeneration = agent.generation;
+  check(due !== null && due >= 4_502 && due <= 9_501, 'Bootstrap creates the ordinary periodic timer');
+  observeAt(world, 100);
+  observeAt(world, 200);
+  const post = { ...SOCIAL_CATALOG[0], id: 'qa:bounded-narrative' };
+  world.kernel.schedule(250, 10, 'Publish', { post, audience: false });
+  world.kernel.schedule(300, 30, 'Discover', { agentId: id, postId: post.id, exposureId: 'qa:bounded-exposure' });
+  world.advanceTo(300);
+  equal(agent.nextAt, due, 'Information leaves the periodic deadline unchanged');
+  equal(agent.boundedWake?.reactiveAt, 2 + BOUNDED_REACTIVE_MS, 'Reaction waits for the fixed cooldown');
+  equal(agent.boundedWake?.reactiveGeneration, 1, 'Repeated Observe and Discover coalesce');
+  check(agent.known[FIRST].view.observedAt === 200 && agent.narratives.signal, 'Information continues updating');
+  const tasks = world.kernel.snapshot().pending.filter((event) => event.kind === 'Decide');
+  equal(tasks.length, 2, 'One periodic and one reactive task are pending');
+  const restored = World.restore(world.snapshot());
+  equal(restored.config.boundedReactive, true, 'Bounded mode survives checkpoint');
+  world.advanceTo(2 + BOUNDED_REACTIVE_MS);
+  restored.advanceTo(2 + BOUNDED_REACTIVE_MS);
+  same(world, restored, 'Pending reaction and periodic timer restore');
+  equal(agent.ordinal, 2, 'One coalesced reaction executes');
+  equal(agent.nextAt, due, 'Reactive execution leaves the periodic deadline unchanged');
+  equal(agent.generation, periodicGeneration, 'Reactive execution does not replace the periodic generation');
+  observeAt(world, due - 1_000);
+  world.advanceTo(due - 999);
+  equal(agent.boundedWake?.reactiveAt, null, 'Nearby information is serviced by the periodic deadline');
+  world.advanceTo(due);
+  equal(agent.ordinal, 3, 'Periodic deadline still executes');
+  check(agent.nextAt !== null && agent.nextAt - due >= 4_500 && agent.nextAt - due <= 9_499,
+    'Periodic cadence retains its original interval draw');
+  verifyLedger(world);
+
+  const collision = World.restore(restored.snapshot());
+  const actor = collision.state.agents[id];
+  const at = collision.now + BOUNDED_REACTIVE_MS;
+  check(actor.boundedWake, 'Checkpoint contains bounded wake state');
+  actor.boundedWake.reactiveAt = at;
+  actor.boundedWake.reactiveGeneration++;
+  collision.kernel.schedule(at, 40, 'Decide', { agentId: id,
+    generation: actor.boundedWake.reactiveGeneration, reactive: true });
+  actor.nextAt = at;
+  actor.generation++;
+  collision.kernel.schedule(at, 40, 'Decide', { agentId: id, generation: actor.generation });
+  const collisionCopy = World.restore(collision.snapshot());
+  collision.advanceTo(at);
+  collisionCopy.advanceTo(at);
+  same(collision, collisionCopy, 'Collision priority survives checkpoint');
+  equal(collision.kernel.log.filter((fact) => fact.kind === 'AgentDecided' && fact.key.at === at).length,
+    1, 'Periodic wins even when the reactive task was scheduled first');
+
+  const options = { ...DEFAULT_WORLD, agents: 8, sellFeeReserve: true, boundedReactive: true } as const;
+  const normal = new World(options);
+  normal.advanceTo(3_000);
+  const copy = World.restore(normal.snapshot());
+  normal.advanceTo(30_000);
+  copy.advanceTo(30_000);
+  same(normal, copy, 'Bounded full-world restore');
+  same(normal, World.rerun(options, [], 30_000), 'Bounded deterministic replay');
+  verifyLedger(normal);
+  console.log('PASS bounded cooldown, coalescing, periodic priority and checkpoint/replay');
 }
 
 function financialGate() {
@@ -402,6 +476,7 @@ equal(decimalAtoms('0.1000000001', 9), null, 'Excess precision rejected');
 equal(decimalAtoms('1e-9', 9), 1n, 'One lamport');
 financialGate();
 sellFeeReserveGate();
+boundedReactiveGate();
 orderAndMigrationGate();
 priceCrossingGate();
 expiryAndFaultGate();
