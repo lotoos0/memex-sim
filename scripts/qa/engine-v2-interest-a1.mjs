@@ -11,10 +11,12 @@ import { analyze, newResult } from './engine-v2-market-persistence-metrics.mjs';
 const baselineDir = resolve(process.argv[2] ?? 'output/engine-v2-real-c-baseline');
 const out = resolve(process.argv[3] ?? 'output/engine-v2-interest-a1');
 const requestedSeed = process.argv[4];
+const causal = process.argv.includes('--causal');
 const baseline = JSON.parse(readFileSync(join(baselineDir, 'v2-runs.json'), 'utf8'));
 const [realMetrics] = JSON.parse(readFileSync(join(baselineDir, 'metrics.json'), 'utf8'));
 const controls = JSON.parse(readFileSync('output/engine-v2-sell-fee-reserve/summary.json', 'utf8'));
 const boundedReference = JSON.parse(readFileSync('output/engine-v2-bounded-reactive/summary.json', 'utf8'));
+const a1Reference = causal ? JSON.parse(readFileSync('output/engine-v2-interest-a1-final/summary.json', 'utf8')) : null;
 const realAudit = JSON.parse(readFileSync('output/engine-v2-persistence-audit/summary.json', 'utf8')).real;
 const temp = mkdtempSync(join(tmpdir(), 'memex-interest-a1-'));
 const json = (value) => JSON.stringify(value, (_, item) => typeof item === 'bigint' ? item.toString() : item);
@@ -24,22 +26,39 @@ const sampleMinutes = new Set([0, 5, 10, 15, 20, 30, 45, 60, 90]);
 const band = (ms) => ms < 120_000 ? 0 : ms < 600_000 ? 1 : ms < 1_200_000 ? 2 : 3;
 
 try {
-  const expiredBuyGuard = 'if (tokenInterest && (!agent.known[view.tokenId] || now >= (agent.tokenInterest?.[view.tokenId]?.buyUntil ?? 0))) return null;';
+  const expiredBuyGuard = 'if (exitEnabled && !agent.known[view.tokenId]\n    || leaseEnabled && now >= (agent.tokenInterest?.[view.tokenId]?.buyUntil ?? 0)) return null;';
   const bundle = join(temp, 'runner.mjs');
   const built = await build({ stdin: { contents: `
     export { measure } from './src/qa/engineV2Benchmark';
+    export { decideTrade, newAgent, observe } from './src/engineV2/agents';
+    export { RngStreams } from './src/engineV2/rng';
+    export { BASE_FEE, SOL } from './src/engineV2/contracts';
+    export { posting } from './src/engineV2/ledger';
     export { World, DEFAULT_WORLD, BOUNDED_REACTIVE_MS } from './src/engineV2/world';`, resolveDir: process.cwd() },
     platform: 'node', format: 'esm', bundle: true, metafile: true, outfile: bundle,
     plugins: [{ name: 'a1-read-only-diagnostics', setup(builder) {
       builder.onLoad({ filter: /engineV2[\\/]agents\.ts$/ }, ({ path }) => {
-        const source = readFileSync(path, 'utf8');
+        let source = readFileSync(path, 'utf8').replaceAll('\r\n','\n');
+        const replaceOnce = (old, replacement) => {
+          assert.equal(source.split(old).length,2,'One diagnostic anchor: '+old);
+          source=source.replace(old,replacement);
+        };
+        replaceOnce("const draw = (exclusive: number) => rng.int('agent/decision', agent.id, AGENT_VERSION, exclusive);",
+          "const trace = (reason, selection = null, detail = null) => globalThis.__a1PolicyTrace(agent, now, ledger, protectedBuySol, leaseEnabled, exitEnabled, candidates, selection, reason, detail);\n  const draw = (exclusive: number) => rng.int('agent/decision', agent.id, AGENT_VERSION, exclusive);");
+        replaceOnce('if (!candidates.length || draw(100) < 45) return null;',
+          "if (!candidates.length) { trace('NO_CANDIDATE'); return null; }\n  if (draw(100) < 45) { trace('POLICY_WAIT'); return null; }");
+        replaceOnce('const { view, prior, evidence } = selected;',
+          'const { view, prior, evidence } = selected;\n  trace(null, selected);');
+        replaceOnce('if (cash <= 0n) return null;',"if (cash <= 0n) { trace('BUY_BUDGET', selected, 'NO_CASH'); return null; }");
+        replaceOnce('if (size <= 0n) return null;',"if (size <= 0n) { trace('BUY_BUDGET', selected, 'RESERVE'); return null; }");
         assert.equal(source.split(expiredBuyGuard).length, 2, 'One explicit BUY-only interest guard');
         return { loader: 'ts', contents: source.replace(expiredBuyGuard,
-          expiredBuyGuard.replace('return null;', '{ globalThis.__a1ExpiredBuy(agent, view, now); return null; }')) };
+          expiredBuyGuard.replace('return null;', "{ trace('BUY_RESTRICTION', selected, exitEnabled && !agent.known[view.tokenId] ? 'EXIT_VIEW' : 'LEASE_EXPIRED'); globalThis.__a1ExpiredBuy(agent, view, now); return null; }")) };
       });
     } }],
   });
-  const { measure, World, DEFAULT_WORLD, BOUNDED_REACTIVE_MS } = await import(pathToFileURL(bundle));
+  const { measure, World, DEFAULT_WORLD, BOUNDED_REACTIVE_MS, BASE_FEE, SOL, posting,
+    decideTrade, newAgent, observe, RngStreams } = await import(pathToFileURL(bundle));
   assert.deepEqual(DEFAULT_WORLD, baseline.defaults);
   assert.equal(baseline.variant, 'on');
   assert.deepEqual(baseline.seeds, [...'ABCDEF'].map((letter) => `V2-PILOT-${letter}`));
@@ -47,12 +66,78 @@ try {
   const fingerprints = Object.fromEntries(Object.keys(built.metafile.inputs).filter((path) => path !== '<stdin>')
     .map((path) => [path, hash(readFileSync(path))]));
   let audit;
+  globalThis.__a1PolicyTrace = (agent, now, ledger, protection, lease, exit, candidates, selection, reason, detail) => {
+    if (reason) assert.equal(audit.trace?.reason ?? null,null,'One primary WAIT reason per policy call');
+    const selectedId=selection?.view.tokenId ?? null;
+    const cash=ledger.balance(agent.id).available;
+    const otherBuy=Object.values(agent.known).some(item=>item.view.tokenId!==selectedId && item.view.tradable
+      && (!lease || now < (agent.tokenInterest?.[item.view.tokenId]?.buyUntil ?? 0)) && cash-BASE_FEE-protection>0n);
+    const otherSell=candidates.some(item=>item.view.tokenId!==selectedId && item.view.tradable
+      && ledger.balance(agent.id,item.view.tokenId).available>0n && cash>=BASE_FEE);
+    audit.trace={selectedId,reason,detail,otherBuy,otherSell,exitOnly:!!selectedId&&!agent.known[selectedId],
+      expired:!!selectedId&&lease&&now>=(agent.tokenInterest?.[selectedId]?.buyUntil??0),
+      noBuyBudget:cash-BASE_FEE-protection<=0n};
+  };
   globalThis.__a1ExpiredBuy = (agent, view, now) => {
     if (!agent.known[view.tokenId]) audit.a1.exitOnlyBuyWait++;
     else audit.a1.expiredBuyWait++;
     if (Object.values(agent.known).some((item) => item.view.tradable
-      && now < (agent.tokenInterest[item.view.tokenId]?.buyUntil ?? 0))) audit.a1.blockedWithInterestedAlternative++;
+      && (!audit.flags.lease || now < (agent.tokenInterest?.[item.view.tokenId]?.buyUntil ?? 0)))) audit.a1.blockedWithInterestedAlternative++;
   };
+  function waitClassificationGate() {
+    class Draws extends RngStreams {
+      constructor(values) { super('causal-classification'); this.values=[...values]; }
+      int(_namespace,_entity,_version,exclusive) {
+        const value=this.values.shift();
+        assert.ok(value!==undefined&&value>=0&&value<exclusive,'Only expected RNG draws');
+        return value;
+      }
+    }
+    const world=new World({...DEFAULT_WORLD,agents:1,agentDecisions:false,social:false,socialLaunches:false});
+    world.advanceTo(0);
+    const agent=newAgent('agent:00000',0),id='tok_baseline_0';
+    const view=world.publicMarket(world.state.markets[id]);
+    observe(agent,view,'qa:first',0);
+    const setCash=(n)=>{
+      const delta=n-world.ledger.balance(agent.id).available;
+      world.ledger.commit([posting(agent.id,'SOL',delta),posting('user:player','SOL',-delta)]);
+    };
+    const run=(at,values,exit=false,lease=true)=>{
+      audit={trace:null,flags:{exit,lease},a1:{expiredBuyWait:0,exitOnlyBuyWait:0,blockedWithInterestedAlternative:0}};
+      const rng=new Draws(values);
+      const intent=decideTrade(agent,at,world.ledger,rng,()=>undefined,5_000_000n,exit&&lease,exit&&!lease,lease&&!exit);
+      assert.equal(rng.values.length,0);
+      return {intent,trace:audit.trace};
+    };
+    assert.equal(run(300000,[]).trace.reason,'NO_CANDIDATE');
+    assert.equal(run(0,[0]).trace.reason,'POLICY_WAIT');
+    setCash(BASE_FEE);
+    assert.equal(run(0,[99,0]).trace.reason,'BUY_BUDGET');
+    setCash(5_000_000n+BASE_FEE-1n);
+    assert.equal(run(0,[99,0,14]).trace.detail,'RESERVE');
+    world.ledger.commit([posting('curve:'+id,id,-100n),posting(agent.id,id,100n)]);
+    const overlapping=run(300000,[99,0,99]);
+    assert.equal(overlapping.trace.reason,'BUY_RESTRICTION');
+    assert.equal(overlapping.trace.detail,'LEASE_EXPIRED');
+    assert.equal(overlapping.trace.noBuyBudget,true);
+    setCash(SOL);
+    const item=agent.known[id];
+    delete agent.known[id];
+    agent.tokenInterest[id].exit=item;
+    observe(agent,{...view,tokenId:'tok_z_alternative'},'qa:other',300000);
+    const exitWait=run(300001,[99,59,0,99],true,true);
+    assert.equal(exitWait.intent,null);
+    assert.equal(exitWait.trace.reason,'BUY_RESTRICTION');
+    assert.equal(exitWait.trace.detail,'EXIT_VIEW');
+    assert.equal(exitWait.trace.expired,true);
+    assert.equal(exitWait.trace.otherBuy,true);
+    const exitSell=run(300001,[99,59,0,0,0],true,true);
+    assert.equal(exitSell.intent.side,'SELL');
+    assert.equal(exitSell.trace.reason,null);
+    assert.equal(exitSell.trace.exitOnly,true);
+    console.log('PASS four disjoint WAIT reasons, overlap precedence, exit choices and exact RNG draws');
+  }
+  waitClassificationGate();
   const channelKey = (task) => `${task.payload.agentId}:${task.payload.reactive ? 'reactive' : 'periodic'}`;
   const wake = World.prototype.wake;
   World.prototype.wake = function (agent, at, periodic) {
@@ -69,6 +154,10 @@ try {
   const processTask = World.prototype.process;
   World.prototype.process = function (event) {
     const { kind, payload, key: { at } } = event;
+    if (kind === 'Decide') audit.trace=null;
+    const executedIntent=kind==='Execute'?this.state.orders[payload.orderId]?.intent:null;
+    const heldBefore=executedIntent ? this.ledger.balance(executedIntent.agentId,executedIntent.tokenId):null;
+    const atomsBefore=heldBefore ? heldBefore.available+heldBefore.reserved:0n;
     const agentId = payload.agentId;
     const actor = agentId ? this.state.agents[agentId] : null;
     const previousLease = kind === 'Observe' ? actor?.tokenInterest?.[payload.market.tokenId]?.buyUntil : undefined;
@@ -93,6 +182,29 @@ try {
       assert.equal(Boolean(committed), valid && !collision);
       bump(committed ? audit.executed : audit.stale, origin);
       if (committed) {
+        const trace=audit.trace;
+        if (committed.payload.decision==='LAUNCH') assert.equal(trace,null);
+        else {
+          assert.ok(trace,'Actual policy decisions have a diagnostic trace');
+          const intent=this.kernel.scheduled.find(task=>task.kind==='Admit')?.payload.intent;
+          if (committed.payload.decision==='WAIT') {
+            assert.ok(['NO_CANDIDATE','POLICY_WAIT','BUY_BUDGET','BUY_RESTRICTION'].includes(trace.reason));
+            bump(audit.causal,`wait:${trace.reason}`);
+            if (trace.detail) bump(audit.causal,`waitDetail:${trace.detail}`);
+            if(trace.otherBuy) bump(audit.causal,`waitOtherBuy:${trace.reason}`);
+            if(trace.otherSell) bump(audit.causal,`waitOtherSell:${trace.reason}`);
+            if(trace.expired)bump(audit.causal,'waitSecondary:expired');
+            if(trace.exitOnly)bump(audit.causal,'waitSecondary:exitOnly');
+            if(trace.noBuyBudget)bump(audit.causal,'waitSecondary:noBuyBudget');
+          } else { assert.equal(trace.reason,null); assert.ok(intent); }
+          if(trace.selectedId) {
+            const origin=trace.exitOnly?'EXIT':'KNOWN';
+            bump(audit.causal,`selected:${origin}`);
+            bump(audit.causal,`selected:${origin}:${intent?.side??'WAIT'}`);
+            if(!intent&&trace.otherBuy)bump(audit.causal,`selected:${origin}:WAIT_OTHER_BUY`);
+          }
+          bump(audit.causal,`decision:${committed.payload.decision}`);
+        }
         if (this.config.tokenInterestA1 && committed.payload.decision === 'WAIT') {
           const eligibleKnown = Object.values(actor.known).some((item) => item.view.tradable &&
             (at < (actor.tokenInterest[item.view.tokenId]?.buyUntil ?? 0) || this.ledger.balance(agentId,item.view.tokenId).available > 0n));
@@ -145,12 +257,26 @@ try {
       const fill = fact.payload.fill;
       const meta = audit.orderMeta.get(fill.intentId);
       assert.ok(meta);
-      if (this.config.tokenInterestA1) {
+      if (audit.flags.exit && fill.side==='SELL' && meta.exitOnly) bump(audit.causal,'fill:EXIT:SELL');
+      if (fill.side==='SELL') {
+        if(!this.state.agents[fill.agentId].known[fill.tokenId])bump(audit.causal,'fillOutsideKnownAtExecution');
+        const after=this.ledger.balance(fill.agentId,fill.tokenId);
+        if(atomsBefore>0n&&after.available+after.reserved===0n) {
+          bump(audit.causal,'flatExits');
+          if(meta.exitOnly)bump(audit.causal,'flatExits:EXIT');
+        }
+      }
+      if (this.config.tokenInterestA1 || this.config.tokenExitOnly || this.config.tokenLeaseOnly) {
         if (fill.side === 'SELL' && meta.exitOnly) audit.a1.exitOnlySellFills++;
-        if (fill.side === 'SELL' && meta.at >= meta.buyUntil) audit.a1.expiredSellFills++;
-        if (fill.side === 'BUY' && fill.at >= meta.buyUntil) audit.a1.inflightBuyAfterExpiry++;
+        if (audit.flags.lease && fill.side === 'SELL' && meta.at >= meta.buyUntil) audit.a1.expiredSellFills++;
+        if (audit.flags.lease && fill.side === 'BUY' && fill.at >= meta.buyUntil) audit.a1.inflightBuyAfterExpiry++;
       }
       audit.orderMeta.delete(fill.intentId);
+    }
+    if(kind==='Execute') for(const fact of this.kernel.staged) if(fact.kind==='OrderChanged'&&fact.payload.order.status==='REJECTED') {
+      const order=fact.payload.order,meta=audit.orderMeta.get(order.intentId);
+      bump(audit.causal,`executionReject:${meta?.exitOnly?'EXIT':'KNOWN'}:${order.intent.side}:${order.reason}`);
+      audit.orderMeta.delete(order.intentId);
     }
     if (this.config.boundedReactive && ((kind === 'Observe' || kind === 'Discover') && ordinal > 0 || kind === 'Decide' && payload.reactive)) {
       assert.equal(actor.nextAt, nextPeriodic, 'Information and reactive decisions preserve periodic deadline');
@@ -188,7 +314,7 @@ try {
         for (const [id] of held) {
           if (!agent.known[id]) {
             outsideKnown++;
-            if (!agent.tokenInterest?.[id]?.exit) missingExit++;
+            if (!(this.config.tokenExitOnly?agent.exitMemory?.[id]:agent.tokenInterest?.[id]?.exit)) missingExit++;
           }
           if (agent.tokenInterest?.[id] && target >= agent.tokenInterest[id].buyUntil) expiredPositions++;
         }
@@ -221,6 +347,8 @@ try {
       attempts: {}, rejects: {}, pendingOrders: {}, lastPeriodic: new Map(), periodicGaps: {},
       impulses: 0, coalescedReactive: 0, coalescedPeriodic: 0 };
     audit.orderMeta = new Map();
+    audit.flags={lease:['a1','lease'].includes(mode),exit:['a1','exit'].includes(mode)};
+    audit.causal={}; audit.trace=null;
     audit.a1 = { expiredBuyWait: 0, exitOnlyBuyWait: 0, blockedWithInterestedAlternative: 0,
       noEligibleMarketWait: 0, renewals: 0, exitOnlySellFills: 0, expiredSellFills: 0, inflightBuyAfterExpiry: 0 };
     const tape = createHash('sha256');
@@ -262,11 +390,17 @@ try {
         else path.sellSol += row.quoteAtomsExFee;
       }
     }, { streamFacts: true, ...(mode !== 'off' ? { sellFeeReserve: true } : {}),
-      ...(['bounded','a1'].includes(mode) ? { boundedReactive: true } : {}), ...(mode === 'a1' ? { tokenInterestA1: true } : {}) });
+      ...(['bounded','a1','exit','lease'].includes(mode) ? { boundedReactive: true } : {}),
+      ...(mode === 'a1' ? { tokenInterestA1: true } : {}),
+      ...(mode === 'exit' ? { tokenExitOnly: true } : {}), ...(mode === 'lease' ? { tokenLeaseOnly: true } : {}) });
     for (const [source, count] of Object.entries(audit.scheduled)) {
       assert.equal(count, (audit.executed[source] ?? 0) + (audit.stale[source] ?? 0) + (audit.queued[source] ?? 0));
     }
     assert.equal(Object.values(audit.executed).reduce((sum, value) => sum + value, 0), measured.decisions);
+    assert.equal(Object.entries(audit.causal).filter(([k])=>k.startsWith('wait:')).reduce((n,[,v])=>n+v,0),audit.causal['decision:WAIT']??0);
+    for (const origin of ['KNOWN','EXIT']) assert.equal(audit.causal[`selected:${origin}`]??0,
+      ['BUY','SELL','WAIT'].reduce((n,side)=>n+(audit.causal[`selected:${origin}:${side}`]??0),0));
+    assert.equal(audit.causal['selected:EXIT:BUY']??0,0);
     for (const side of ['BUY', 'SELL']) {
       const rejects = Object.entries(audit.rejects).filter(([key]) => key.startsWith(side + ':')).reduce((n, [, count]) => n + count, 0);
       assert.equal(audit.attempts[side] ?? 0, (fills[side] ?? 0) + rejects + (audit.pendingOrders[side] ?? 0));
@@ -297,7 +431,7 @@ try {
     if (saveSizes && mode !== 'off') writeFileSync(join(out, `${seed}-${mode}-sizes.bin`), bytes, { flag: 'wx' });
     assert.equal(marketAudit.paths, common.paths);
     assert.equal(marketAudit.cells.all.trades, common.trades);
-    const { origins, pending, lastDecision, lastPeriodic, firstMarket, firstNarrative, orderMeta, ...counters } = audit;
+    const { origins, pending, lastDecision, lastPeriodic, firstMarket, firstNarrative, orderMeta, trace, flags, ...counters } = audit;
     const result = { seed, mode, manifest: measured.manifest, decisions: measured.decisions, facts: measured.facts,
       all: measured.all, poolFills: measured.poolFills, simulatedMs: measured.simulatedMs, baselineSchedule: measured.baselineSchedule,
       tapeSha256: tape.digest('hex'), fullTapeSha256: fullTape.digest('hex'), sizeSamplesSha256: hash(bytes),
@@ -324,17 +458,26 @@ try {
     const a1 = run(expected.seed, 'a1');
     assert.notEqual(a1.manifest.configHash, bounded.manifest.configHash);
     assert.deepEqual(a1.baselineSchedule, bounded.baselineSchedule);
-    assert.deepEqual(run(expected.seed, 'a1', false), a1, `${expected.seed} A1 repeat`);
-    runs.push({ off, control, bounded, a1 });
-    console.log(expected.seed, 'BOUNDED', bounded.common.trades, 'A1', a1.common.trades, 'swaps; all regression hashes and A1 repeat match');
+    if(causal) {
+      const saved=a1Reference.runs.find(row=>row.a1.seed===expected.seed).a1;
+      for(const key of ['manifest','tapeSha256','fullTapeSha256','all','common','decisions','facts','baselineSchedule'])assert.deepEqual(a1[key],saved[key],`${expected.seed} A1 anchor ${key}`);
+      const exit=run(expected.seed,'exit'),lease=run(expected.seed,'lease');
+      runs.push({off,control,bounded,exit,lease,a1});
+      console.log(expected.seed,'2x2 swaps',bounded.common.trades,exit.common.trades,lease.common.trades,a1.common.trades,'all anchors match');
+    } else {
+      assert.deepEqual(run(expected.seed, 'a1', false), a1, `${expected.seed} A1 repeat`);
+      runs.push({ off, control, bounded, a1 });
+      console.log(expected.seed, 'BOUNDED', bounded.common.trades, 'A1', a1.common.trades, 'swaps; all regression hashes and A1 repeat match');
+    }
   }
   const result = { revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), fingerprints,
-    defaults: DEFAULT_WORLD, cooldownMs: BOUNDED_REACTIVE_MS, interestMs: 300000,
+    defaults: DEFAULT_WORLD, cooldownMs: BOUNDED_REACTIVE_MS, interestMs: 300000, causal,
     instrumentationGuardSha256: hash(expiredBuyGuard), real: realMetrics,
     realAudit: { ...realAudit, bursts: { ...realAudit.bursts, perPath: undefined } }, runs };
   writeFileSync(join(out, requestedSeed ? `${requestedSeed}.json` : 'summary.json'), JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });
 } finally {
   delete globalThis.__a1ExpiredBuy;
+  delete globalThis.__a1PolicyTrace;
   assert.equal(resolve(temp, '..'), resolve(tmpdir()), 'Cleanup stays inside the temporary directory');
   rmSync(temp, { recursive: true, force: true });
 }

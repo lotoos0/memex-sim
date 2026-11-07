@@ -8,16 +8,20 @@ import { build } from 'esbuild';
 import { quantileHist } from './engine-v2-market-persistence-metrics.mjs';
 
 const out = resolve(process.argv[2] ?? 'output/engine-v2-interest-a1');
+const causal=process.argv.includes('--causal');
+const modes=causal?['bounded','exit','lease','a1']:['bounded','a1'];
 const inputs = [...'ABCDEF'].map((letter) => JSON.parse(readFileSync(join(out, `V2-PILOT-${letter}.json`), 'utf8')));
 for (const input of inputs) {
+  assert.equal(!!input.causal,causal,'Use the matching capture/summary mode');
   assert.deepEqual(input.fingerprints, inputs[0].fingerprints);
   assert.equal(input.instrumentationGuardSha256, inputs[0].instrumentationGuardSha256);
 }
 const runs = inputs.flatMap((input) => input.runs);
-for (const { bounded, a1 } of runs) {
-  assert.deepEqual(a1.counters.samples.slice(0,2),bounded.counters.samples.slice(0,2),'Economics before first expiry remain identical');
-  assert.equal(a1.counters.executed.periodic,bounded.counters.executed.periodic,'Periodic execution count remains unchanged');
-  assert.deepEqual(a1.counters.periodicGaps,bounded.counters.periodicGaps,'Periodic cadence remains unchanged');
+for (const run of runs) for(const mode of modes) {
+  const row=run[mode],bounded=run.bounded;
+  assert.deepEqual(row.counters.samples.slice(0,2),bounded.counters.samples.slice(0,2),'Economics before first expiry remain identical');
+  assert.equal(row.counters.executed.periodic,bounded.counters.executed.periodic,'Periodic execution count remains unchanged');
+  assert.deepEqual(row.counters.periodicGaps,bounded.counters.periodicGaps,'Periodic cadence remains unchanged');
 }
 for (const [path, expected] of Object.entries(inputs[0].fingerprints)) {
   assert.equal(createHash('sha256').update(readFileSync(path)).digest('hex'), expected, 'Measured engine input must remain unchanged');
@@ -28,7 +32,8 @@ try {
   await build({ stdin:{ contents:"export { measure } from './src/qa/engineV2Benchmark';",resolveDir:process.cwd()},
     platform:'node',format:'esm',bundle:true,outfile:cleanBundle });
   const { measure } = await import(pathToFileURL(cleanBundle));
-  for (const { a1 } of runs) {
+  for (const run of runs) for(const mode of causal?modes:['a1']) {
+    const a1=run[mode];
     const full = createHash('sha256'), compact = createHash('sha256');
     const json = (v) => JSON.stringify(v,(_,v)=>typeof v==='bigint'?v.toString():v);
     const result = measure(a1.seed,'on',row=>{
@@ -37,11 +42,12 @@ try {
       if(row.kind==='fill'&&row.marketEpoch===0) compact.update(json({kind:row.kind,token:row.tokenId,at:row.at,
         seq:row.globalSeq.toString(),quote:row.quoteAtomsExFee.toString(),price:row.priceSol,progress:row.progressAfter,
         side:row.side,completion:row.completion})+'\n');
-    },{sellFeeReserve:true,boundedReactive:true,tokenInterestA1:true,streamFacts:true});
+    },{sellFeeReserve:true,boundedReactive:true,streamFacts:true,
+      ...(mode==='a1'?{tokenInterestA1:true}:{}),...(mode==='exit'?{tokenExitOnly:true}:{}),...(mode==='lease'?{tokenLeaseOnly:true}:{})});
     for (const key of ['manifest','all','decisions','facts','poolFills','baselineSchedule','simulatedMs']) assert.deepEqual(result[key],a1[key]);
     assert.equal(full.digest('hex'),a1.fullTapeSha256);
     assert.equal(compact.digest('hex'),a1.tapeSha256);
-    console.log('PASS',a1.seed,'uninstrumented A1 matches both tapes and summaries');
+    console.log('PASS',a1.seed,mode,'uninstrumented repeat matches both tapes and summaries');
   }
 } finally {
   assert.equal(resolve(cleanDir,'..'),resolve(tmpdir()),'Cleanup stays inside the temporary directory');
@@ -67,9 +73,9 @@ const weighted = (bag) => {
   });
 };
 const pooled = {};
-for (const mode of ['bounded', 'a1']) {
+for (const mode of modes) {
   const rows = runs.map((run) => run[mode]);
-  if (mode === 'a1') for (const row of rows) for (const sample of row.counters.samples) {
+  if (mode === 'a1'||mode==='exit') for (const row of rows) for (const sample of row.counters.samples) {
     assert.equal(sample.missingExit,0,'Every sampled outside-known position retains an exit observation');
   }
   const common = {};
@@ -93,6 +99,11 @@ for (const mode of ['bounded', 'a1']) {
     .map((key) => [key, mergeCounts(rows.map((row) => row.counters[key]))]));
   for (const key of ['impulses', 'coalescedReactive', 'coalescedPeriodic']) counters[key] = sum(rows, (row) => row.counters[key] ?? 0);
   counters.a1 = mergeCounts(rows.map(row=>row.counters.a1));
+  counters.causal=mergeCounts(rows.map(row=>row.counters.causal));
+  assert.equal(Object.entries(counters.causal).filter(([key])=>key.startsWith('wait:')).reduce((n,[,v])=>n+v,0),counters.causal['decision:WAIT']);
+  assert.equal(counters.causal['wait:BUY_RESTRICTION']??0,
+    (counters.causal['waitDetail:EXIT_VIEW']??0)+(counters.causal['waitDetail:LEASE_EXPIRED']??0));
+  if(mode==='bounded'||mode==='lease')assert.equal(counters.causal['selected:EXIT']??0,0);
   assert.equal(counters.impulses,
     counters.coalescedReactive + counters.coalescedPeriodic + counters.scheduled.reactive);
   const cells = {};
@@ -152,11 +163,40 @@ for (const mode of ['bounded', 'a1']) {
   };
 }
 const summary = { ...inputs[0], runs, pooled };
+if(causal) {
+  const metric=(r,key)=>{
+    if(key==='swaps')return r.common.trades;
+    if(key==='buy')return r.common.buy;
+    if(key==='sell')return r.common.trades-r.common.buy;
+    if(key==='lateSwaps')return r.common.ages[2]+r.common.ages[3];
+    if(key==='lateBuy')return r.marketAudit.cells['age:10-20'].buy+r.marketAudit.cells['age:20-30'].buy;
+    if(key==='earlyRate')return r.common.ages[0]/r.common.earlyExposure;
+    if(key==='cash90')return Number(r.counters.samples.at(-1).available)/1e9;
+    if(key==='positions90')return r.counters.samples.at(-1).positions;
+    if(key==='terminalSilencePct')return 100*r.marketAudit.pathStats.filter(p=>p.trailingGap>=300).length/r.common.paths;
+    if(key==='first80'||key==='first90'||key==='completions')return r.common[key];
+    if(key==='dustRejects')return r.counters.rejects['SELL:execution:DUST_OR_LIQUIDITY']??0;
+    throw new Error('Unknown causal metric');
+  };
+  summary.contrasts={};
+  for(const key of ['swaps','buy','sell','lateSwaps','lateBuy','earlyRate','cash90','positions90','terminalSilencePct','first80','first90','completions','dustRejects']) {
+    const bySeed=runs.map(run=>{
+      const b=metric(run.bounded,key),e=metric(run.exit,key),l=metric(run.lease,key),a=metric(run.a1,key);
+      return {seed:run.a1.seed,bounded:b,exit:e,lease:l,a1:a,exitAtLeaseOff:e-b,leaseAtExitOff:l-b,
+        exitAtLeaseOn:a-l,leaseAtExitOn:a-e,interaction:a-e-l+b};
+    });
+    summary.contrasts[key]={bySeed,summary:Object.fromEntries(['exitAtLeaseOff','leaseAtExitOff','exitAtLeaseOn','leaseAtExitOn','interaction'].map(k=>{
+      const xs=bySeed.map(row=>row[k]);
+      return [k,{mean:xs.reduce((a,b)=>a+b,0)/xs.length,min:Math.min(...xs),max:Math.max(...xs),positive:xs.filter(x=>x>0).length,negative:xs.filter(x=>x<0).length,zero:xs.filter(x=>x===0).length}];
+    }))};
+  }
+}
 writeFileSync(join(out, 'summary.json'), JSON.stringify(summary, null, 2) + '\n', { flag: 'wx' });
 const results = { baseRevision: summary.revision, fingerprints: summary.fingerprints, defaults: summary.defaults,
   cooldownMs: summary.cooldownMs, interestMs:summary.interestMs,
   instrumentationGuardSha256:summary.instrumentationGuardSha256, uninstrumentedParity:true,
   real: summary.realAudit, pooled,
+  ...(causal?{causal:true,contrasts:summary.contrasts}:{}),
   hashes: runs.map((run) => Object.fromEntries(Object.entries(run).map(([mode, row]) => [mode, {
     seed: row.seed, manifest: row.manifest, tapeSha256: row.tapeSha256, fullTapeSha256: row.fullTapeSha256,
   }]))),

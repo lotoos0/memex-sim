@@ -160,13 +160,16 @@ function pathStats(paths: Path[]) {
 }
 
 export function measure(seed: string, variant: 'off' | 'on' | 'fixed-launches', write: (row: object) => void,
-  options: { sellFeeReserve?: true; boundedReactive?: true; tokenInterestA1?: true; streamFacts?: true } = {}) {
-  const { sellFeeReserve, boundedReactive, tokenInterestA1, streamFacts } = options;
+  options: { sellFeeReserve?: true; boundedReactive?: true; tokenInterestA1?: true;
+    tokenExitOnly?: true; tokenLeaseOnly?: true; streamFacts?: true } = {}) {
+  const { sellFeeReserve, boundedReactive, tokenInterestA1, tokenExitOnly, tokenLeaseOnly, streamFacts } = options;
   const world = new World({
     ...DEFAULT_WORLD, seed, social: variant !== 'off', socialLaunches: variant === 'on',
     ...(sellFeeReserve ? { sellFeeReserve } : {}),
     ...(boundedReactive ? { boundedReactive } : {}),
     ...(tokenInterestA1 ? { tokenInterestA1 } : {}),
+    ...(tokenExitOnly ? { tokenExitOnly } : {}),
+    ...(tokenLeaseOnly ? { tokenLeaseOnly } : {}),
   });
   const markets: Record<string, Path> = {};
   let poolFills = 0;

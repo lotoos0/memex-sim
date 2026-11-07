@@ -384,6 +384,81 @@ function tokenInterestGate() {
   console.log('PASS A1 lease, trusted renewal, expired BUY WAIT, outside-known SELL, reservations and replay');
 }
 
+function causalSeparationGate() {
+  class Draws extends RngStreams {
+    constructor(private readonly values: number[]) { super('causal-qa'); }
+    override int(_namespace: string, _id: string, _version: string, exclusive: number) {
+      const value=this.values.shift();
+      check(value!==undefined&&value>=0&&value<exclusive,'Expected causal policy draw');
+      return value;
+    }
+    done() { equal(this.values.length,0,'Causal branch consumes only original policy draws'); }
+  }
+  const variants = [ {}, {tokenExitOnly:true}, {tokenLeaseOnly:true}, {tokenInterestA1:true} ] as const;
+  for (const variant of variants) {
+    const exit='tokenExitOnly' in variant||'tokenInterestA1' in variant;
+    const lease='tokenLeaseOnly' in variant||'tokenInterestA1' in variant;
+    const options={...config,agents:1,boundedReactive:true,sellFeeReserve:true,...variant} as const;
+    const world=new World(options);
+    world.advanceTo(0);
+    const agent=world.state.agents['agent:00000'];
+    observe(agent,world.publicMarket(world.state.markets[FIRST]),'qa:causal-first',lease?0:undefined,'tokenExitOnly' in variant);
+    const command=buy(world,SOL) as Extract<Command,{kind:'submit'}>;
+    submit(world,'causal-position',{...command,intent:{...command.intent,agentId:agent.id}});
+    world.advanceTo(350);
+    world.kernel.schedule(350,30,'Observe',{agentId:agent.id,market:world.publicMarket(world.state.markets[FIRST]),evidence:'qa:fresh'});
+    world.advanceTo(350);
+    const decide=(values:number[])=>{
+      const rng=new Draws(values);
+      const intent=decideTrade(agent,300001,world.ledger,rng,()=>undefined,SELL_FEE_RESERVE,
+        'tokenInterestA1' in variant,'tokenExitOnly' in variant,'tokenLeaseOnly' in variant);
+      rng.done();return intent;
+    };
+    const selectedBuy=decide(lease?[99,0,99]:[99,0,99,14]);
+    if(lease)equal(selectedBuy,null,'LEASE retains the expired BUY guard');
+    else check(selectedBuy?.side==='BUY','No lease means BUY remains allowed beyond 300s');
+    for(let i=0;i<16;i++)world.kernel.schedule(351+i,30,'Observe',{agentId:agent.id,
+      market:{...world.publicMarket(world.state.markets[FIRST]),tokenId:`qa:causal:${i}`,observedAt:351+i,tradable:false},evidence:'qa:evict'});
+    world.advanceTo(367);
+    equal(Object.keys(agent.known).length,16,'No variant changes the known limit');
+    check(!agent.known[FIRST],'Position is outside known');
+    if(exit)check(decide([99,0,0,0])?.side==='SELL','EXIT provides the ordinary outside-known SELL branch');
+    else equal(decide([]),null,'Without EXIT positions outside known are not candidates');
+    if(exit)equal(decide([99,0,99]),null,'EXIT cannot provide BUY discovery, with or without lease');
+    if('tokenExitOnly' in variant) {
+      equal(agent.tokenInterest,undefined,'EXIT_ONLY never creates leases');
+      check(agent.exitMemory?.[FIRST],'EXIT_ONLY owns its separate exit state');
+    } else equal(agent.exitMemory,undefined,'Existing variants keep their state layout');
+    if('tokenLeaseOnly' in variant)check(Object.values(agent.tokenInterest??{}).every(v=>!v.exit),'LEASE_ONLY never retains exit views');
+    const until=agent.tokenInterest?.[FIRST]?.buyUntil;
+    world.kernel.schedule(367,30,'Observe',{agentId:agent.id,
+      market:{...world.publicMarket(world.state.markets[FIRST]),observedAt:0},evidence:'qa:older-after-eviction'});
+    world.advanceTo(367);
+    equal(!!agent.known[FIRST],!exit,'Cached-view freshness protection belongs exclusively to EXIT');
+    equal(agent.tokenInterest?.[FIRST]?.buyUntil,until,'Rediscovery never resets the lease');
+    const checkpoint=World.restore(world.snapshot());
+    world.advanceTo(4000);checkpoint.advanceTo(4000);
+    same(world,checkpoint,'Causal matrix pending feedback restore');
+    verifyLedger(world);
+  }
+  for(const conflicting of [{tokenInterestA1:true,tokenExitOnly:true},{tokenInterestA1:true,tokenLeaseOnly:true},
+    {tokenExitOnly:true,tokenLeaseOnly:true}]) {
+    let rejected=false;
+    try { new World({...DEFAULT_WORLD,boundedReactive:true,sellFeeReserve:true,...conflicting} as WorldConfig); }
+    catch { rejected=true; }
+    check(rejected,'Conflicting policy flags must not be canonicalized silently');
+  }
+  for(const variant of [{tokenExitOnly:true},{tokenLeaseOnly:true}] as const) {
+    const options={...DEFAULT_WORLD,agents:8,boundedReactive:true,sellFeeReserve:true,...variant} as const;
+    const world=new World(options);world.advanceTo(299999);
+    const copy=World.restore(world.snapshot());world.advanceTo(310000);copy.advanceTo(300000);copy.advanceTo(310000);
+    same(world,copy,'Single-factor checkpoint across lease boundary');
+    same(world,World.rerun(options,[],310000),'Single-factor deterministic rerun');
+    verifyLedger(world);
+  }
+  console.log('PASS 2x2 policy isolation, exit-only BUY restriction, state layouts and replay');
+}
+
 function financialGate() {
   const world = fixture();
   const initial = world.ledger.balance(USER).available;
@@ -647,6 +722,7 @@ financialGate();
 sellFeeReserveGate();
 boundedReactiveGate();
 tokenInterestGate();
+causalSeparationGate();
 orderAndMigrationGate();
 priceCrossingGate();
 expiryAndFaultGate();
