@@ -1,4 +1,4 @@
-import { SELL_FEE_RESERVE, decideTrade, newAgent, observe } from '../engineV2/agents';
+import { SELL_FEE_RESERVE, TOKEN_INTEREST_MS, TOKEN_INTEREST_VERSION, decideTrade, newAgent, observe, renewTokenInterest } from '../engineV2/agents';
 import { BASE_FEE, SOL, decimalAtoms, type Intent, type Policy } from '../engineV2/contracts';
 import type { Command } from '../engineV2/events';
 import { SWAP_COLLECTOR, TX_COLLECTOR, posting } from '../engineV2/ledger';
@@ -213,6 +213,175 @@ function boundedReactiveGate() {
   same(normal, World.rerun(options, [], 30_000), 'Bounded deterministic replay');
   verifyLedger(normal);
   console.log('PASS bounded cooldown, coalescing, periodic priority and checkpoint/replay');
+}
+
+function tokenInterestGate() {
+  class Draws extends RngStreams {
+    constructor(private readonly values: number[]) { super('interest-qa'); }
+    override int(_namespace: string, _id: string, _version: string, exclusive: number) {
+      const value = this.values.shift();
+      check(value !== undefined && value >= 0 && value < exclusive, 'A1 uses only the expected policy draws');
+      return value;
+    }
+    assertConsumed() { equal(this.values.length, 0, 'A1 does not add or skip the scripted branch draws'); }
+  }
+  const options = { ...config, agents: 1, boundedReactive: true, sellFeeReserve: true, tokenInterestA1: true } as const;
+  const world = new World(options);
+  world.advanceTo(0);
+  const agent = world.state.agents['agent:00000'];
+  const view = world.publicMarket(world.state.markets[FIRST]);
+  observe(agent, view, 'qa:first', 0);
+  const interest = agent.tokenInterest![FIRST];
+  equal(interest.buyUntil, TOKEN_INTEREST_MS, 'First receipt starts the fixed five-minute lease');
+  const decide = (at: number, values: number[]) => {
+    const rng = new Draws(values);
+    const intent = decideTrade(agent, at, world.ledger, rng, () => undefined, SELL_FEE_RESERVE, true);
+    rng.assertConsumed();
+    return intent;
+  };
+  check(decide(TOKEN_INTEREST_MS - 1, [99, 0, 14])?.side === 'BUY', 'BUY remains eligible before expiry');
+  equal(decide(TOKEN_INTEREST_MS, []), null, 'Unheld market is excluded exactly at expiry');
+  observe(agent, { ...view, observedAt: TOKEN_INTEREST_MS }, 'qa:ordinary-feedback', TOKEN_INTEREST_MS);
+  equal(interest.buyUntil, TOKEN_INTEREST_MS, 'Ordinary feedback does not renew');
+  delete agent.known[FIRST];
+  observe(agent, { ...view, observedAt: TOKEN_INTEREST_MS + 1 }, 'qa:rediscovery', TOKEN_INTEREST_MS + 1);
+  equal(interest.buyUntil, TOKEN_INTEREST_MS, 'Rediscovery after eviction does not renew');
+  const late = newAgent('qa:late', 5);
+  observe(late, view, 'qa:late-first', 900_000);
+  equal(late.tokenInterest![FIRST].buyUntil, 1_200_000, 'Old token can receive first interest from another agent');
+
+  const source = { ...SOCIAL_CATALOG[0], id: 'qa:fresh-source', publishedAt: TOKEN_INTEREST_MS };
+  check(renewTokenInterest(agent, FIRST, source, TOKEN_INTEREST_MS + 1), 'Fresh independent source renews');
+  const until = interest.buyUntil;
+  check(!renewTokenInterest(agent, FIRST, source, TOKEN_INTEREST_MS + 2), 'Duplicate source cannot renew');
+  check(!renewTokenInterest(agent, FIRST, { ...source, id: 'qa:repost', kind: 'REPOST', publishedAt: source.publishedAt + 1 },
+    TOKEN_INTEREST_MS + 2), 'Repost cannot renew');
+  check(!renewTokenInterest(agent, FIRST, { ...source, id: 'qa:delayed', publishedAt: source.publishedAt + 1 },
+    2 * TOKEN_INTEREST_MS + 1), 'Stale independent message cannot renew');
+  check(!renewTokenInterest(agent, FIRST, { ...source, id: 'qa:future', publishedAt: source.publishedAt + 10 },
+    TOKEN_INTEREST_MS + 2), 'Future message cannot renew');
+  equal(interest.buyUntil, until, 'Rejected sources preserve expiry');
+  check(renewTokenInterest(agent, FIRST, { ...SOCIAL_CATALOG[1], id: 'qa:new-fork', publishedAt: source.publishedAt + 2 },
+    TOKEN_INTEREST_MS + 3), 'New-narrative quote can renew');
+  check(!renewTokenInterest(agent, FIRST, { ...source, id: 'qa:old-after-new', publishedAt: source.publishedAt + 1 },
+    TOKEN_INTEREST_MS + 4), 'Out-of-order independent message cannot renew');
+
+  agent.known[FIRST] = { view, evidence: 'qa:position-view', prior: null };
+  const command = buy(world, SOL) as Extract<Command, { kind: 'submit' }>;
+  submit(world, 'interest-position', { ...command, intent: { ...command.intent, agentId: agent.id } });
+  check(interest.exit, 'Pending BUY retains a local exit observation');
+  world.advanceTo(350);
+  world.kernel.schedule(350, 30, 'Observe', { agentId: agent.id,
+    market: world.publicMarket(world.state.markets[FIRST]), evidence: 'qa:latest-position-view' });
+  world.advanceTo(350);
+  const quantity = world.ledger.balance(agent.id, FIRST).available;
+  check(quantity > 0n, 'Position exists in atom balances');
+  interest.buyUntil = 350;
+  equal(decide(350, [99, 0, 99]), null, 'Expired selected BUY returns WAIT without a forced SELL or reroll');
+  const sale = decide(350, [99, 0, 0, 0]);
+  check(sale?.side === 'SELL', 'Expired interest permits the ordinary SELL branch');
+  equal(sale.inputTokens, quantity / 4n || quantity, 'SELL size rule is unchanged');
+  for (let i = 0; i < 16; i++) {
+    const market = { ...view, tokenId: `qa:evict:${i}`, observedAt: 351 + i, tradable: false };
+    world.kernel.schedule(351 + i, 30, 'Observe', { agentId: agent.id, market, evidence: 'qa:evict' });
+  }
+  world.advanceTo(367);
+  equal(Object.keys(agent.known).length, 16, 'Known limit stays sixteen');
+  check(!agent.known[FIRST] && interest.exit, 'Eviction retains only the position exit memory');
+  world.kernel.schedule(367, 30, 'Observe', { agentId: agent.id, market: view, evidence: 'qa:stale-after-eviction' });
+  world.advanceTo(367);
+  check(!agent.known[FIRST], 'Delayed older observation cannot replace the retained position view');
+  check(decide(367, [99, 0, 0, 0])?.side === 'SELL', 'Position outside known remains SELL eligible');
+  const cash = world.ledger.balance(agent.id).available;
+  const transfer = cash - (BASE_FEE - 1n);
+  world.ledger.commit([posting(agent.id, 'SOL', -transfer), posting(USER, 'SOL', transfer)]);
+  const unfundedSale = decide(367, [99, 0, 0]);
+  check(unfundedSale?.side === 'SELL', 'Insufficient fee funds do not rewrite side selection');
+  const rejected = world.submit('interest-no-sell-fee', { kind: 'submit', intent: unfundedSale, policy: IOC });
+  check(!rejected.ok && rejected.reason === 'INSUFFICIENT_FUNDS', 'Exit memory cannot bypass the standard upfront fee');
+  world.ledger.commit([posting(agent.id, 'SOL', transfer), posting(USER, 'SOL', -transfer)]);
+  // Even a renewed lease cannot turn an exit-only observation into BUY discovery.
+  interest.buyUntil = 1_000_000;
+  equal(decide(367, [99, 0, 99]), null, 'Exit-only view cannot create BUY');
+  const fullSale = { ...sale, inputTokens: quantity, decidedAt: world.now, expiresAt: world.now + 3000 };
+  const orderId = submit(world, 'interest-full-exit', { kind: 'submit', intent: fullSale, policy: IOC });
+  equal(world.ledger.balance(agent.id, FIRST).available, 0n, 'Reserved atoms are not available to a second SELL');
+  check(interest.exit, 'Reserved inventory keeps exit memory');
+  equal(decide(367, []), null, 'Reserved-only position cannot be sold twice');
+  const checkpoint = World.restore(world.snapshot());
+  world.advanceTo(717);
+  checkpoint.advanceTo(717);
+  same(world, checkpoint, 'Pending outside-known SELL checkpoint');
+  equal(world.state.orders[orderId].chargedFee, BASE_FEE, 'SELL retains the standard upfront transaction fee');
+  equal(world.ledger.balance(agent.id, FIRST).available, 0n, 'Full exit clears token balance');
+  check(!interest.exit, 'Full exit releases the view cache');
+  check(agent.tokenInterest![FIRST], 'Full exit preserves the interest tombstone');
+  verifyLedger(world);
+  world.pruneRecordedHistory(world.kernel.log);
+  world.advanceTo(50_001);
+  verifyLedger(world);
+
+  const pending = new World(options);
+  pending.advanceTo(0);
+  const pendingAgent = pending.state.agents[agent.id];
+  observe(pendingAgent, pending.publicMarket(pending.state.markets[FIRST]), 'qa:pending', 0);
+  const pendingCommand = buy(pending, SOL) as Extract<Command, { kind: 'submit' }>;
+  const pendingId = submit(pending, 'interest-trigger', { ...pendingCommand,
+    intent: { ...pendingCommand.intent, agentId: agent.id },
+    policy: { kind: 'TRIGGER_MARKET', trigger: 'LTE', price: { quoteAtoms: 1n, tokenAtoms: 1_000_000_000_000_000n }, slippageBps: 700 },
+  });
+  pendingAgent.tokenInterest![FIRST].buyUntil = 1;
+  pending.advanceTo(2);
+  equal(pending.state.orders[pendingId].status, 'OPEN', 'Interest expiry does not cancel an existing order');
+  check(pendingAgent.tokenInterest![FIRST].exit, 'Pending BUY keeps its observation after interest expires');
+  const pendingCopy = World.restore(pending.snapshot());
+  pending.advanceTo(50_000);
+  pendingCopy.advanceTo(50_000);
+  same(pending, pendingCopy, 'Expired interest and pending BUY restore');
+  equal(pending.state.orders[pendingId].status, 'EXPIRED', 'Existing order follows its original expiry');
+  check(!pendingAgent.tokenInterest![FIRST].exit, 'Unfilled BUY expiry releases its observation');
+  verifyLedger(pending);
+
+  const discovery = fixture({ ...options, agents: 0 });
+  discovery.state.agents[agent.id] = newAgent(agent.id, 0);
+  discovery.kernel.schedule(1, 10, 'Publish', { post: { ...SOCIAL_CATALOG[0], id: 'qa:source' }, audience: false });
+  discovery.kernel.schedule(2, 20, 'Launch', { tokenId: 'tok_qa_interest', creatorId: USER, name: 'QA linked', ticker: 'QA',
+    narrativeId: 'signal', sourcePostId: 'qa:source' });
+  discovery.advanceTo(2);
+  discovery.kernel.schedule(3, 30, 'Observe', { agentId: agent.id,
+    market: discovery.publicMarket(discovery.state.markets.tok_qa_interest), evidence: 'qa:initial' });
+  discovery.advanceTo(TOKEN_INTEREST_MS + 3);
+  const entry = discovery.state.agents[agent.id].tokenInterest!.tok_qa_interest;
+  equal(entry.buyUntil, TOKEN_INTEREST_MS + 3, 'Initial discovery expiry');
+  discovery.kernel.schedule(TOKEN_INTEREST_MS + 4, 10, 'Publish', {
+    post: { ...SOCIAL_CATALOG[0], id: 'qa:new-content' }, audience: false,
+  });
+  discovery.advanceTo(TOKEN_INTEREST_MS + 4);
+  equal(entry.buyUntil, TOKEN_INTEREST_MS + 3, 'Publication alone does not renew an agent');
+  discovery.kernel.schedule(TOKEN_INTEREST_MS + 5, 30, 'Exposure', {
+    agentId: agent.id, postId: 'qa:new-content', publishedFactId: 'qa:new-content-fact',
+  });
+  discovery.advanceTo(TOKEN_INTEREST_MS + 1000);
+  check(entry.buyUntil > 2 * TOKEN_INTEREST_MS, 'Delivered and interpreted linked original renews');
+  const renewed = entry.buyUntil;
+  discovery.kernel.schedule(discovery.now + 1, 30, 'Discover', {
+    agentId: agent.id, postId: 'qa:new-content', exposureId: 'qa:duplicate',
+  });
+  discovery.advanceTo(discovery.now + 1);
+  equal(entry.buyUntil, renewed, 'Discover deduplication prevents repeat renewal');
+
+  const normalOptions = { ...DEFAULT_WORLD, agents: 8, boundedReactive: true, sellFeeReserve: true, tokenInterestA1: true } as const;
+  const normal = new World(normalOptions);
+  normal.advanceTo(299_999);
+  const copy = World.restore(normal.snapshot());
+  normal.advanceTo(310_000);
+  copy.advanceTo(300_000);
+  copy.advanceTo(310_000);
+  same(normal, copy, 'A1 expiry boundary checkpoint and different advance steps');
+  same(normal, World.rerun(normalOptions, [], 310_000), 'A1 deterministic full rerun');
+  equal(normal.kernel.manifest.policyVersions.tokenInterest, TOKEN_INTEREST_VERSION, 'A1 has a versioned manifest');
+  verifyLedger(normal);
+  console.log('PASS A1 lease, trusted renewal, expired BUY WAIT, outside-known SELL, reservations and replay');
 }
 
 function financialGate() {
@@ -477,6 +646,7 @@ equal(decimalAtoms('1e-9', 9), 1n, 'One lamport');
 financialGate();
 sellFeeReserveGate();
 boundedReactiveGate();
+tokenInterestGate();
 orderAndMigrationGate();
 priceCrossingGate();
 expiryAndFaultGate();

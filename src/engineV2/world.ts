@@ -1,4 +1,4 @@
-import { AGENT_VERSION, SELL_FEE_RESERVE, decideTrade, newAgent, observe, type Agent } from './agents';
+import { AGENT_VERSION, SELL_FEE_RESERVE, TOKEN_INTEREST_VERSION, decideTrade, newAgent, observe, renewTokenInterest, type Agent } from './agents';
 import { SOL, SUPPLY, assertSimTime, type Envelope, type Manifest, type Message } from './contracts';
 import type { Ack, Command, FactMap, Launch, Link, Post, PublicMarket, TaskMap } from './events';
 import { Kernel, type Committed, type KernelState } from './kernel';
@@ -30,6 +30,7 @@ export type WorldConfig = {
   // Omit OFF so existing recordings keep their config and manifest hashes.
   sellFeeReserve?: true;
   boundedReactive?: true;
+  tokenInterestA1?: true;
 };
 export const DEFAULT_WORLD: WorldConfig = {
   seed: 'MEMEX-V2', epochUtcMs: 1_792_918_800_000, agents: 100,
@@ -66,7 +67,8 @@ function makeManifest(config: WorldConfig): Manifest {
     engineVersion: '2.0.0-slice.1', schedulerVersion: 'round-heap-1',
     rngVersion: RNG_VERSION, arithmeticVersion: PROFILE_VERSION, seed: config.seed, epochUtcMs: config.epochUtcMs,
     catalogHash: checksum(canonical(SOCIAL_CATALOG)), configHash: checksum(canonical(config)),
-    policyVersions: { agents: AGENT_VERSION, social: SOCIAL_VERSION, lifecycle: LIFECYCLE_VERSION, fee: 'fixed-1' },
+    policyVersions: { agents: AGENT_VERSION, social: SOCIAL_VERSION, lifecycle: LIFECYCLE_VERSION, fee: 'fixed-1',
+      ...(config.tokenInterestA1 ? { tokenInterest: TOKEN_INTEREST_VERSION } : {}) },
   };
 }
 
@@ -86,6 +88,9 @@ export class World {
     config = this.config = Object.freeze({ ...config });
     for (const value of [config.agents, config.userSol, config.latencyMs, config.launchUntilMs, config.epochUtcMs]) assertSimTime(value);
     if (config.latencyMs < 1) throw new Error('Execution latency must be positive');
+    if (config.tokenInterestA1 && (!config.boundedReactive || !config.sellFeeReserve)) {
+      throw new Error('A1 requires bounded reactive wake and SELL fee reserve');
+    }
     this.kernel = new Kernel(makeManifest(config), checkpoint?.kernel, log);
     this.ledger = new Ledger(checkpoint?.state.ledger, this.kernel.rememberProperty);
     this.state = checkpoint?.state ?? {
@@ -161,6 +166,12 @@ export class World {
       }
       case 'Ingress': {
         const ack = this.command(payload.commandId, payload.command, event.key.seq);
+        if (payload.command.kind === 'submit') {
+          this.syncExit(payload.command.intent.agentId, payload.command.intent.tokenId, true);
+        } else if (payload.command.kind === 'cancel') {
+          const intent = this.state.orders[payload.command.orderId]?.intent;
+          if (intent) this.syncExit(intent.agentId, intent.tokenId, true);
+        }
         this.kernel.rememberProperty(this.state.commandResults, 'command:' + payload.commandId);
         this.state.commandResults['command:' + payload.commandId] = ack;
         this.kernel.fact('CommandResolved', { commandId: payload.commandId, ack });
@@ -189,9 +200,14 @@ export class World {
         break;
       }
       case 'Decide': this.decide(payload.agentId, payload.generation, payload.reactive); break;
-      case 'Admit': this.orders.admit(payload.intentId, payload.intent, payload.policy, event.key.seq); break;
+      case 'Admit':
+        this.orders.admit(payload.intentId, payload.intent, payload.policy, event.key.seq);
+        this.syncExit(payload.intent.agentId, payload.intent.tokenId, true);
+        break;
       case 'Execute': {
+        const intent = this.state.orders[payload.orderId]?.intent;
         const fact = this.orders.execute(payload.orderId);
+        if (intent) this.syncExit(intent.agentId, intent.tokenId, true);
         if (fact && (fact.kind === 'TradeExecuted' || fact.kind === 'MarketMigrated')) {
           const id = fact.kind === 'TradeExecuted' ? fact.payload.fill.tokenId : fact.payload.tokenId;
           const last = this.state.lastFeedback[id];
@@ -203,7 +219,12 @@ export class World {
         }
         break;
       }
-      case 'Expire': this.orders.expire(payload.orderId); break;
+      case 'Expire': {
+        const intent = this.state.orders[payload.orderId]?.intent;
+        this.orders.expire(payload.orderId);
+        if (intent) this.syncExit(intent.agentId, intent.tokenId, true);
+        break;
+      }
       case 'Idle': {
         const market = this.state.markets[payload.tokenId];
         if (market?.activityGeneration === payload.generation && !market.terminalReason) {
@@ -230,6 +251,9 @@ export class World {
         const market = this.state.markets[command.tokenId];
         if (!market || market.terminalReason) return { ok: false, reason: 'MARKET_UNAVAILABLE' };
         this.orders.close(market.tokenId);
+        if (this.config.tokenInterestA1) {
+          for (const agent of Object.values(this.state.agents)) this.syncExit(agent.id, market.tokenId, true);
+        }
         const terminal = { ...market, terminalReason: 'MARKET_CLOSED' as const };
         const fact = this.updateMarket(terminal);
         this.feedback(terminal, [...(this.marketAudience.get(market.tokenId) ?? [])].sort(), fact, 200);
@@ -306,10 +330,36 @@ export class World {
   }
 
   private observe(agent: Agent, view: PublicMarket, evidence: string) {
-    const previous = Object.keys(agent.known);
-    observe(agent, view, evidence);
-    this.watch(agent.id, view.tokenId);
-    for (const id of previous) if (!agent.known[id]) this.marketAudience.get(id)?.delete(agent.id);
+    const previous = Object.entries(agent.known);
+    observe(agent, view, evidence, this.config.tokenInterestA1 ? this.now : undefined);
+    if (agent.known[view.tokenId]) this.watch(agent.id, view.tokenId);
+    for (const [id, item] of previous) if (!agent.known[id]) {
+      this.marketAudience.get(id)?.delete(agent.id);
+      if (this.config.tokenInterestA1) {
+        const balance = this.ledger.balance(agent.id, id);
+        if (balance.available + balance.reserved > 0n) agent.tokenInterest![id].exit ??= item;
+      }
+    }
+    this.syncExit(agent.id, view.tokenId);
+  }
+
+  private syncExit(agentId: string, tokenId: string, checkPending = false) {
+    if (!this.config.tokenInterestA1) return;
+    const agent = this.state.agents[agentId];
+    const interest = agent?.tokenInterest?.[tokenId];
+    if (!interest) return;
+    const balance = this.ledger.balance(agentId, tokenId);
+    if (balance.available + balance.reserved > 0n) {
+      if (agent.known[tokenId]) interest.exit = agent.known[tokenId];
+      return;
+    }
+    if (!interest.exit && !checkPending) return;
+    const pendingBuy = Object.values(this.state.orders).some(order => order.intent.agentId === agentId
+      && order.intent.tokenId === tokenId && order.intent.side === 'BUY'
+      && (order.status === 'OPEN' || order.status === 'QUEUED'));
+    if (pendingBuy) {
+      if (agent.known[tokenId]) interest.exit = agent.known[tokenId];
+    } else delete interest.exit;
   }
 
   publicMarket(market: Market): PublicMarket {
@@ -358,6 +408,7 @@ export class World {
     const links = this.linksByNarrative.get(post.narrativeId) ?? [];
     for (const link of links) {
       const market = this.state.markets[link.tokenId];
+      if (this.config.tokenInterestA1) renewTokenInterest(agent, link.tokenId, post, this.now);
       if (!market.terminalReason && market.activity === 'DORMANT') this.activate(market, true);
       this.feedback(market, [agentId], found, 1);
     }
@@ -426,7 +477,10 @@ export class World {
       }, decision);
     } else {
       const intent = decideTrade(agent, this.now, this.ledger, this.rng, tokenId => this.state.social.links[tokenId]?.narrativeId,
-        this.config.sellFeeReserve ? SELL_FEE_RESERVE : 0n);
+        this.config.sellFeeReserve ? SELL_FEE_RESERVE : 0n, !!this.config.tokenInterestA1);
+      if (this.config.tokenInterestA1 && intent?.side === 'BUY') {
+        agent.tokenInterest![intent.tokenId].exit = agent.known[intent.tokenId];
+      }
       const decision = this.kernel.fact('AgentDecided', {
         agentId: id, ordinal: agent.ordinal, decision: intent ? 'TRADE' : 'WAIT',
       });

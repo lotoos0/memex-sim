@@ -1,20 +1,30 @@
 import { BASE_FEE, SOL, minAtoms, type Intent } from './contracts';
-import type { PublicMarket } from './events';
+import type { Post, PublicMarket } from './events';
 import type { Ledger } from './ledger';
 import type { RngStreams } from './rng';
 
 export const AGENT_VERSION = 'bounded-rotation-2';
 export const SELL_FEE_RESERVE = 1000n * BASE_FEE;
+export const TOKEN_INTEREST_MS = 300_000;
+export const TOKEN_INTEREST_VERSION = 'buy-lease-300s-exit-1';
+export type KnownMarket = { view: PublicMarket; evidence: string; prior: PublicMarket | null };
+export type TokenInterest = {
+  buyUntil: number;
+  impulseId: string;
+  impulsePublishedAt: number;
+  exit?: KnownMarket;
+};
 export type Agent = {
   id: string;
   strategy: 'momentum' | 'contrarian' | 'creator';
-  known: Record<string, { view: PublicMarket; evidence: string; prior: PublicMarket | null }>;
+  known: Record<string, KnownMarket>;
   narratives: Record<string, { postId: string; evidence: string; attention: number; fatigue: number; at: number }>;
   ordinal: number;
   generation: number;
   nextAt: number | null;
   launches: number;
   boundedWake?: { lastAt: number | null; reactiveAt: number | null; reactiveGeneration: number };
+  tokenInterest?: Record<string, TokenInterest>;
 };
 
 export function newAgent(id: string, index: number): Agent {
@@ -24,21 +34,54 @@ export function newAgent(id: string, index: number): Agent {
   };
 }
 
-export function observe(agent: Agent, view: PublicMarket, evidence: string) {
+export function observe(agent: Agent, view: PublicMarket, evidence: string, interestAt?: number) {
   const old = agent.known[view.tokenId];
-  if (old && view.observedAt < old.view.observedAt) return;
+  const cached = interestAt === undefined ? undefined : agent.tokenInterest?.[view.tokenId]?.exit;
+  const previous = old ?? cached;
+  if (previous && view.observedAt < previous.view.observedAt) return;
   if (!old && Object.keys(agent.known).length >= 16) {
     const [oldest] = Object.entries(agent.known).sort(([idA, a], [idB, b]) =>
       a.view.observedAt - b.view.observedAt || (idA < idB ? -1 : idA > idB ? 1 : 0));
     delete agent.known[oldest[0]];
   }
-  agent.known[view.tokenId] = { view, evidence, prior: old?.view ?? null };
+  const item = { view, evidence, prior: previous?.view ?? null };
+  agent.known[view.tokenId] = item;
+  if (interestAt !== undefined) {
+    const interests = agent.tokenInterest ??= {};
+    // Keep expired entries even after eviction; observing again is not new interest.
+    const interest = interests[view.tokenId] ??= {
+      buyUntil: interestAt + TOKEN_INTEREST_MS, impulseId: evidence, impulsePublishedAt: interestAt,
+    };
+    if (interest.exit) interest.exit = item;
+  }
+}
+
+export function renewTokenInterest(agent: Agent, tokenId: string, post: Post, now: number) {
+  const interest = agent.tokenInterest?.[tokenId];
+  const independent = post.kind === 'ORIGINAL' || post.kind === 'QUOTE'
+    && post.parentNarrativeId !== null && post.parentNarrativeId !== post.narrativeId;
+  if (!interest || !independent || post.id === interest.impulseId
+    || post.publishedAt <= interest.impulsePublishedAt || post.publishedAt > now
+    || now - post.publishedAt >= TOKEN_INTEREST_MS) return false;
+  interest.buyUntil = now + TOKEN_INTEREST_MS;
+  interest.impulseId = post.id;
+  interest.impulsePublishedAt = post.publishedAt;
+  return true;
 }
 
 export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngStreams,
-  narrativeOf: (tokenId: string) => string | undefined, protectedBuySol = 0n): Intent | null {
+  narrativeOf: (tokenId: string) => string | undefined, protectedBuySol = 0n, tokenInterest = false): Intent | null {
   const draw = (exclusive: number) => rng.int('agent/decision', agent.id, AGENT_VERSION, exclusive);
-  const candidates = Object.values(agent.known).filter(item => item.view.tradable);
+  const candidates = Object.values(agent.known).filter(item => item.view.tradable && (!tokenInterest
+    || now < (agent.tokenInterest?.[item.view.tokenId]?.buyUntil ?? 0)
+    || ledger.balance(agent.id, item.view.tokenId).available > 0n));
+  if (tokenInterest) {
+    for (const [id, interest] of Object.entries(agent.tokenInterest ?? {})) {
+      if (!agent.known[id] && interest.exit?.view.tradable && ledger.balance(agent.id, id).available > 0n) {
+        candidates.push(interest.exit);
+      }
+    }
+  }
   if (!candidates.length || draw(100) < 45) return null;
   const counts = new Map<string, number>();
   for (const { view } of candidates) {
@@ -73,6 +116,7 @@ export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngS
     return { ...base, side: 'SELL', inputTokens: tokens * BigInt(1 + draw(4)) / 4n || tokens, minOutputSol: null };
   }
   if (cash <= 0n) return null;
+  if (tokenInterest && (!agent.known[view.tokenId] || now >= (agent.tokenInterest?.[view.tokenId]?.buyUntil ?? 0))) return null;
   const size = minAtoms(cash - protectedBuySol, SOL * BigInt(1 + draw(15)) / 10n);
   if (size <= 0n) return null;
   return { ...base, side: 'BUY', maxInputSol: size, minOutputTokens: null };
