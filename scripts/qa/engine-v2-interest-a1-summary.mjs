@@ -9,7 +9,8 @@ import { quantileHist } from './engine-v2-market-persistence-metrics.mjs';
 
 const out = resolve(process.argv[2] ?? 'output/engine-v2-interest-a1');
 const causal=process.argv.includes('--causal');
-const modes=causal?['bounded','exit','lease','a1']:['bounded','a1'];
+const fallthrough=process.argv.includes('--fallthrough');
+const modes=fallthrough?['bounded','exit','ft']:causal?['bounded','exit','lease','a1']:['bounded','a1'];
 const inputs = [...'ABCDEF'].map((letter) => JSON.parse(readFileSync(join(out, `V2-PILOT-${letter}.json`), 'utf8')));
 for (const input of inputs) {
   assert.equal(!!input.causal,causal,'Use the matching capture/summary mode');
@@ -32,7 +33,7 @@ try {
   await build({ stdin:{ contents:"export { measure } from './src/qa/engineV2Benchmark';",resolveDir:process.cwd()},
     platform:'node',format:'esm',bundle:true,outfile:cleanBundle });
   const { measure } = await import(pathToFileURL(cleanBundle));
-  for (const run of runs) for(const mode of causal?modes:['a1']) {
+  for (const run of runs) for(const mode of causal||fallthrough?modes:['a1']) {
     const a1=run[mode];
     const full = createHash('sha256'), compact = createHash('sha256');
     const json = (v) => JSON.stringify(v,(_,v)=>typeof v==='bigint'?v.toString():v);
@@ -43,7 +44,8 @@ try {
         seq:row.globalSeq.toString(),quote:row.quoteAtomsExFee.toString(),price:row.priceSol,progress:row.progressAfter,
         side:row.side,completion:row.completion})+'\n');
     },{sellFeeReserve:true,boundedReactive:true,streamFacts:true,
-      ...(mode==='a1'?{tokenInterestA1:true}:{}),...(mode==='exit'?{tokenExitOnly:true}:{}),...(mode==='lease'?{tokenLeaseOnly:true}:{})});
+      ...(mode==='a1'?{tokenInterestA1:true}:{}),...(mode==='exit'||mode==='ft'?{tokenExitOnly:true}:{}),...(mode==='lease'?{tokenLeaseOnly:true}:{}),
+      ...(mode==='ft'?{exitFallthrough:true}:{})});
     for (const key of ['manifest','all','decisions','facts','poolFills','baselineSchedule','simulatedMs']) assert.deepEqual(result[key],a1[key]);
     assert.equal(full.digest('hex'),a1.fullTapeSha256);
     assert.equal(compact.digest('hex'),a1.tapeSha256);
@@ -75,7 +77,7 @@ const weighted = (bag) => {
 const pooled = {};
 for (const mode of modes) {
   const rows = runs.map((run) => run[mode]);
-  if (mode === 'a1'||mode==='exit') for (const row of rows) for (const sample of row.counters.samples) {
+  if (mode === 'a1'||mode==='exit'||mode==='ft') for (const row of rows) for (const sample of row.counters.samples) {
     assert.equal(sample.missingExit,0,'Every sampled outside-known position retains an exit observation');
   }
   const common = {};
@@ -191,15 +193,63 @@ if(causal) {
     }))};
   }
 }
+if(fallthrough) {
+  const metric=(r,key)=>{
+    const cells=r.marketAudit.cells,last=r.counters.samples.at(-1),c=r.counters.causal;
+    switch(key) {
+      case 'swaps':return r.common.trades;
+      case 'buy':return r.common.buy;
+      case 'sell':return r.common.trades-r.common.buy;
+      case 'buySol':return Number(r.common.buySol)/1e9;
+      case 'sellSol':return Number(r.common.sellSol)/1e9;
+      case 'buyAged10to30':return cells['age:10-20'].buy+cells['age:20-30'].buy;
+      case 'lateSwaps':return r.common.ages[2]+r.common.ages[3];
+      case 'earlyRate':return r.common.ages[0]/r.common.earlyExposure;
+      case 'emptyPct':return 100*(1-r.common.activeBins/r.common.exposure);
+      case 'cash90':return Number(last.available)/1e9;
+      case 'positions90':return last.positions;
+      case 'outsideKnown90':return last.outsideKnown;
+      case 'terminalSilencePct':return 100*r.marketAudit.pathStats.filter(p=>p.trailingGap>=300).length/r.common.paths;
+      case 'first80':case 'first90':case 'completions':return r.common[key];
+      case 'dustRejects':return r.counters.rejects['SELL:execution:DUST_OR_LIQUIDITY']??0;
+      case 'flatExits':return c.flatExits??0;
+      case 'exitChoices':return c['selected:EXIT']??0;
+      case 'exitChoiceSell':return c['selected:EXIT:SELL']??0;
+      case 'exitChoiceWait':return c['selected:EXIT:WAIT']??0;
+      case 'exitChoiceBuy':return c['selected:EXIT:BUY']??0;
+      case 'waitOtherBuyExit':return c['selected:EXIT:WAIT_OTHER_BUY']??0;
+      case 'fallthroughDecisions':return c['ft:decisions']??0;
+      case 'fallthroughBuyFills':return c['ft:fill:BUY']??0;
+      case 'fallthroughBuySol':return (c['ft:buyLamports']??0)/1e9;
+      case 'attemptsBuy':return r.counters.attempts.BUY??0;
+      case 'attemptsSell':return r.counters.attempts.SELL??0;
+      default:throw new Error('Unknown fallthrough metric '+key);
+    }
+  };
+  const keys=['swaps','buy','sell','buySol','sellSol','buyAged10to30','lateSwaps','earlyRate','emptyPct','cash90','positions90','outsideKnown90',
+    'terminalSilencePct','first80','first90','completions','dustRejects','flatExits','exitChoices','exitChoiceSell','exitChoiceWait','exitChoiceBuy',
+    'waitOtherBuyExit','fallthroughDecisions','fallthroughBuyFills','fallthroughBuySol','attemptsBuy','attemptsSell'];
+  const stat=(xs)=>({mean:xs.reduce((a,b)=>a+b,0)/xs.length,min:Math.min(...xs),max:Math.max(...xs),positive:xs.filter(x=>x>0).length,negative:xs.filter(x=>x<0).length,zero:xs.filter(x=>x===0).length});
+  summary.contrasts={};
+  for(const key of keys) {
+    const bySeed=runs.map(run=>{
+      const b=metric(run.bounded,key),e=metric(run.exit,key),f=metric(run.ft,key);
+      return {seed:run.ft.seed,bounded:b,exit:e,ft:f,ftMinusExit:f-e,ftMinusBounded:f-b,exitMinusBounded:e-b};
+    });
+    summary.contrasts[key]={bySeed,summary:Object.fromEntries(['ftMinusExit','ftMinusBounded','exitMinusBounded'].map(k=>[k,stat(bySeed.map(row=>row[k]))]))};
+  }
+  summary.prefix=runs.map(run=>({seed:run.ft.seed,...run.ft.prefix}));
+}
 writeFileSync(join(out, 'summary.json'), JSON.stringify(summary, null, 2) + '\n', { flag: 'wx' });
 const results = { baseRevision: summary.revision, fingerprints: summary.fingerprints, defaults: summary.defaults,
   cooldownMs: summary.cooldownMs, interestMs:summary.interestMs,
   instrumentationGuardSha256:summary.instrumentationGuardSha256, uninstrumentedParity:true,
   real: summary.realAudit, pooled,
-  ...(causal?{causal:true,contrasts:summary.contrasts}:{}),
+  ...(causal||fallthrough?{causal:true,contrasts:summary.contrasts}:{}),
+  ...(fallthrough?{fallthrough:true,prefix:summary.prefix}:{}),
   hashes: runs.map((run) => Object.fromEntries(Object.entries(run).map(([mode, row]) => [mode, {
     seed: row.seed, manifest: row.manifest, tapeSha256: row.tapeSha256, fullTapeSha256: row.fullTapeSha256,
   }]))),
 };
 writeFileSync(join(out, 'results.json'), JSON.stringify(results, null, 2) + '\n', { flag: 'wx' });
-console.log(JSON.stringify(pooled, null, 2));
+if(!fallthrough)console.log(JSON.stringify(pooled, null, 2));

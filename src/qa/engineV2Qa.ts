@@ -384,6 +384,63 @@ function tokenInterestGate() {
   console.log('PASS A1 lease, trusted renewal, expired BUY WAIT, outside-known SELL, reservations and replay');
 }
 
+function exitFallthroughGate() {
+  class Draws extends RngStreams {
+    constructor(private readonly values: number[]) { super('fallthrough-qa'); }
+    override int(_namespace: string, _id: string, _version: string, exclusive: number) {
+      const value = this.values.shift();
+      check(value !== undefined && value >= 0 && value < exclusive, 'Expected fallthrough policy draw');
+      return value;
+    }
+    done() { equal(this.values.length, 0, 'Fallthrough consumes exactly the scripted draws'); }
+  }
+  const world = fixture({ agents: 1, boundedReactive: true, sellFeeReserve: true, tokenExitOnly: true, exitFallthrough: true });
+  const agent = world.state.agents['agent:00000'];
+  observe(agent, world.publicMarket(world.state.markets[FIRST]), 'qa:ft-first', undefined, true);
+  const command = buy(world, SOL) as Extract<Command, { kind: 'submit' }>;
+  submit(world, 'ft-position', { ...command, intent: { ...command.intent, agentId: agent.id } });
+  world.advanceTo(350);
+  // Move the held token outside known; keep one BUY-eligible candidate.
+  const exitView = agent.known[FIRST];
+  agent.exitMemory = { [FIRST]: exitView };
+  delete agent.known[FIRST];
+  observe(agent, world.publicMarket(world.state.markets[SECOND]), 'qa:ft-second');
+  const decide = (values: number[], fallthrough: boolean) => {
+    const rng = new Draws(values);
+    const intent = decideTrade(agent, 400, world.ledger, rng, () => undefined, SELL_FEE_RESERVE, false, true, false, fallthrough);
+    rng.done();
+    return intent;
+  };
+  // Contest order is tokenId order: FIRST (exit-only) scores 50, SECOND scores 10.
+  const sale = decide([99, 50, 10, 0, 0], true);
+  check(sale?.side === 'SELL' && sale.tokenId === FIRST, 'Exit-only winner still SELLs when the SELL draw succeeds');
+  const fell = decide([99, 50, 10, 99, 14], true);
+  check(fell?.side === 'BUY' && fell.tokenId === SECOND && fell.evidence[0] === 'qa:ft-second',
+    'Failed SELL draw falls through to the best known BUY candidate');
+  equal(fell.maxInputSol, 15n * SOL / 10n, 'Fallthrough BUY takes exactly one size draw');
+  equal(decide([99, 50, 10, 99], false), null, 'Without the flag EXIT_ONLY keeps the WAIT');
+  const known = agent.known[SECOND];
+  delete agent.known[SECOND];
+  equal(decide([99, 50, 99], true), null, 'No known candidate keeps WAIT');
+  agent.known[SECOND] = known;
+  const knownWin = decide([99, 10, 50, 14], true);
+  check(knownWin?.side === 'BUY' && knownWin.tokenId === SECOND, 'Known winner behaves as before');
+  const delta = SELL_FEE_RESERVE + BASE_FEE - world.ledger.balance(agent.id).available;
+  world.ledger.commit([posting(USER, 'SOL', -delta), posting(agent.id, 'SOL', delta)]);
+  equal(decide([99, 50, 10, 99], true), null, 'Unfunded fallthrough is a WAIT without a size draw');
+  let rejected = false;
+  try { new World({ ...config, boundedReactive: true, sellFeeReserve: true, exitFallthrough: true } as WorldConfig); }
+  catch { rejected = true; }
+  check(rejected, 'Fallthrough without exit-only memory is rejected');
+  const options = { ...DEFAULT_WORLD, agents: 8, boundedReactive: true, sellFeeReserve: true, tokenExitOnly: true, exitFallthrough: true } as const;
+  const run = new World(options); run.advanceTo(299999);
+  const copy = World.restore(run.snapshot()); run.advanceTo(310000); copy.advanceTo(300000); copy.advanceTo(310000);
+  same(run, copy, 'Fallthrough checkpoint restore');
+  same(run, World.rerun(options, [], 310000), 'Fallthrough deterministic rerun');
+  verifyLedger(run);
+  console.log('PASS exit fallthrough: SELL kept, WAIT to BUY only for exit-only winners, replay');
+}
+
 function causalSeparationGate() {
   class Draws extends RngStreams {
     constructor(private readonly values: number[]) { super('causal-qa'); }
@@ -723,6 +780,7 @@ sellFeeReserveGate();
 boundedReactiveGate();
 tokenInterestGate();
 causalSeparationGate();
+exitFallthroughGate();
 orderAndMigrationGate();
 priceCrossingGate();
 expiryAndFaultGate();

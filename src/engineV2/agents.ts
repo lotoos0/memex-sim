@@ -74,7 +74,7 @@ export function renewTokenInterest(agent: Agent, tokenId: string, post: Post, no
 
 export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngStreams,
   narrativeOf: (tokenId: string) => string | undefined, protectedBuySol = 0n,
-  tokenInterest = false, exitOnly = false, leaseOnly = false): Intent | null {
+  tokenInterest = false, exitOnly = false, leaseOnly = false, exitFallthrough = false): Intent | null {
   const leaseEnabled = tokenInterest || leaseOnly;
   const exitEnabled = tokenInterest || exitOnly;
   const draw = (exclusive: number) => rng.int('agent/decision', agent.id, AGENT_VERSION, exclusive);
@@ -105,11 +105,15 @@ export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngS
   const interestTotal = [...interestByNarrative.values()].reduce((sum, value) => sum + value, 0);
   let selected = candidates[0];
   let best = -Infinity;
+  // Best BUY-eligible (known) candidate of the same contest; no extra draw is taken for it.
+  let fallback: KnownMarket | null = null;
+  let bestKnown = -Infinity;
   for (const item of candidates.sort((a, b) => a.view.tokenId < b.view.tokenId ? -1 : 1)) {
     const id = narrativeOf(item.view.tokenId);
     const pressure = id ? Math.floor((interestByNarrative.get(id) ?? 0) * 60 / (Math.max(60, interestTotal) * counts.get(id)!)) : 0;
     const score = draw(60) + pressure;
     if (score > best) { best = score; selected = item; }
+    if (exitFallthrough && agent.known[item.view.tokenId] && score > bestKnown) { bestKnown = score; fallback = item; }
   }
   const { view, prior, evidence } = selected;
   const tokens = ledger.balance(agent.id, view.tokenId).available;
@@ -124,9 +128,15 @@ export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngS
     return { ...base, side: 'SELL', inputTokens: tokens * BigInt(1 + draw(4)) / 4n || tokens, minOutputSol: null };
   }
   if (cash <= 0n) return null;
-  if (exitEnabled && !agent.known[view.tokenId]
-    || leaseEnabled && now >= (agent.tokenInterest?.[view.tokenId]?.buyUntil ?? 0)) return null;
+  // An exit-only winner that did not SELL must not turn into WAIT while a BUY candidate exists:
+  // fall through to the best known candidate of the same contest (no second SELL draw).
+  const buyBase = exitFallthrough && exitEnabled && !agent.known[view.tokenId] && fallback
+    ? { ...base, tokenId: fallback.view.tokenId, evidence: [fallback.evidence] } : base;
+  if (exitEnabled && !agent.known[buyBase.tokenId]
+    || leaseEnabled && now >= (agent.tokenInterest?.[buyBase.tokenId]?.buyUntil ?? 0)) return null;
+  // A fallthrough that cannot fund a BUY stays a plain WAIT and must not consume a size draw.
+  if (buyBase !== base && cash - protectedBuySol <= 0n) return null;
   const size = minAtoms(cash - protectedBuySol, SOL * BigInt(1 + draw(15)) / 10n);
   if (size <= 0n) return null;
-  return { ...base, side: 'BUY', maxInputSol: size, minOutputTokens: null };
+  return { ...buyBase, side: 'BUY', maxInputSol: size, minOutputTokens: null };
 }

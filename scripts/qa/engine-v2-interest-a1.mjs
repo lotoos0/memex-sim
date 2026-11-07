@@ -12,21 +12,32 @@ const baselineDir = resolve(process.argv[2] ?? 'output/engine-v2-real-c-baseline
 const out = resolve(process.argv[3] ?? 'output/engine-v2-interest-a1');
 const requestedSeed = process.argv[4];
 const causal = process.argv.includes('--causal');
-const baseline = JSON.parse(readFileSync(join(baselineDir, 'v2-runs.json'), 'utf8'));
-const [realMetrics] = JSON.parse(readFileSync(join(baselineDir, 'metrics.json'), 'utf8'));
-const controls = JSON.parse(readFileSync('output/engine-v2-sell-fee-reserve/summary.json', 'utf8'));
-const boundedReference = JSON.parse(readFileSync('output/engine-v2-bounded-reactive/summary.json', 'utf8'));
+const fallthrough = process.argv.includes('--fallthrough');
+// --fallthrough needs no local reference outputs: BOUNDED/EXIT_ONLY are anchored to the committed compact results.
+const committed = fallthrough ? JSON.parse(readFileSync('docs/calibration/engine-v2-a1-causal-separation-results.json', 'utf8')) : null;
+const baseline = fallthrough ? { defaults: committed.defaults, variant: 'on', seeds: committed.hashes.map((row) => row.bounded.seed),
+  runs: committed.hashes.map((row) => ({ seed: row.bounded.seed })) }
+  : JSON.parse(readFileSync(join(baselineDir, 'v2-runs.json'), 'utf8'));
+const [realMetrics] = fallthrough ? [committed.real] : JSON.parse(readFileSync(join(baselineDir, 'metrics.json'), 'utf8'));
+const controls = fallthrough ? null : JSON.parse(readFileSync('output/engine-v2-sell-fee-reserve/summary.json', 'utf8'));
+const boundedReference = fallthrough ? null : JSON.parse(readFileSync('output/engine-v2-bounded-reactive/summary.json', 'utf8'));
 const a1Reference = causal ? JSON.parse(readFileSync('output/engine-v2-interest-a1-final/summary.json', 'utf8')) : null;
-const realAudit = JSON.parse(readFileSync('output/engine-v2-persistence-audit/summary.json', 'utf8')).real;
+const realAudit = fallthrough ? committed.real : JSON.parse(readFileSync('output/engine-v2-persistence-audit/summary.json', 'utf8')).real;
 const temp = mkdtempSync(join(tmpdir(), 'memex-interest-a1-'));
 const json = (value) => JSON.stringify(value, (_, item) => typeof item === 'bigint' ? item.toString() : item);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const bump = (bag, key) => { bag[key] = (bag[key] ?? 0) + 1; };
+const fnv = (text) => {
+  let a = 0x811c9dc5, b = 0x9747b28c;
+  for (let i = 0; i < text.length; i++) { const c = text.charCodeAt(i); a = Math.imul(a ^ c, 0x01000193) >>> 0; b = Math.imul(b ^ c, 0x85ebca6b) >>> 0; }
+  return a * 0x200000 + (b >>> 11);
+};
+let lastChain = null;
 const sampleMinutes = new Set([0, 5, 10, 15, 20, 30, 45, 60, 90]);
 const band = (ms) => ms < 120_000 ? 0 : ms < 600_000 ? 1 : ms < 1_200_000 ? 2 : 3;
 
 try {
-  const expiredBuyGuard = 'if (exitEnabled && !agent.known[view.tokenId]\n    || leaseEnabled && now >= (agent.tokenInterest?.[view.tokenId]?.buyUntil ?? 0)) return null;';
+  const expiredBuyGuard = 'if (exitEnabled && !agent.known[buyBase.tokenId]\n    || leaseEnabled && now >= (agent.tokenInterest?.[buyBase.tokenId]?.buyUntil ?? 0)) return null;';
   const bundle = join(temp, 'runner.mjs');
   const built = await build({ stdin: { contents: `
     export { measure } from './src/qa/engineV2Benchmark';
@@ -48,12 +59,17 @@ try {
         replaceOnce('if (!candidates.length || draw(100) < 45) return null;',
           "if (!candidates.length) { trace('NO_CANDIDATE'); return null; }\n  if (draw(100) < 45) { trace('POLICY_WAIT'); return null; }");
         replaceOnce('const { view, prior, evidence } = selected;',
-          'const { view, prior, evidence } = selected;\n  trace(null, selected);');
+          'const { view, prior, evidence } = selected;\n  trace(null, selected);\n  globalThis.__a1Pressure(agent, now, candidates, rawScores, narrativeOf);');
+        replaceOnce('let bestKnown = -Infinity;','let bestKnown = -Infinity;\n  const rawScores = new Map();');
+        replaceOnce('const score = draw(60) + pressure;','const rawDraw = draw(60);\n    const score = rawDraw + pressure;\n    rawScores.set(item.view.tokenId, [rawDraw, score]);');
         replaceOnce('if (cash <= 0n) return null;',"if (cash <= 0n) { trace('BUY_BUDGET', selected, 'NO_CASH'); return null; }");
+        replaceOnce('if (buyBase !== base && cash - protectedBuySol <= 0n) return null;',
+          "if (buyBase !== base && cash - protectedBuySol <= 0n) { trace('BUY_BUDGET', selected, 'RESERVE'); return null; }");
         replaceOnce('if (size <= 0n) return null;',"if (size <= 0n) { trace('BUY_BUDGET', selected, 'RESERVE'); return null; }");
         assert.equal(source.split(expiredBuyGuard).length, 2, 'One explicit BUY-only interest guard');
         return { loader: 'ts', contents: source.replace(expiredBuyGuard,
-          expiredBuyGuard.replace('return null;', "{ trace('BUY_RESTRICTION', selected, exitEnabled && !agent.known[view.tokenId] ? 'EXIT_VIEW' : 'LEASE_EXPIRED'); globalThis.__a1ExpiredBuy(agent, view, now); return null; }")) };
+          "if (buyBase !== base) globalThis.__a1Fallthrough(agent, now, ledger, protectedBuySol, selected, buyBase.tokenId);\n  "
+          + expiredBuyGuard.replace('return null;', "{ trace('BUY_RESTRICTION', selected, exitEnabled && !agent.known[buyBase.tokenId] ? 'EXIT_VIEW' : 'LEASE_EXPIRED'); globalThis.__a1ExpiredBuy(agent, view, now); return null; }")) };
       });
     } }],
   });
@@ -84,6 +100,44 @@ try {
     if (Object.values(agent.known).some((item) => item.view.tradable
       && (!audit.flags.lease || now < (agent.tokenInterest?.[item.view.tokenId]?.buyUntil ?? 0)))) audit.a1.blockedWithInterestedAlternative++;
   };
+  globalThis.__a1Fallthrough = (agent, now, ledger, protection, selected, targetId) => {
+    audit.ft = { selectedId: selected.view.tokenId, targetId, at: now };
+    bump(audit.causal, 'ft:decisions');
+    if (audit.cf && audit.cf.best !== targetId) bump(audit.causal, 'pressure:fallthroughTargetDiffers');
+  };
+  // Counterfactual only: would known-only narrative counts change the scores of BUY-eligible candidates?
+  globalThis.__a1Pressure = (agent, now, candidates, scores, narrativeOf) => {
+    const known = candidates.filter((item) => agent.known[item.view.tokenId]);
+    const exit = candidates.filter((item) => !agent.known[item.view.tokenId]);
+    if (!exit.length) { bump(audit.causal, 'pressure:decisionsWithoutExit'); return; }
+    bump(audit.causal, 'pressure:decisionsWithExit');
+    if (candidates.some((item) => scores.get(item.view.tokenId)[1] > scores.get(item.view.tokenId)[0])) bump(audit.causal, 'pressure:nonzeroActual');
+    if (!known.length) { bump(audit.causal, 'pressure:noKnown'); return; }
+    const counts = new Map();
+    for (const { view } of known) { const n = narrativeOf(view.tokenId); if (n) counts.set(n, (counts.get(n) ?? 0) + 1); }
+    const interest = new Map();
+    for (const id of counts.keys()) {
+      const x = agent.narratives[id];
+      if (x) interest.set(id, Math.max(0, x.attention - x.fatigue - Math.floor((now - x.at) / 1000)));
+    }
+    const total = [...interest.values()].reduce((sum, value) => sum + value, 0);
+    let nonzeroCf = false;
+    let differs = false, bestActual = null, bestActualScore = -Infinity, bestCf = null, bestCfScore = -Infinity;
+    for (const item of known) {
+      const id = narrativeOf(item.view.tokenId);
+      const cf = id ? Math.floor((interest.get(id) ?? 0) * 60 / (Math.max(60, total) * counts.get(id))) : 0;
+      const [raw, actual] = scores.get(item.view.tokenId);
+      if (actual - raw !== cf) differs = true;
+      if (cf > 0) nonzeroCf = true;
+      if (actual > bestActualScore) { bestActualScore = actual; bestActual = item.view.tokenId; }
+      if (raw + cf > bestCfScore) { bestCfScore = raw + cf; bestCf = item.view.tokenId; }
+    }
+    if (exit.some((item) => counts.has(narrativeOf(item.view.tokenId)))) bump(audit.causal, 'pressure:exitSharesKnownNarrative');
+    if (differs) bump(audit.causal, 'pressure:knownPressureDiffers');
+    if (nonzeroCf) bump(audit.causal, 'pressure:nonzeroKnownOnly');
+    if (bestActual !== bestCf) bump(audit.causal, 'pressure:bestKnownDiffers');
+    audit.cf = { best: bestCf };
+  };
   function waitClassificationGate() {
     class Draws extends RngStreams {
       constructor(values) { super('causal-classification'); this.values=[...values]; }
@@ -103,7 +157,7 @@ try {
       world.ledger.commit([posting(agent.id,'SOL',delta),posting('user:player','SOL',-delta)]);
     };
     const run=(at,values,exit=false,lease=true)=>{
-      audit={trace:null,flags:{exit,lease},a1:{expiredBuyWait:0,exitOnlyBuyWait:0,blockedWithInterestedAlternative:0}};
+      audit={trace:null,causal:{},flags:{exit,lease},a1:{expiredBuyWait:0,exitOnlyBuyWait:0,blockedWithInterestedAlternative:0}};
       const rng=new Draws(values);
       const intent=decideTrade(agent,at,world.ledger,rng,()=>undefined,5_000_000n,exit&&lease,exit&&!lease,lease&&!exit);
       assert.equal(rng.values.length,0);
@@ -154,7 +208,7 @@ try {
   const processTask = World.prototype.process;
   World.prototype.process = function (event) {
     const { kind, payload, key: { at } } = event;
-    if (kind === 'Decide') audit.trace=null;
+    if (kind === 'Decide') { audit.trace=null; audit.ft=null; audit.cf=null; }
     const executedIntent=kind==='Execute'?this.state.orders[payload.orderId]?.intent:null;
     const heldBefore=executedIntent ? this.ledger.balance(executedIntent.agentId,executedIntent.tokenId):null;
     const atomsBefore=heldBefore ? heldBefore.available+heldBefore.reserved:0n;
@@ -205,6 +259,15 @@ try {
           }
           bump(audit.causal,`decision:${committed.payload.decision}`);
         }
+        {
+          const d = this.kernel.scheduled.find((task) => task.kind === 'Admit')?.payload.intent;
+          if (audit.ft) {
+            bump(audit.causal, d ? 'ft:buyIntent' : 'ft:wait');
+            if (d && audit.chain.firstChange === null) { audit.chain.firstChange = audit.chain.decisions.length; audit.chain.firstChangeAt = at; }
+          }
+          audit.chain.decisions.push(fnv(JSON.stringify([at, agentId, committed.payload.ordinal, committed.payload.decision,
+            d?.tokenId ?? null, d?.side ?? null, String(d?.maxInputSol ?? d?.inputTokens ?? '')])));
+        }
         if (this.config.tokenInterestA1 && committed.payload.decision === 'WAIT') {
           const eligibleKnown = Object.values(actor.known).some((item) => item.view.tradable &&
             (at < (actor.tokenInterest[item.view.tokenId]?.buyUntil ?? 0) || this.ledger.balance(agentId,item.view.tokenId).available > 0n));
@@ -232,7 +295,11 @@ try {
     } else if (kind === 'Admit') {
       bump(audit.attempts, payload.intent.side);
       for (const fact of this.kernel.staged) {
-        if (fact.kind === 'AdmissionRejected') bump(audit.rejects, `${payload.intent.side}:admission:${fact.payload.reason}`);
+        if (fact.kind === 'AdmissionRejected') {
+          bump(audit.rejects, `${payload.intent.side}:admission:${fact.payload.reason}`);
+          if (audit.orderMeta.get(payload.intentId)?.fallthrough) bump(audit.causal, 'ft:admitReject');
+          audit.orderMeta.delete(payload.intentId);
+        }
       }
     } else if (kind === 'Observe' && !audit.firstMarket.has(agentId)) audit.firstMarket.set(agentId, at);
     else if (kind === 'Discover' && !audit.firstNarrative.has(agentId)) {
@@ -246,7 +313,7 @@ try {
     if (kind === 'Decide') for (const task of this.kernel.scheduled) if (task.kind === 'Admit') {
       const intent = task.payload.intent;
       const entry = actor.tokenInterest?.[intent.tokenId];
-      const meta = { at, buyUntil: entry?.buyUntil ?? null, exitOnly: !actor.known[intent.tokenId] };
+      const meta = { at, buyUntil: entry?.buyUntil ?? null, exitOnly: !actor.known[intent.tokenId], fallthrough: !!audit.ft && intent.side === 'BUY' };
       if (this.config.tokenInterestA1 && intent.side === 'BUY') {
         assert.equal(meta.exitOnly, false);
         assert.ok(at < meta.buyUntil, 'No new BUY after interest expiry');
@@ -258,6 +325,11 @@ try {
       const meta = audit.orderMeta.get(fill.intentId);
       assert.ok(meta);
       if (audit.flags.exit && fill.side==='SELL' && meta.exitOnly) bump(audit.causal,'fill:EXIT:SELL');
+      if (meta.fallthrough) {
+        bump(audit.causal, 'ft:fill:' + fill.side);
+        audit.causal['ft:buyLamports'] = (audit.causal['ft:buyLamports'] ?? 0) + Number(fill.quoteAtomsExFee);
+        bump(audit.causal, `ft:fillAgeBand:${band(fill.at - this.state.markets[fill.tokenId].launchedAt)}`);
+      }
       if (fill.side==='SELL') {
         if(!this.state.agents[fill.agentId].known[fill.tokenId])bump(audit.causal,'fillOutsideKnownAtExecution');
         const after=this.ledger.balance(fill.agentId,fill.tokenId);
@@ -276,6 +348,7 @@ try {
     if(kind==='Execute') for(const fact of this.kernel.staged) if(fact.kind==='OrderChanged'&&fact.payload.order.status==='REJECTED') {
       const order=fact.payload.order,meta=audit.orderMeta.get(order.intentId);
       bump(audit.causal,`executionReject:${meta?.exitOnly?'EXIT':'KNOWN'}:${order.intent.side}:${order.reason}`);
+      if (meta?.fallthrough) bump(audit.causal, 'ft:execReject');
       audit.orderMeta.delete(order.intentId);
     }
     if (this.config.boundedReactive && ((kind === 'Observe' || kind === 'Discover') && ordinal > 0 || kind === 'Decide' && payload.reactive)) {
@@ -347,8 +420,9 @@ try {
       attempts: {}, rejects: {}, pendingOrders: {}, lastPeriodic: new Map(), periodicGaps: {},
       impulses: 0, coalescedReactive: 0, coalescedPeriodic: 0 };
     audit.orderMeta = new Map();
-    audit.flags={lease:['a1','lease'].includes(mode),exit:['a1','exit'].includes(mode)};
-    audit.causal={}; audit.trace=null;
+    audit.flags={lease:['a1','lease'].includes(mode),exit:['a1','exit','ft'].includes(mode)};
+    audit.causal={}; audit.trace=null; audit.ft=null; audit.cf=null;
+    audit.chain={ decisions: [], rows: [], rowTimes: [], firstChange: null, firstChangeAt: null };
     audit.a1 = { expiredBuyWait: 0, exitOnlyBuyWait: 0, blockedWithInterestedAlternative: 0,
       noEligibleMarketWait: 0, renewals: 0, exitOnlySellFills: 0, expiredSellFills: 0, inflightBuyAfterExpiry: 0 };
     const tape = createHash('sha256');
@@ -359,6 +433,9 @@ try {
     let lastFill;
     const measured = measure(seed, 'on', (row) => {
       fullTape.update(json(row) + '\n');
+      // Fact ids embed the run's config hash, which differs by design between variants; compare behavior, not ids.
+      audit.chain.rows.push(fnv(json(row).replace(/[0-9a-f]{16}\/e\//g, 'RUN/e/')));
+      audit.chain.rowTimes.push(row.at ?? row.launchAt ?? 0);
       if (row.kind === 'birth') {
         paths.set(row.tokenId, { birth: row.launchAt, ages: [0, 0, 0, 0], trades: 0, activeBins: 0, sizes: [], buy: 0,
           buySol: 0n, sellSol: 0n, first80: false, first90: false, rows: [], token: row.tokenId });
@@ -390,9 +467,12 @@ try {
         else path.sellSol += row.quoteAtomsExFee;
       }
     }, { streamFacts: true, ...(mode !== 'off' ? { sellFeeReserve: true } : {}),
-      ...(['bounded','a1','exit','lease'].includes(mode) ? { boundedReactive: true } : {}),
+      ...(['bounded','a1','exit','lease','ft'].includes(mode) ? { boundedReactive: true } : {}),
       ...(mode === 'a1' ? { tokenInterestA1: true } : {}),
-      ...(mode === 'exit' ? { tokenExitOnly: true } : {}), ...(mode === 'lease' ? { tokenLeaseOnly: true } : {}) });
+      ...(mode === 'exit' || mode === 'ft' ? { tokenExitOnly: true } : {}), ...(mode === 'lease' ? { tokenLeaseOnly: true } : {}),
+      ...(mode === 'ft' ? { exitFallthrough: true } : {}) });
+    audit.causal['ft:pending'] = [...audit.orderMeta.values()].filter((meta) => meta.fallthrough).length;
+    lastChain = audit.chain;
     for (const [source, count] of Object.entries(audit.scheduled)) {
       assert.equal(count, (audit.executed[source] ?? 0) + (audit.stale[source] ?? 0) + (audit.queued[source] ?? 0));
     }
@@ -400,7 +480,14 @@ try {
     assert.equal(Object.entries(audit.causal).filter(([k])=>k.startsWith('wait:')).reduce((n,[,v])=>n+v,0),audit.causal['decision:WAIT']??0);
     for (const origin of ['KNOWN','EXIT']) assert.equal(audit.causal[`selected:${origin}`]??0,
       ['BUY','SELL','WAIT'].reduce((n,side)=>n+(audit.causal[`selected:${origin}:${side}`]??0),0));
-    assert.equal(audit.causal['selected:EXIT:BUY']??0,0);
+    const ftBuy = audit.causal['ft:buyIntent'] ?? 0;
+    assert.equal(audit.causal['selected:EXIT:BUY'] ?? 0, mode === 'ft' ? ftBuy : 0, 'Exit-only BUY exists only as fallthrough');
+    if (mode === 'ft') {
+      assert.equal(audit.causal['ft:decisions'] ?? 0, ftBuy + (audit.causal['ft:wait'] ?? 0));
+      assert.equal(ftBuy, ['ft:fill:BUY', 'ft:execReject', 'ft:admitReject', 'ft:pending'].reduce((n, key) => n + (audit.causal[key] ?? 0), 0),
+        'Every fallthrough BUY intent is filled, rejected or pending');
+      assert.equal(audit.causal['selected:EXIT:WAIT_OTHER_BUY'] ?? 0, 0, 'No exit-only WAIT leaves an eligible BUY unused');
+    } else assert.equal(audit.causal['ft:decisions'] ?? 0, 0);
     for (const side of ['BUY', 'SELL']) {
       const rejects = Object.entries(audit.rejects).filter(([key]) => key.startsWith(side + ':')).reduce((n, [, count]) => n + count, 0);
       assert.equal(audit.attempts[side] ?? 0, (fills[side] ?? 0) + rejects + (audit.pendingOrders[side] ?? 0));
@@ -431,7 +518,7 @@ try {
     if (saveSizes && mode !== 'off') writeFileSync(join(out, `${seed}-${mode}-sizes.bin`), bytes, { flag: 'wx' });
     assert.equal(marketAudit.paths, common.paths);
     assert.equal(marketAudit.cells.all.trades, common.trades);
-    const { origins, pending, lastDecision, lastPeriodic, firstMarket, firstNarrative, orderMeta, trace, flags, ...counters } = audit;
+    const { origins, pending, lastDecision, lastPeriodic, firstMarket, firstNarrative, orderMeta, trace, flags, chain, ft, cf, ...counters } = audit;
     const result = { seed, mode, manifest: measured.manifest, decisions: measured.decisions, facts: measured.facts,
       all: measured.all, poolFills: measured.poolFills, simulatedMs: measured.simulatedMs, baselineSchedule: measured.baselineSchedule,
       tapeSha256: tape.digest('hex'), fullTapeSha256: fullTape.digest('hex'), sizeSamplesSha256: hash(bytes),
@@ -445,6 +532,28 @@ try {
   mkdirSync(out, { recursive: true });
   const runs = [];
   for (const expected of baseline.runs.filter((row) => requestedSeed === undefined || row.seed === requestedSeed)) {
+    if (fallthrough) {
+      const saved = committed.hashes.find((row) => row.bounded.seed === expected.seed);
+      const anchored = (row, ref, name) => { for (const key of ['manifest', 'tapeSha256', 'fullTapeSha256']) assert.deepEqual(row[key], ref[key], `${expected.seed} ${name} anchor ${key}`); };
+      const bounded = run(expected.seed, 'bounded'); anchored(bounded, saved.bounded, 'BOUNDED');
+      const exit = run(expected.seed, 'exit'); const exitChain = lastChain; anchored(exit, saved.exit, 'EXIT_ONLY');
+      const ft = run(expected.seed, 'ft'); const ftChain = lastChain;
+      const firstDiff = (a, b) => { const n = Math.min(a.length, b.length); for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i; return a.length === b.length ? -1 : n; };
+      const decisionDiff = firstDiff(exitChain.decisions, ftChain.decisions);
+      const rowDiff = firstDiff(exitChain.rows, ftChain.rows);
+      if (ftChain.firstChange === null) { assert.equal(decisionDiff, -1); assert.equal(rowDiff, -1); }
+      else {
+        assert.equal(decisionDiff, ftChain.firstChange, `${expected.seed} decision tapes diverge exactly at the first changed fallthrough`);
+        assert.notEqual(rowDiff, -1);
+        assert.ok(Math.min(exitChain.rowTimes[rowDiff], ftChain.rowTimes[rowDiff]) >= ftChain.firstChangeAt, `${expected.seed} no trade-tape difference before the first changed decision (row ${rowDiff}, exit t=${exitChain.rowTimes[rowDiff]}, ft t=${ftChain.rowTimes[rowDiff]}, first change ${ftChain.firstChangeAt}, rows ${exitChain.rows.length}/${ftChain.rows.length})`);
+      }
+      ft.prefix = { decisionDiff, firstChange: ftChain.firstChange, firstChangeAt: ftChain.firstChangeAt, rowDiff,
+        rowDiffAt: rowDiff < 0 ? null : Math.min(exitChain.rowTimes[rowDiff], ftChain.rowTimes[rowDiff]),
+        exitDecisions: exitChain.decisions.length, ftDecisions: ftChain.decisions.length };
+      runs.push({ bounded, exit, ft });
+      console.log(expected.seed, 'swaps', bounded.common.trades, exit.common.trades, ft.common.trades, 'anchors match; first change at decision', decisionDiff, 'ms', ftChain.firstChangeAt);
+      continue;
+    }
     const off = run(expected.seed, 'off');
     for (const key of ['manifest', 'tapeSha256', 'all', 'decisions', 'facts', 'poolFills', 'baselineSchedule', 'simulatedMs']) {
       assert.deepEqual(off[key], expected[key], `${expected.seed} OFF ${key}`);

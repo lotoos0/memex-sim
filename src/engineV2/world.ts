@@ -32,6 +32,7 @@ export type WorldConfig = {
   boundedReactive?: true;
   tokenInterestA1?: true;
   tokenExitOnly?: true;
+  exitFallthrough?: true;
   tokenLeaseOnly?: true;
 };
 export const DEFAULT_WORLD: WorldConfig = {
@@ -71,7 +72,7 @@ function makeManifest(config: WorldConfig): Manifest {
     catalogHash: checksum(canonical(SOCIAL_CATALOG)), configHash: checksum(canonical(config)),
     policyVersions: { agents: AGENT_VERSION, social: SOCIAL_VERSION, lifecycle: LIFECYCLE_VERSION, fee: 'fixed-1',
       ...(config.tokenInterestA1 ? { tokenInterest: TOKEN_INTEREST_VERSION } : {}),
-      ...(config.tokenExitOnly ? { exit: 'position-exit-only-1' } : {}),
+      ...(config.tokenExitOnly ? { exit: config.exitFallthrough ? 'position-exit-fallthrough-1' : 'position-exit-only-1' } : {}),
       ...(config.tokenLeaseOnly ? { tokenInterest: 'buy-lease-300s-only-1' } : {}) },
   };
 }
@@ -94,6 +95,7 @@ export class World {
     if (config.latencyMs < 1) throw new Error('Execution latency must be positive');
     const variants = [config.tokenInterestA1, config.tokenExitOnly, config.tokenLeaseOnly].filter(Boolean).length;
     if (variants > 1) throw new Error('Token policy variant flags are mutually exclusive');
+    if (config.exitFallthrough && !config.tokenExitOnly) throw new Error('Exit fallthrough requires exit-only memory');
     if (variants && (!config.boundedReactive || !config.sellFeeReserve)) {
       throw new Error('Token policy variants require bounded reactive wake and SELL fee reserve');
     }
@@ -500,7 +502,7 @@ export class World {
     } else {
       const intent = decideTrade(agent, this.now, this.ledger, this.rng, tokenId => this.state.social.links[tokenId]?.narrativeId,
         this.config.sellFeeReserve ? SELL_FEE_RESERVE : 0n,
-        !!this.config.tokenInterestA1, !!this.config.tokenExitOnly, !!this.config.tokenLeaseOnly);
+        !!this.config.tokenInterestA1, !!this.config.tokenExitOnly, !!this.config.tokenLeaseOnly, !!this.config.exitFallthrough);
       if ((this.config.tokenInterestA1 || this.config.tokenExitOnly) && intent?.side === 'BUY') {
         this.storeExit(agent, intent.tokenId, agent.known[intent.tokenId]);
       }
