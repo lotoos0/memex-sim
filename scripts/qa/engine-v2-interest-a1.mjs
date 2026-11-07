@@ -12,9 +12,11 @@ const baselineDir = resolve(process.argv[2] ?? 'output/engine-v2-real-c-baseline
 const out = resolve(process.argv[3] ?? 'output/engine-v2-interest-a1');
 const requestedSeed = process.argv[4];
 const causal = process.argv.includes('--causal');
-const fallthrough = process.argv.includes('--fallthrough');
+const attention = process.argv.includes('--attention');
+const fallthrough = process.argv.includes('--fallthrough') || attention;
 // --fallthrough needs no local reference outputs: BOUNDED/EXIT_ONLY are anchored to the committed compact results.
 const committed = fallthrough ? JSON.parse(readFileSync('docs/calibration/engine-v2-a1-causal-separation-results.json', 'utf8')) : null;
+const committedFt = attention ? JSON.parse(readFileSync('docs/calibration/engine-v2-exit-fallthrough-results.json', 'utf8')) : null;
 const baseline = fallthrough ? { defaults: committed.defaults, variant: 'on', seeds: committed.hashes.map((row) => row.bounded.seed),
   runs: committed.hashes.map((row) => ({ seed: row.bounded.seed })) }
   : JSON.parse(readFileSync(join(baselineDir, 'v2-runs.json'), 'utf8'));
@@ -45,9 +47,30 @@ try {
     export { RngStreams } from './src/engineV2/rng';
     export { BASE_FEE, SOL } from './src/engineV2/contracts';
     export { posting } from './src/engineV2/ledger';
+    export { attentionWeight } from './src/engineV2/attention';
     export { World, DEFAULT_WORLD, BOUNDED_REACTIVE_MS } from './src/engineV2/world';`, resolveDir: process.cwd() },
     platform: 'node', format: 'esm', bundle: true, metafile: true, outfile: bundle,
     plugins: [{ name: 'a1-read-only-diagnostics', setup(builder) {
+      builder.onLoad({ filter: /engineV2[\\/]attention\.ts$/ }, ({ path }) => {
+        let source = readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
+        const once = (old, replacement) => {
+          assert.equal(source.split(old).length, 2, 'One attention diagnostic anchor: ' + old);
+          source = source.replace(old, replacement);
+        };
+        once('* ATTENTION_WEIGHT_MAX / ATTENTION_MAX)', '* (globalThis.__a2WeightMax ?? ATTENTION_WEIGHT_MAX) / ATTENTION_MAX)');
+        once('const granted = ATTENTION_FLOW_LEVELS[strikes];',
+          "const granted = ATTENTION_FLOW_LEVELS[strikes];\n  globalThis.__a2Count?.('attn:news:k' + strikes + (granted > decayLevel(record.level, now - record.at) ? ':raised' : ':noGain'));");
+        once('if (view.observedAt <= record.ref.at) return;', "if (view.observedAt <= record.ref.at) { globalThis.__a2Count?.('attn:staleIgnored'); return; }");
+        once('if (view.epoch !== record.ref.epoch) { record.ref = refOf(view); return; }',
+          "if (view.epoch !== record.ref.epoch) { globalThis.__a2Count?.('attn:epochReset'); record.ref = refOf(view); return; }");
+        once('book[view.tokenId] = created;', "globalThis.__a2Count?.(launch ? 'attn:launchImpulse' : 'attn:lateRecord');\n    book[view.tokenId] = created;");
+        once('if (!record) { book[tokenId] = fresh(now, post.id, post.publishedAt); return true; }',
+          "if (!record) { globalThis.__a2Count?.('attn:postImpulseNew'); book[tokenId] = fresh(now, post.id, post.publishedAt); return true; }");
+        once('Object.assign(record, { level: ATTENTION_MAX,', "globalThis.__a2Count?.('attn:postImpulseRenew');\n  Object.assign(record, { level: ATTENTION_MAX,");
+        once('record.ref = { quoteAtoms: spot.quoteAtoms, tokenAtoms: spot.tokenAtoms, at, epoch };',
+          "globalThis.__a2Count?.('attn:ownFillAbsorb');\n  record.ref = { quoteAtoms: spot.quoteAtoms, tokenAtoms: spot.tokenAtoms, at, epoch };");
+        return { loader: 'ts', contents: source };
+      });
       builder.onLoad({ filter: /engineV2[\\/]agents\.ts$/ }, ({ path }) => {
         let source = readFileSync(path, 'utf8').replaceAll('\r\n','\n');
         const replaceOnce = (old, replacement) => {
@@ -61,19 +84,19 @@ try {
         replaceOnce('const { view, prior, evidence } = selected;',
           'const { view, prior, evidence } = selected;\n  trace(null, selected);\n  globalThis.__a1Pressure(agent, now, candidates, rawScores, narrativeOf);');
         replaceOnce('let bestKnown = -Infinity;','let bestKnown = -Infinity;\n  const rawScores = new Map();');
-        replaceOnce('const score = draw(60) + pressure;','const rawDraw = draw(60);\n    const score = rawDraw + pressure;\n    rawScores.set(item.view.tokenId, [rawDraw, score]);');
+        replaceOnce('const score = raw + pressure;','const score = raw + pressure;\n    rawScores.set(item.view.tokenId, [raw, score]);');
         replaceOnce('if (cash <= 0n) return null;',"if (cash <= 0n) { trace('BUY_BUDGET', selected, 'NO_CASH'); return null; }");
-        replaceOnce('if (buyBase !== base && cash - protectedBuySol <= 0n) return null;',
-          "if (buyBase !== base && cash - protectedBuySol <= 0n) { trace('BUY_BUDGET', selected, 'RESERVE'); return null; }");
+        replaceOnce('if (buyBase !== base && !agent.known[view.tokenId] && cash - protectedBuySol <= 0n) return null;',
+          "if (buyBase !== base && !agent.known[view.tokenId] && cash - protectedBuySol <= 0n) { trace('BUY_BUDGET', selected, 'RESERVE'); return null; }");
         replaceOnce('if (size <= 0n) return null;',"if (size <= 0n) { trace('BUY_BUDGET', selected, 'RESERVE'); return null; }");
         assert.equal(source.split(expiredBuyGuard).length, 2, 'One explicit BUY-only interest guard');
         return { loader: 'ts', contents: source.replace(expiredBuyGuard,
-          "if (buyBase !== base) globalThis.__a1Fallthrough(agent, now, ledger, protectedBuySol, selected, buyBase.tokenId);\n  "
+          "globalThis.__a1Target(agent, now, ledger, protectedBuySol, selected, buyBase.tokenId, fallback);\n  "
           + expiredBuyGuard.replace('return null;', "{ trace('BUY_RESTRICTION', selected, exitEnabled && !agent.known[buyBase.tokenId] ? 'EXIT_VIEW' : 'LEASE_EXPIRED'); globalThis.__a1ExpiredBuy(agent, view, now); return null; }")) };
       });
     } }],
   });
-  const { measure, World, DEFAULT_WORLD, BOUNDED_REACTIVE_MS, BASE_FEE, SOL, posting,
+  const { measure, World, DEFAULT_WORLD, BOUNDED_REACTIVE_MS, BASE_FEE, SOL, posting, attentionWeight,
     decideTrade, newAgent, observe, RngStreams } = await import(pathToFileURL(bundle));
   assert.deepEqual(DEFAULT_WORLD, baseline.defaults);
   assert.equal(baseline.variant, 'on');
@@ -100,10 +123,26 @@ try {
     if (Object.values(agent.known).some((item) => item.view.tradable
       && (!audit.flags.lease || now < (agent.tokenInterest?.[item.view.tokenId]?.buyUntil ?? 0)))) audit.a1.blockedWithInterestedAlternative++;
   };
-  globalThis.__a1Fallthrough = (agent, now, ledger, protection, selected, targetId) => {
-    audit.ft = { selectedId: selected.view.tokenId, targetId, at: now };
-    bump(audit.causal, 'ft:decisions');
-    if (audit.cf && audit.cf.best !== targetId) bump(audit.causal, 'pressure:fallthroughTargetDiffers');
+  const weightBucket = (w) => w === 1 ? 'w1' : w <= 3 ? 'w2-3' : w <= 7 ? 'w4-7' : w <= 15 ? 'w8-15' : 'w16';
+  globalThis.__a2Count = (key) => { if (audit?.causal) bump(audit.causal, key); };
+  // Reached by every decision that gets to the BUY branch; classifies it against what FALLTHROUGH would buy.
+  globalThis.__a1Target = (agent, now, ledger, protection, selected, targetId, fallback) => {
+    const selectedId = selected.view.tokenId;
+    const exitOnly = !agent.known[selectedId];
+    const fallthroughId = exitOnly ? (fallback?.view.tokenId ?? selectedId) : selectedId;
+    if (exitOnly && targetId !== selectedId) {
+      audit.ft = { selectedId, targetId, at: now };
+      bump(audit.causal, 'ft:decisions');
+      if (audit.cf && audit.cf.best !== targetId) bump(audit.causal, 'pressure:fallthroughTargetDiffers');
+    }
+    if (targetId !== fallthroughId) {
+      audit.changed = { selectedId, targetId, fallthroughId, at: now };
+      bump(audit.causal, 'a2:targetChanged');
+    }
+    if (audit.flags?.attn) {
+      bump(audit.causal, 'a2:targetWeight:' + weightBucket(attentionWeight(agent.attention?.[targetId], now)));
+      bump(audit.causal, 'a2:fallthroughTargetWeight:' + weightBucket(attentionWeight(agent.attention?.[fallthroughId], now)));
+    }
   };
   // Counterfactual only: would known-only narrative counts change the scores of BUY-eligible candidates?
   globalThis.__a1Pressure = (agent, now, candidates, scores, narrativeOf) => {
@@ -208,7 +247,7 @@ try {
   const processTask = World.prototype.process;
   World.prototype.process = function (event) {
     const { kind, payload, key: { at } } = event;
-    if (kind === 'Decide') { audit.trace=null; audit.ft=null; audit.cf=null; }
+    if (kind === 'Decide') { audit.trace=null; audit.ft=null; audit.cf=null; audit.changed=null; }
     const executedIntent=kind==='Execute'?this.state.orders[payload.orderId]?.intent:null;
     const heldBefore=executedIntent ? this.ledger.balance(executedIntent.agentId,executedIntent.tokenId):null;
     const atomsBefore=heldBefore ? heldBefore.available+heldBefore.reserved:0n;
@@ -265,6 +304,10 @@ try {
             bump(audit.causal, d ? 'ft:buyIntent' : 'ft:wait');
             if (d && audit.chain.firstChange === null) { audit.chain.firstChange = audit.chain.decisions.length; audit.chain.firstChangeAt = at; }
           }
+          if (audit.changed) {
+            bump(audit.causal, d ? 'a2:changedBuyIntent' : 'a2:changedWait');
+            if (d && audit.chain.firstTargetChange === null) { audit.chain.firstTargetChange = audit.chain.decisions.length; audit.chain.firstTargetChangeAt = at; }
+          }
           audit.chain.decisions.push(fnv(JSON.stringify([at, agentId, committed.payload.ordinal, committed.payload.decision,
             d?.tokenId ?? null, d?.side ?? null, String(d?.maxInputSol ?? d?.inputTokens ?? '')])));
         }
@@ -313,7 +356,7 @@ try {
     if (kind === 'Decide') for (const task of this.kernel.scheduled) if (task.kind === 'Admit') {
       const intent = task.payload.intent;
       const entry = actor.tokenInterest?.[intent.tokenId];
-      const meta = { at, buyUntil: entry?.buyUntil ?? null, exitOnly: !actor.known[intent.tokenId], fallthrough: !!audit.ft && intent.side === 'BUY' };
+      const meta = { at, buyUntil: entry?.buyUntil ?? null, exitOnly: !actor.known[intent.tokenId], fallthrough: !!audit.ft && intent.side === 'BUY', changed: !!audit.changed && intent.side === 'BUY' };
       if (this.config.tokenInterestA1 && intent.side === 'BUY') {
         assert.equal(meta.exitOnly, false);
         assert.ok(at < meta.buyUntil, 'No new BUY after interest expiry');
@@ -325,6 +368,15 @@ try {
       const meta = audit.orderMeta.get(fill.intentId);
       assert.ok(meta);
       if (audit.flags.exit && fill.side==='SELL' && meta.exitOnly) bump(audit.causal,'fill:EXIT:SELL');
+      if (meta.changed) {
+        bump(audit.causal, 'a2:changedFill:' + fill.side);
+        audit.causal['a2:changedLamports'] = (audit.causal['a2:changedLamports'] ?? 0) + Number(fill.quoteAtomsExFee);
+      }
+      if (fill.side === 'BUY') {
+        const pair = fill.agentId + '/' + fill.tokenId;
+        bump(audit.causal, audit.bought.has(pair) ? 'entry:repeatBuyFills' : 'entry:newBuyFills');
+        audit.bought.add(pair);
+      }
       if (meta.fallthrough) {
         bump(audit.causal, 'ft:fill:' + fill.side);
         audit.causal['ft:buyLamports'] = (audit.causal['ft:buyLamports'] ?? 0) + Number(fill.quoteAtomsExFee);
@@ -371,6 +423,7 @@ try {
   const advance = World.prototype.advanceTo;
   World.prototype.advanceTo = function (target, ...args) {
     const result = advance.call(this, target, ...args);
+    audit.world = this;
     if (target % 60_000 === 0 && sampleMinutes.has(target / 60_000)) {
       let available = 0n;
       let reserved = 0n;
@@ -393,7 +446,22 @@ try {
         }
       }
       this.ledger.assertConservation();
-      audit.samples.push({ minute: target / 60_000, available: available.toString(), reserved: reserved.toString(),
+      let records = 0, w2 = 0, w8 = 0, w16 = 0;
+      const interestedPerToken = {};
+      const ageBands = [[0, 0], [0, 0], [0, 0], [0, 0]];
+      for (const agent of Object.values(this.state.agents)) for (const [tokenId, record] of Object.entries(agent.attention ?? {})) {
+        records++;
+        const weight = attentionWeight(record, this.now);
+        if (weight >= 2) w2++;
+        if (weight >= 8) { w8++; interestedPerToken[tokenId] = (interestedPerToken[tokenId] ?? 0) + 1; }
+        if (weight >= 16) w16++;
+        const launchedAt = this.state.markets[tokenId]?.launchedAt;
+        if (launchedAt !== undefined) { const b = band(this.now - launchedAt); ageBands[b][0]++; if (weight >= 8) ageBands[b][1]++; }
+      }
+      const perToken = Object.values(interestedPerToken).sort((a, b) => a - b);
+      audit.samples.push({ attn: { records, w2, w8, w16, tokensWithInterested: perToken.length,
+        maxInterestedPerToken: perToken.at(-1) ?? 0, medianInterestedPerToken: perToken[Math.floor(perToken.length / 2)] ?? 0, ageBands },
+        minute: target / 60_000, available: available.toString(), reserved: reserved.toString(),
         holders, positions, outsideKnown, expiredPositions, missingExit,
         transactionFees: this.ledger.balance('system:transaction-fees').available.toString(),
         swapFees: this.ledger.balance('system:swap-fees').available.toString() });
@@ -420,9 +488,10 @@ try {
       attempts: {}, rejects: {}, pendingOrders: {}, lastPeriodic: new Map(), periodicGaps: {},
       impulses: 0, coalescedReactive: 0, coalescedPeriodic: 0 };
     audit.orderMeta = new Map();
-    audit.flags={lease:['a1','lease'].includes(mode),exit:['a1','exit','ft'].includes(mode)};
-    audit.causal={}; audit.trace=null; audit.ft=null; audit.cf=null;
-    audit.chain={ decisions: [], rows: [], rowTimes: [], firstChange: null, firstChangeAt: null };
+    audit.flags={lease:['a1','lease'].includes(mode),exit:['a1','exit','ft','a2','a2zero'].includes(mode),attn:['a2','a2zero'].includes(mode)};
+    audit.causal={}; audit.trace=null; audit.ft=null; audit.cf=null; audit.changed=null; audit.bought=new Set();
+    audit.chain={ decisions: [], rows: [], rowTimes: [], firstChange: null, firstChangeAt: null, firstTargetChange: null, firstTargetChangeAt: null };
+    globalThis.__a2WeightMax = mode === 'a2zero' ? 0 : undefined;
     audit.a1 = { expiredBuyWait: 0, exitOnlyBuyWait: 0, blockedWithInterestedAlternative: 0,
       noEligibleMarketWait: 0, renewals: 0, exitOnlySellFills: 0, expiredSellFills: 0, inflightBuyAfterExpiry: 0 };
     const tape = createHash('sha256');
@@ -467,10 +536,12 @@ try {
         else path.sellSol += row.quoteAtomsExFee;
       }
     }, { streamFacts: true, ...(mode !== 'off' ? { sellFeeReserve: true } : {}),
-      ...(['bounded','a1','exit','lease','ft'].includes(mode) ? { boundedReactive: true } : {}),
+      ...(['bounded','a1','exit','lease','ft','a2','a2zero'].includes(mode) ? { boundedReactive: true } : {}),
       ...(mode === 'a1' ? { tokenInterestA1: true } : {}),
-      ...(mode === 'exit' || mode === 'ft' ? { tokenExitOnly: true } : {}), ...(mode === 'lease' ? { tokenLeaseOnly: true } : {}),
-      ...(mode === 'ft' ? { exitFallthrough: true } : {}) });
+      ...(['exit','ft','a2','a2zero'].includes(mode) ? { tokenExitOnly: true } : {}), ...(mode === 'lease' ? { tokenLeaseOnly: true } : {}),
+      ...(['ft','a2','a2zero'].includes(mode) ? { exitFallthrough: true } : {}),
+      ...(['a2','a2zero'].includes(mode) ? { opportunityAttention: true } : {}) });
+    globalThis.__a2WeightMax = undefined;
     audit.causal['ft:pending'] = [...audit.orderMeta.values()].filter((meta) => meta.fallthrough).length;
     lastChain = audit.chain;
     for (const [source, count] of Object.entries(audit.scheduled)) {
@@ -481,8 +552,9 @@ try {
     for (const origin of ['KNOWN','EXIT']) assert.equal(audit.causal[`selected:${origin}`]??0,
       ['BUY','SELL','WAIT'].reduce((n,side)=>n+(audit.causal[`selected:${origin}:${side}`]??0),0));
     const ftBuy = audit.causal['ft:buyIntent'] ?? 0;
-    assert.equal(audit.causal['selected:EXIT:BUY'] ?? 0, mode === 'ft' ? ftBuy : 0, 'Exit-only BUY exists only as fallthrough');
-    if (mode === 'ft') {
+    const ftFamily = ['ft', 'a2', 'a2zero'].includes(mode);
+    assert.equal(audit.causal['selected:EXIT:BUY'] ?? 0, ftFamily ? ftBuy : 0, 'Exit-only BUY exists only as fallthrough');
+    if (ftFamily) {
       assert.equal(audit.causal['ft:decisions'] ?? 0, ftBuy + (audit.causal['ft:wait'] ?? 0));
       assert.equal(ftBuy, ['ft:fill:BUY', 'ft:execReject', 'ft:admitReject', 'ft:pending'].reduce((n, key) => n + (audit.causal[key] ?? 0), 0),
         'Every fallthrough BUY intent is filled, rejected or pending');
@@ -518,10 +590,11 @@ try {
     if (saveSizes && mode !== 'off') writeFileSync(join(out, `${seed}-${mode}-sizes.bin`), bytes, { flag: 'wx' });
     assert.equal(marketAudit.paths, common.paths);
     assert.equal(marketAudit.cells.all.trades, common.trades);
-    const { origins, pending, lastDecision, lastPeriodic, firstMarket, firstNarrative, orderMeta, trace, flags, chain, ft, cf, ...counters } = audit;
+    const { origins, pending, lastDecision, lastPeriodic, firstMarket, firstNarrative, orderMeta, trace, flags, chain, ft, cf, changed, bought, world, ...counters } = audit;
     const result = { seed, mode, manifest: measured.manifest, decisions: measured.decisions, facts: measured.facts,
       all: measured.all, poolFills: measured.poolFills, simulatedMs: measured.simulatedMs, baselineSchedule: measured.baselineSchedule,
       tapeSha256: tape.digest('hex'), fullTapeSha256: fullTape.digest('hex'), sizeSamplesSha256: hash(bytes),
+      rngSha256: hash(json(audit.world.rng.snapshot())),
       socialLaunches, lastFill, fills, common, counters, marketAudit,
       allLaunches: paths.size, quietLaunches: [...paths.values()].filter(p=>!p.trades).length,
       allLaunchExposure: common.exposure + [...paths.values()].filter(p=>!p.trades).length*1800,
@@ -538,6 +611,10 @@ try {
       const bounded = run(expected.seed, 'bounded'); anchored(bounded, saved.bounded, 'BOUNDED');
       const exit = run(expected.seed, 'exit'); const exitChain = lastChain; anchored(exit, saved.exit, 'EXIT_ONLY');
       const ft = run(expected.seed, 'ft'); const ftChain = lastChain;
+      if (attention) {
+        const savedFt = committedFt.hashes.find((row) => row.ft.seed === expected.seed);
+        for (const key of ['manifest', 'tapeSha256', 'fullTapeSha256']) assert.deepEqual(ft[key], savedFt.ft[key], `${expected.seed} FALLTHROUGH anchor ${key}`);
+      }
       const firstDiff = (a, b) => { const n = Math.min(a.length, b.length); for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i; return a.length === b.length ? -1 : n; };
       const decisionDiff = firstDiff(exitChain.decisions, ftChain.decisions);
       const rowDiff = firstDiff(exitChain.rows, ftChain.rows);
@@ -550,6 +627,41 @@ try {
       ft.prefix = { decisionDiff, firstChange: ftChain.firstChange, firstChangeAt: ftChain.firstChangeAt, rowDiff,
         rowDiffAt: rowDiff < 0 ? null : Math.min(exitChain.rowTimes[rowDiff], ftChain.rowTimes[rowDiff]),
         exitDecisions: exitChain.decisions.length, ftDecisions: ftChain.decisions.length };
+      if (attention) {
+        // Zero-bonus equivalence: same state machine, weights forced to 1, must reproduce FALLTHROUGH behavior exactly.
+        const zero = run(expected.seed, 'a2zero'); const zeroChain = lastChain;
+        assert.equal(firstDiff(ftChain.decisions, zeroChain.decisions), -1, `${expected.seed} zero-bonus decision tape equals FALLTHROUGH`);
+        assert.equal(firstDiff(ftChain.rows, zeroChain.rows), -1, `${expected.seed} zero-bonus trade tape equals FALLTHROUGH`);
+        assert.equal(zero.rngSha256, ft.rngSha256, `${expected.seed} zero-bonus consumes exactly the FALLTHROUGH RNG draws`);
+        assert.deepEqual(zero.counters.samples.map(({ attn, ...rest }) => rest), ft.counters.samples.map(({ attn, ...rest }) => rest), `${expected.seed} zero-bonus economics`);
+        for (const key of ['scheduled', 'executed', 'stale', 'queued', 'attempts', 'pendingOrders', 'rejects', 'gaps', 'periodicGaps']) {
+          assert.deepEqual(zero.counters[key], ft.counters[key], `${expected.seed} zero-bonus ${key}`);
+        }
+        for (const key of ['common', 'all', 'decisions', 'facts', 'poolFills', 'baselineSchedule', 'fills', 'sizeSamplesSha256']) assert.deepEqual(zero[key], ft[key], `${expected.seed} zero-bonus ${key}`);
+        assert.equal(zero.counters.causal['a2:targetChanged'] ?? 0, 0, 'Zero bonus never changes the target');
+        const exercised = (zero.counters.causal['attn:launchImpulse'] ?? 0) + (zero.counters.causal['attn:news:k0:raised'] ?? 0) + (zero.counters.causal['attn:news:k0:noGain'] ?? 0);
+        assert.ok(exercised > 0 && zero.counters.samples.some((sample) => sample.attn.records > 0), 'The attention state machine was exercised in the zero-bonus run');
+        const a2 = run(expected.seed, 'a2'); const a2Chain = lastChain;
+        const a2Decision = firstDiff(ftChain.decisions, a2Chain.decisions);
+        const a2Row = firstDiff(ftChain.rows, a2Chain.rows);
+        if (a2Chain.firstTargetChange === null) { assert.equal(a2Decision, -1); assert.equal(a2Row, -1); }
+        else {
+          assert.equal(a2Decision, a2Chain.firstTargetChange, `${expected.seed} A2 diverges from FALLTHROUGH exactly at the first changed target`);
+          assert.notEqual(a2Row, -1);
+          assert.ok(Math.min(ftChain.rowTimes[a2Row], a2Chain.rowTimes[a2Row]) >= a2Chain.firstTargetChangeAt, `${expected.seed} no A2 trade-tape difference before the first changed target`);
+        }
+        a2.prefix = { decisionDiff: a2Decision, firstTargetChange: a2Chain.firstTargetChange, firstTargetChangeAt: a2Chain.firstTargetChangeAt, rowDiff: a2Row,
+          rowDiffAt: a2Row < 0 ? null : Math.min(ftChain.rowTimes[a2Row], a2Chain.rowTimes[a2Row]), ftDecisions: ftChain.decisions.length, a2Decisions: a2Chain.decisions.length };
+        a2.zeroBonus = { decisionsIdentical: true, tradeTapeIdentical: true, rngIdentical: true, economicsIdentical: true,
+          rngSha256: zero.rngSha256, fullTapeSha256: zero.fullTapeSha256, tapeSha256: zero.tapeSha256 };
+        ft.prefix = { decisionDiff, firstChange: ftChain.firstChange, firstChangeAt: ftChain.firstChangeAt, rowDiff,
+          rowDiffAt: rowDiff < 0 ? null : Math.min(exitChain.rowTimes[rowDiff], ftChain.rowTimes[rowDiff]),
+          exitDecisions: exitChain.decisions.length, ftDecisions: ftChain.decisions.length };
+        runs.push({ bounded, exit, ft, a2zero: zero, a2 });
+        console.log(expected.seed, 'swaps', bounded.common.trades, exit.common.trades, ft.common.trades, a2.common.trades,
+          'anchors + zero-bonus equivalence match; first A2 change at decision', a2Decision, 'ms', a2Chain.firstTargetChangeAt);
+        continue;
+      }
       runs.push({ bounded, exit, ft });
       console.log(expected.seed, 'swaps', bounded.common.trades, exit.common.trades, ft.common.trades, 'anchors match; first change at decision', decisionDiff, 'ms', ftChain.firstChangeAt);
       continue;

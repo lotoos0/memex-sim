@@ -1,3 +1,4 @@
+import { ATTENTION_VERSION, absorbOwnFill, attentionWeight, observeAttention, postImpulse, pruneAttention } from './attention';
 import { AGENT_VERSION, SELL_FEE_RESERVE, TOKEN_INTEREST_VERSION, decideTrade, newAgent, observe, renewTokenInterest, type Agent, type KnownMarket } from './agents';
 import { SOL, SUPPLY, assertSimTime, type Envelope, type Manifest, type Message } from './contracts';
 import type { Ack, Command, FactMap, Launch, Link, Post, PublicMarket, TaskMap } from './events';
@@ -33,6 +34,7 @@ export type WorldConfig = {
   tokenInterestA1?: true;
   tokenExitOnly?: true;
   exitFallthrough?: true;
+  opportunityAttention?: true;
   tokenLeaseOnly?: true;
 };
 export const DEFAULT_WORLD: WorldConfig = {
@@ -73,7 +75,8 @@ function makeManifest(config: WorldConfig): Manifest {
     policyVersions: { agents: AGENT_VERSION, social: SOCIAL_VERSION, lifecycle: LIFECYCLE_VERSION, fee: 'fixed-1',
       ...(config.tokenInterestA1 ? { tokenInterest: TOKEN_INTEREST_VERSION } : {}),
       ...(config.tokenExitOnly ? { exit: config.exitFallthrough ? 'position-exit-fallthrough-1' : 'position-exit-only-1' } : {}),
-      ...(config.tokenLeaseOnly ? { tokenInterest: 'buy-lease-300s-only-1' } : {}) },
+      ...(config.tokenLeaseOnly ? { tokenInterest: 'buy-lease-300s-only-1' } : {}),
+      ...(config.opportunityAttention ? { attention: ATTENTION_VERSION } : {}) },
   };
 }
 
@@ -96,6 +99,7 @@ export class World {
     const variants = [config.tokenInterestA1, config.tokenExitOnly, config.tokenLeaseOnly].filter(Boolean).length;
     if (variants > 1) throw new Error('Token policy variant flags are mutually exclusive');
     if (config.exitFallthrough && !config.tokenExitOnly) throw new Error('Exit fallthrough requires exit-only memory');
+    if (config.opportunityAttention && !config.exitFallthrough) throw new Error('Opportunity attention requires exit fallthrough');
     if (variants && (!config.boundedReactive || !config.sellFeeReserve)) {
       throw new Error('Token policy variants require bounded reactive wake and SELL fee reserve');
     }
@@ -203,7 +207,7 @@ export class World {
       case 'Discover': this.discover(payload.agentId, payload.postId); break;
       case 'Observe': {
         const agent = this.state.agents[payload.agentId];
-        this.observe(agent, payload.market, payload.evidence);
+        this.observe(agent, payload.market, payload.evidence, payload.launch);
         this.wake(agent, this.now + 1);
         break;
       }
@@ -216,6 +220,16 @@ export class World {
         const intent = this.state.orders[payload.orderId]?.intent;
         const fact = this.orders.execute(payload.orderId);
         if (intent) this.syncExit(intent.agentId, intent.tokenId, true);
+        if (intent && this.config.opportunityAttention && fact) {
+          // A completing execution is reported as MarketMigrated, which carries the post-trade reference spot.
+          const owner = this.state.agents[intent.agentId];
+          if (owner && fact.kind === 'TradeExecuted') {
+            absorbOwnFill(owner, intent.tokenId, fact.payload.fill.spotAfter, fact.payload.fill.at, fact.payload.fill.marketEpoch);
+          } else if (owner && fact.kind === 'MarketMigrated') {
+            absorbOwnFill(owner, intent.tokenId, fact.payload.reference, this.now, fact.payload.fromEpoch);
+          }
+          if (owner) this.pruneAttention(owner, intent.tokenId);
+        }
         if (fact && (fact.kind === 'TradeExecuted' || fact.kind === 'MarketMigrated')) {
           const id = fact.kind === 'TradeExecuted' ? fact.payload.fill.tokenId : fact.payload.tokenId;
           const last = this.state.lastFeedback[id];
@@ -310,7 +324,7 @@ export class World {
     this.activate(market, true);
     const audience = Object.keys(this.state.agents).sort().filter(id =>
       link ? !!this.state.agents[id].narratives[link.narrativeId] : this.rng.int('world/discovery', id + '/' + tokenId, '1', 100) < 60);
-    this.feedback(market, audience, launched, 250);
+    this.feedback(market, audience, launched, 250, true);
     const index = /^tok_baseline_(\d+)$/.exec(tokenId);
     if (index) {
       const next = this.now + 25_000 + this.rng.int('world/calendar', tokenId, '1', 20_000);
@@ -337,13 +351,19 @@ export class World {
     audience.add(agentId);
   }
 
-  private observe(agent: Agent, view: PublicMarket, evidence: string) {
+  private observe(agent: Agent, view: PublicMarket, evidence: string, launch?: true) {
     const previous = Object.entries(agent.known);
-    observe(agent, view, evidence, this.config.tokenInterestA1 || this.config.tokenLeaseOnly ? this.now : undefined,
+    const accepted = observe(agent, view, evidence, this.config.tokenInterestA1 || this.config.tokenLeaseOnly ? this.now : undefined,
       !!this.config.tokenExitOnly);
+    if (accepted && this.config.opportunityAttention) {
+      const link = launch ? this.state.social.links[view.tokenId] : undefined;
+      const source = link ? { postId: link.sourcePostId, publishedAt: this.state.social.posts[link.sourcePostId]?.publishedAt ?? 0 } : null;
+      observeAttention(agent, view, this.now, !!launch, source);
+    }
     if (agent.known[view.tokenId]) this.watch(agent.id, view.tokenId);
     for (const [id, item] of previous) if (!agent.known[id]) {
       this.marketAudience.get(id)?.delete(agent.id);
+      if (this.config.opportunityAttention) this.pruneAttention(agent, id);
       if (this.config.tokenInterestA1 || this.config.tokenExitOnly) {
         const balance = this.ledger.balance(agent.id, id);
         const cached = this.config.tokenExitOnly ? agent.exitMemory?.[id] : agent.tokenInterest?.[id]?.exit;
@@ -351,6 +371,15 @@ export class World {
       }
     }
     this.syncExit(agent.id, view.tokenId);
+  }
+
+  // Drop attention only for tokens that are neither known, held nor about to be bought.
+  private pruneAttention(agent: Agent, tokenId: string) {
+    const balance = this.ledger.balance(agent.id, tokenId);
+    if (agent.known[tokenId] || balance.available + balance.reserved > 0n) return;
+    const pendingBuy = Object.values(this.state.orders).some(order => order.intent.agentId === agent.id
+      && order.intent.tokenId === tokenId && order.intent.side === 'BUY' && (order.status === 'OPEN' || order.status === 'QUEUED'));
+    if (!pendingBuy) pruneAttention(agent, tokenId, this.now);
   }
 
   private storeExit(agent: Agent, tokenId: string, item?: KnownMarket) {
@@ -394,11 +423,12 @@ export class World {
     };
   }
 
-  private feedback(market: Market, audience: string[], cause: Cause, latency: number) {
+  private feedback(market: Market, audience: string[], cause: Cause, latency: number, launch = false) {
     const view = this.publicMarket(market);
     for (const id of audience) {
       this.kernel.schedule(this.now + latency + this.rng.int('market/feedback', id + '/' + market.tokenId, '1', 500),
-        30, 'Observe', { agentId: id, market: view, evidence: cause.id }, cause);
+        30, 'Observe', { agentId: id, market: view, evidence: cause.id,
+          ...(launch && this.config.opportunityAttention ? { launch: true as const } : {}) }, cause);
     }
   }
 
@@ -433,6 +463,7 @@ export class World {
     for (const link of links) {
       const market = this.state.markets[link.tokenId];
       if (this.config.tokenInterestA1 || this.config.tokenLeaseOnly) renewTokenInterest(agent, link.tokenId, post, this.now);
+      if (this.config.opportunityAttention) postImpulse(agent, link.tokenId, post, this.now);
       if (!market.terminalReason && market.activity === 'DORMANT') this.activate(market, true);
       this.feedback(market, [agentId], found, 1);
     }
@@ -502,7 +533,8 @@ export class World {
     } else {
       const intent = decideTrade(agent, this.now, this.ledger, this.rng, tokenId => this.state.social.links[tokenId]?.narrativeId,
         this.config.sellFeeReserve ? SELL_FEE_RESERVE : 0n,
-        !!this.config.tokenInterestA1, !!this.config.tokenExitOnly, !!this.config.tokenLeaseOnly, !!this.config.exitFallthrough);
+        !!this.config.tokenInterestA1, !!this.config.tokenExitOnly, !!this.config.tokenLeaseOnly, !!this.config.exitFallthrough,
+        this.config.opportunityAttention ? tokenId => attentionWeight(agent.attention?.[tokenId], this.now) : undefined);
       if ((this.config.tokenInterestA1 || this.config.tokenExitOnly) && intent?.side === 'BUY') {
         this.storeExit(agent, intent.tokenId, agent.known[intent.tokenId]);
       }

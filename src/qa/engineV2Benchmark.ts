@@ -161,8 +161,8 @@ function pathStats(paths: Path[]) {
 
 export function measure(seed: string, variant: 'off' | 'on' | 'fixed-launches', write: (row: object) => void,
   options: { sellFeeReserve?: true; boundedReactive?: true; tokenInterestA1?: true;
-    tokenExitOnly?: true; tokenLeaseOnly?: true; exitFallthrough?: true; streamFacts?: true } = {}) {
-  const { sellFeeReserve, boundedReactive, tokenInterestA1, tokenExitOnly, tokenLeaseOnly, exitFallthrough, streamFacts } = options;
+    tokenExitOnly?: true; tokenLeaseOnly?: true; exitFallthrough?: true; opportunityAttention?: true; streamFacts?: true } = {}) {
+  const { sellFeeReserve, boundedReactive, tokenInterestA1, tokenExitOnly, tokenLeaseOnly, exitFallthrough, opportunityAttention, streamFacts } = options;
   const world = new World({
     ...DEFAULT_WORLD, seed, social: variant !== 'off', socialLaunches: variant === 'on',
     ...(sellFeeReserve ? { sellFeeReserve } : {}),
@@ -171,6 +171,7 @@ export function measure(seed: string, variant: 'off' | 'on' | 'fixed-launches', 
     ...(tokenExitOnly ? { tokenExitOnly } : {}),
     ...(tokenLeaseOnly ? { tokenLeaseOnly } : {}),
     ...(exitFallthrough ? { exitFallthrough } : {}),
+    ...(opportunityAttention ? { opportunityAttention } : {}),
   });
   const markets: Record<string, Path> = {};
   let poolFills = 0;

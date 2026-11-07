@@ -52,7 +52,7 @@ export type TaskMap = {
   Publish: { post: Omit<Post, 'publishedAt'>; audience: boolean };
   Exposure: { agentId: string; postId: string; publishedFactId: string };
   Discover: { agentId: string; postId: string; exposureId: string };
-  Observe: { agentId: string; market: PublicMarket; evidence: string };
+  Observe: { agentId: string; market: PublicMarket; evidence: string; launch?: true };
   Decide: { agentId: string; generation: number; reactive?: true };
   Admit: { intentId: string; intent: Intent; policy: Policy };
   Execute: { orderId: string };

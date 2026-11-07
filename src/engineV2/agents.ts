@@ -1,3 +1,4 @@
+import { raceBeats, type Attention } from './attention';
 import { BASE_FEE, SOL, minAtoms, type Intent } from './contracts';
 import type { Post, PublicMarket } from './events';
 import type { Ledger } from './ledger';
@@ -26,6 +27,7 @@ export type Agent = {
   boundedWake?: { lastAt: number | null; reactiveAt: number | null; reactiveGeneration: number };
   tokenInterest?: Record<string, TokenInterest>;
   exitMemory?: Record<string, KnownMarket>;
+  attention?: Record<string, Attention>;
 };
 
 export function newAgent(id: string, index: number): Agent {
@@ -35,12 +37,13 @@ export function newAgent(id: string, index: number): Agent {
   };
 }
 
+// Returns false for a stale view that was ignored; attention is only updated for accepted views.
 export function observe(agent: Agent, view: PublicMarket, evidence: string, interestAt?: number, exitOnly = false) {
   const old = agent.known[view.tokenId];
   const cached = exitOnly ? agent.exitMemory?.[view.tokenId]
     : interestAt === undefined ? undefined : agent.tokenInterest?.[view.tokenId]?.exit;
   const previous = old ?? cached;
-  if (previous && view.observedAt < previous.view.observedAt) return;
+  if (previous && view.observedAt < previous.view.observedAt) return false;
   if (!old && Object.keys(agent.known).length >= 16) {
     const [oldest] = Object.entries(agent.known).sort(([idA, a], [idB, b]) =>
       a.view.observedAt - b.view.observedAt || (idA < idB ? -1 : idA > idB ? 1 : 0));
@@ -57,6 +60,7 @@ export function observe(agent: Agent, view: PublicMarket, evidence: string, inte
     if (interest.exit) interest.exit = item;
   }
   if (exitOnly && agent.exitMemory?.[view.tokenId]) agent.exitMemory[view.tokenId] = item;
+  return true;
 }
 
 export function renewTokenInterest(agent: Agent, tokenId: string, post: Post, now: number) {
@@ -74,7 +78,8 @@ export function renewTokenInterest(agent: Agent, tokenId: string, post: Post, no
 
 export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngStreams,
   narrativeOf: (tokenId: string) => string | undefined, protectedBuySol = 0n,
-  tokenInterest = false, exitOnly = false, leaseOnly = false, exitFallthrough = false): Intent | null {
+  tokenInterest = false, exitOnly = false, leaseOnly = false, exitFallthrough = false,
+  attentionWeight?: (tokenId: string) => number): Intent | null {
   const leaseEnabled = tokenInterest || leaseOnly;
   const exitEnabled = tokenInterest || exitOnly;
   const draw = (exclusive: number) => rng.int('agent/decision', agent.id, AGENT_VERSION, exclusive);
@@ -108,12 +113,15 @@ export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngS
   // Best BUY-eligible (known) candidate of the same contest; no extra draw is taken for it.
   let fallback: KnownMarket | null = null;
   let bestKnown = -Infinity;
+  const contenders: { item: KnownMarket; raw: number; score: number; weight: number }[] = [];
   for (const item of candidates.sort((a, b) => a.view.tokenId < b.view.tokenId ? -1 : 1)) {
     const id = narrativeOf(item.view.tokenId);
     const pressure = id ? Math.floor((interestByNarrative.get(id) ?? 0) * 60 / (Math.max(60, interestTotal) * counts.get(id)!)) : 0;
-    const score = draw(60) + pressure;
+    const raw = draw(60);
+    const score = raw + pressure;
     if (score > best) { best = score; selected = item; }
     if (exitFallthrough && agent.known[item.view.tokenId] && score > bestKnown) { bestKnown = score; fallback = item; }
+    if (attentionWeight && agent.known[item.view.tokenId]) contenders.push({ item, raw, score, weight: attentionWeight(item.view.tokenId) });
   }
   const { view, prior, evidence } = selected;
   const tokens = ledger.balance(agent.id, view.tokenId).available;
@@ -130,12 +138,24 @@ export function decideTrade(agent: Agent, now: number, ledger: Ledger, rng: RngS
   if (cash <= 0n) return null;
   // An exit-only winner that did not SELL must not turn into WAIT while a BUY candidate exists:
   // fall through to the best known candidate of the same contest (no second SELL draw).
-  const buyBase = exitFallthrough && exitEnabled && !agent.known[view.tokenId] && fallback
-    ? { ...base, tokenId: fallback.view.tokenId, evidence: [fallback.evidence] } : base;
+  // BUY target. With attention it is chosen among known candidates by an exponential race on the same draws
+  // (equal weights compare the draws, i.e. exactly the FALLTHROUGH target); SELL selection above is not involved.
+  let attentionTarget: KnownMarket | null = null;
+  if (contenders.length) {
+    const equal = contenders.every(entry => entry.weight === contenders[0].weight);
+    let chosen = contenders[0];
+    for (const entry of contenders) {
+      if (equal ? entry.score > chosen.score : raceBeats(entry.raw, entry.weight, chosen.raw, chosen.weight)) chosen = entry;
+    }
+    attentionTarget = chosen.item;
+  }
+  const target = attentionTarget ?? (exitFallthrough && exitEnabled && !agent.known[view.tokenId] ? fallback : null);
+  const buyBase = target && target.view.tokenId !== view.tokenId
+    ? { ...base, tokenId: target.view.tokenId, evidence: [target.evidence] } : base;
   if (exitEnabled && !agent.known[buyBase.tokenId]
     || leaseEnabled && now >= (agent.tokenInterest?.[buyBase.tokenId]?.buyUntil ?? 0)) return null;
   // A fallthrough that cannot fund a BUY stays a plain WAIT and must not consume a size draw.
-  if (buyBase !== base && cash - protectedBuySol <= 0n) return null;
+  if (buyBase !== base && !agent.known[view.tokenId] && cash - protectedBuySol <= 0n) return null;
   const size = minAtoms(cash - protectedBuySol, SOL * BigInt(1 + draw(15)) / 10n);
   if (size <= 0n) return null;
   return { ...buyBase, side: 'BUY', maxInputSol: size, minOutputTokens: null };

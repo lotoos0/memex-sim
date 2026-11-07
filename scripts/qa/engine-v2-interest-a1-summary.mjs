@@ -9,8 +9,9 @@ import { quantileHist } from './engine-v2-market-persistence-metrics.mjs';
 
 const out = resolve(process.argv[2] ?? 'output/engine-v2-interest-a1');
 const causal=process.argv.includes('--causal');
-const fallthrough=process.argv.includes('--fallthrough');
-const modes=fallthrough?['bounded','exit','ft']:causal?['bounded','exit','lease','a1']:['bounded','a1'];
+const attention=process.argv.includes('--attention');
+const fallthrough=process.argv.includes('--fallthrough')||attention;
+const modes=attention?['bounded','exit','ft','a2']:fallthrough?['bounded','exit','ft']:causal?['bounded','exit','lease','a1']:['bounded','a1'];
 const inputs = [...'ABCDEF'].map((letter) => JSON.parse(readFileSync(join(out, `V2-PILOT-${letter}.json`), 'utf8')));
 for (const input of inputs) {
   assert.equal(!!input.causal,causal,'Use the matching capture/summary mode');
@@ -20,7 +21,9 @@ for (const input of inputs) {
 const runs = inputs.flatMap((input) => input.runs);
 for (const run of runs) for(const mode of modes) {
   const row=run[mode],bounded=run.bounded;
-  assert.deepEqual(row.counters.samples.slice(0,2),bounded.counters.samples.slice(0,2),'Economics before first expiry remain identical');
+  // Samples at minutes 0 and 5 match across variants whose first behavioral change comes later; A2 changes targets from the first launches.
+  const econ=(samples)=>samples.map(({attn,...rest})=>rest);
+  assert.deepEqual(econ(row.counters.samples.slice(0,mode==='a2'?1:2)),econ(bounded.counters.samples.slice(0,mode==='a2'?1:2)),'Economics before first behavioral change remain identical');
   assert.equal(row.counters.executed.periodic,bounded.counters.executed.periodic,'Periodic execution count remains unchanged');
   assert.deepEqual(row.counters.periodicGaps,bounded.counters.periodicGaps,'Periodic cadence remains unchanged');
 }
@@ -44,8 +47,8 @@ try {
         seq:row.globalSeq.toString(),quote:row.quoteAtomsExFee.toString(),price:row.priceSol,progress:row.progressAfter,
         side:row.side,completion:row.completion})+'\n');
     },{sellFeeReserve:true,boundedReactive:true,streamFacts:true,
-      ...(mode==='a1'?{tokenInterestA1:true}:{}),...(mode==='exit'||mode==='ft'?{tokenExitOnly:true}:{}),...(mode==='lease'?{tokenLeaseOnly:true}:{}),
-      ...(mode==='ft'?{exitFallthrough:true}:{})});
+      ...(mode==='a1'?{tokenInterestA1:true}:{}),...(mode==='exit'||mode==='ft'||mode==='a2'?{tokenExitOnly:true}:{}),...(mode==='lease'?{tokenLeaseOnly:true}:{}),
+      ...(mode==='ft'||mode==='a2'?{exitFallthrough:true}:{}),...(mode==='a2'?{opportunityAttention:true}:{})});
     for (const key of ['manifest','all','decisions','facts','poolFills','baselineSchedule','simulatedMs']) assert.deepEqual(result[key],a1[key]);
     assert.equal(full.digest('hex'),a1.fullTapeSha256);
     assert.equal(compact.digest('hex'),a1.tapeSha256);
@@ -77,7 +80,7 @@ const weighted = (bag) => {
 const pooled = {};
 for (const mode of modes) {
   const rows = runs.map((run) => run[mode]);
-  if (mode === 'a1'||mode==='exit'||mode==='ft') for (const row of rows) for (const sample of row.counters.samples) {
+  if (mode === 'a1'||mode==='exit'||mode==='ft'||mode==='a2') for (const row of rows) for (const sample of row.counters.samples) {
     assert.equal(sample.missingExit,0,'Every sampled outside-known position retains an exit observation');
   }
   const common = {};
@@ -223,22 +226,43 @@ if(fallthrough) {
       case 'fallthroughBuySol':return (c['ft:buyLamports']??0)/1e9;
       case 'attemptsBuy':return r.counters.attempts.BUY??0;
       case 'attemptsSell':return r.counters.attempts.SELL??0;
+      case 'lateBuyLowProgress':return ['10-20','20-30'].flatMap(a=>['ACTIVE','QUIET','DORMANT'].map(i=>cells[`cross:${a}:0-20:${i}`]?.buy??0)).reduce((n,x)=>n+x,0);
+      case 'lateBuyMidProgress':return ['10-20','20-30'].flatMap(a=>['ACTIVE','QUIET','DORMANT'].map(i=>cells[`cross:${a}:20-50:${i}`]?.buy??0)).reduce((n,x)=>n+x,0);
+      case 'newEntries':return c['entry:newBuyFills']??0;
+      case 'repeatEntries':return c['entry:repeatBuyFills']??0;
+      case 'changedBuyFills':return c['a2:changedFill:BUY']??0;
+      case 'changedBuySol':return (c['a2:changedLamports']??0)/1e9;
+      case 'targetChanged':return c['a2:targetChanged']??0;
+      case 'attentionRecords90':return last.attn?.records??0;
+      case 'interestedPairs90':return last.attn?.w8??0;
+      case 'tokensWithInterested90':return last.attn?.tokensWithInterested??0;
+      case 'newsRaised':return Object.entries(c).filter(([k])=>/^attn:news:k\d:raised$/.test(k)).reduce((n,[,v])=>n+v,0);
+      case 'newsNoGain':return Object.entries(c).filter(([k])=>/^attn:news:k\d:noGain$/.test(k)).reduce((n,[,v])=>n+v,0);
+      case 'newsSaturated':return (c['attn:news:k4:raised']??0)+(c['attn:news:k4:noGain']??0);
+      case 'launchImpulses':return c['attn:launchImpulse']??0;
+      case 'ownFillAbsorbs':return c['attn:ownFillAbsorb']??0;
+      case 'staleIgnored':return c['attn:staleIgnored']??0;
+      case 'epochResets':return c['attn:epochReset']??0;
+      case 'tradeIntents':return c['decision:TRADE']??0;
+      case 'waits':return c['decision:WAIT']??0;
+      case 'reactiveDecisions':return r.counters.executed.reactive??0;
       default:throw new Error('Unknown fallthrough metric '+key);
     }
   };
   const keys=['swaps','buy','sell','buySol','sellSol','buyAged10to30','lateSwaps','earlyRate','emptyPct','cash90','positions90','outsideKnown90',
     'terminalSilencePct','first80','first90','completions','dustRejects','flatExits','exitChoices','exitChoiceSell','exitChoiceWait','exitChoiceBuy',
-    'waitOtherBuyExit','fallthroughDecisions','fallthroughBuyFills','fallthroughBuySol','attemptsBuy','attemptsSell'];
+    'waitOtherBuyExit','fallthroughDecisions','fallthroughBuyFills','fallthroughBuySol','attemptsBuy','attemptsSell',
+    ...(attention?['lateBuyLowProgress','lateBuyMidProgress','newEntries','repeatEntries','changedBuyFills','changedBuySol','targetChanged','attentionRecords90','interestedPairs90','tokensWithInterested90','newsRaised','newsNoGain','newsSaturated','launchImpulses','ownFillAbsorbs','staleIgnored','epochResets','tradeIntents','waits','reactiveDecisions']:[])];
   const stat=(xs)=>({mean:xs.reduce((a,b)=>a+b,0)/xs.length,min:Math.min(...xs),max:Math.max(...xs),positive:xs.filter(x=>x>0).length,negative:xs.filter(x=>x<0).length,zero:xs.filter(x=>x===0).length});
   summary.contrasts={};
   for(const key of keys) {
     const bySeed=runs.map(run=>{
-      const b=metric(run.bounded,key),e=metric(run.exit,key),f=metric(run.ft,key);
-      return {seed:run.ft.seed,bounded:b,exit:e,ft:f,ftMinusExit:f-e,ftMinusBounded:f-b,exitMinusBounded:e-b};
+      const b=metric(run.bounded,key),e=metric(run.exit,key),f=metric(run.ft,key),a=attention?metric(run.a2,key):null;
+      return {seed:run.ft.seed,bounded:b,exit:e,ft:f,...(attention?{a2:a,a2MinusFt:a-f,a2MinusExit:a-e,a2MinusBounded:a-b}:{}),ftMinusExit:f-e,ftMinusBounded:f-b,exitMinusBounded:e-b};
     });
-    summary.contrasts[key]={bySeed,summary:Object.fromEntries(['ftMinusExit','ftMinusBounded','exitMinusBounded'].map(k=>[k,stat(bySeed.map(row=>row[k]))]))};
+    summary.contrasts[key]={bySeed,summary:Object.fromEntries(['ftMinusExit','ftMinusBounded','exitMinusBounded',...(attention?['a2MinusFt','a2MinusExit','a2MinusBounded']:[])].map(k=>[k,stat(bySeed.map(row=>row[k]))]))};
   }
-  summary.prefix=runs.map(run=>({seed:run.ft.seed,...run.ft.prefix}));
+  summary.prefix=runs.map(run=>({seed:run.ft.seed,...(attention?{a2:run.a2.prefix,zeroBonus:run.a2.zeroBonus,ftVsExit:run.ft.prefix}:run.ft.prefix)}));
 }
 writeFileSync(join(out, 'summary.json'), JSON.stringify(summary, null, 2) + '\n', { flag: 'wx' });
 const results = { baseRevision: summary.revision, fingerprints: summary.fingerprints, defaults: summary.defaults,
@@ -247,6 +271,7 @@ const results = { baseRevision: summary.revision, fingerprints: summary.fingerpr
   real: summary.realAudit, pooled,
   ...(causal||fallthrough?{causal:true,contrasts:summary.contrasts}:{}),
   ...(fallthrough?{fallthrough:true,prefix:summary.prefix}:{}),
+  ...(attention?{attention:true}:{}),
   hashes: runs.map((run) => Object.fromEntries(Object.entries(run).map(([mode, row]) => [mode, {
     seed: row.seed, manifest: row.manifest, tapeSha256: row.tapeSha256, fullTapeSha256: row.fullTapeSha256,
   }]))),

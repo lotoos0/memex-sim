@@ -1,3 +1,4 @@
+import { type Attention, ATTENTION_FLOW_LEVELS, ATTENTION_H_MS, ATTENTION_MAX, ATTENTION_R_MS, ATTENTION_STRIKES_MAX, ATTENTION_VERSION, absorbOwnFill, attentionWeight, decayLevel, effectiveStrikes, observeAttention, postImpulse, pruneAttention, raceBeats } from '../engineV2/attention';
 import { SELL_FEE_RESERVE, TOKEN_INTEREST_MS, TOKEN_INTEREST_VERSION, decideTrade, newAgent, observe, renewTokenInterest } from '../engineV2/agents';
 import { BASE_FEE, SOL, decimalAtoms, type Intent, type Policy } from '../engineV2/contracts';
 import type { Command } from '../engineV2/events';
@@ -441,6 +442,201 @@ function exitFallthroughGate() {
   console.log('PASS exit fallthrough: SELL kept, WAIT to BUY only for exit-only winners, replay');
 }
 
+function opportunityAttentionGate() {
+  const mk = (q: bigint, t: bigint, observedAt: number, epoch = 0) => ({
+    tokenId: 'qa:token', spot: { quoteAtoms: q, tokenAtoms: t }, progressPpm: 0, observedAt, epoch, tradable: true,
+  });
+  const T = 1000n;
+  // Decay, weights and the explicit strike table (no bit shifts).
+  equal(decayLevel(ATTENTION_MAX, 0), ATTENTION_MAX, 'No decay at zero');
+  equal(decayLevel(ATTENTION_MAX, ATTENTION_H_MS), ATTENTION_MAX / 2, 'Half level after H');
+  let previousLevel = ATTENTION_MAX;
+  for (let ms = 1; ms < 200_000_000; ms = ms * 3 + 1) {
+    const level = decayLevel(ATTENTION_MAX, ms);
+    check(level <= previousLevel && level > 0, 'Hyperbolic decay is monotone and never expires');
+    previousLevel = level;
+  }
+  const blank = (level: number, at: number, strikes = 0): Attention => ({ level, at, strikes, strikeAt: at, ref: null, impulsePostId: null, impulsePublishedAt: 0 });
+  equal(attentionWeight(undefined, 0), 1, 'Unknown token has weight 1');
+  equal(attentionWeight(blank(ATTENTION_MAX, 0), 0), 16, 'Full interest weighs known - 1 extra');
+  equal(attentionWeight(blank(ATTENTION_MAX, 0), ATTENTION_H_MS), 8, 'Half interest');
+  equal(attentionWeight(blank(0, 0), 5), 1, 'No interest');
+  equal(ATTENTION_FLOW_LEVELS.length, ATTENTION_STRIKES_MAX + 1, 'One table entry per strike index');
+  check(ATTENTION_FLOW_LEVELS.every((level, i) => i === 0 ? level < ATTENTION_MAX : level === ATTENTION_FLOW_LEVELS[i - 1] / 2), 'News levels halve and stay below full');
+  const strikeRecord = blank(0, 0, 4);
+  equal(effectiveStrikes(strikeRecord, ATTENTION_R_MS - 1), 4, 'No recovery before R');
+  equal(effectiveStrikes(strikeRecord, ATTENTION_R_MS), 3, 'One strike per R');
+  equal(effectiveStrikes(strikeRecord, 4 * ATTENTION_R_MS), 0, 'Full recovery after 4R');
+  equal(effectiveStrikes(strikeRecord, 1000 * ATTENTION_R_MS), 0, 'Recovery never goes negative');
+
+  // Exponential race: equal weights are the plain draw comparison; probability grows with weight and is never zero.
+  for (let weight = 1; weight <= 16; weight++) for (let a = 0; a < 60; a += 7) for (let b = 0; b < 60; b += 5) {
+    equal(raceBeats(a, weight, b, weight), a > b, 'Equal weights compare draws exactly');
+  }
+  const wins = (wa: number, wb: number) => {
+    let won = 0;
+    for (let a = 0; a < 60; a++) for (let b = 0; b < 60; b++) if (raceBeats(a, wa, b, wb)) won++;
+    return won / 3600;
+  };
+  check(Math.abs(wins(1, 3) - 0.25) < 0.02 && Math.abs(wins(3, 1) - 0.75) < 0.02, 'Win probability follows w / sum(w)');
+  check(wins(1, 16) > 0.02, 'Weight 1 against 16 keeps a positive chance');
+  for (let w = 1; w < 16; w++) check(wins(w + 1, 4) >= wins(w, 4), 'Win probability is monotone in weight');
+
+  // Launch impulse, cumulative displacement trigger and strike lifecycle.
+  const agent: { attention?: Record<string, Attention> } = {};
+  observeAttention(agent, mk(100n * T, 100n * T, 1000), 1000, true, { postId: 'post:root', publishedAt: 5 });
+  const record = agent.attention!['qa:token'];
+  equal(record.level, ATTENTION_MAX, 'Launch sets full interest');
+  equal(record.impulsePostId, 'post:root', 'Launch inherits the source post for deduplication');
+  observeAttention(agent, mk(1069n * T / 10n, 100n * T, 1100), 1100, false, null);
+  equal(record.strikes, 0, '699 bps is not news');
+  observeAttention(agent, mk(107n * T, 100n * T, 1200), 1200, false, null);
+  equal(record.strikes, 1, 'Exactly 700 bps is news');
+  equal(record.level, decayLevel(ATTENTION_MAX, 0), 'News never lowers or re-anchors a higher decayed level');
+  equal(record.at, 1000, 'Level anchor unchanged when news adds nothing');
+  equal(record.ref!.quoteAtoms, 107n * T, 'Reference follows the news');
+  // Old, quiet token: a justified new move re-awakens to the capped level only.
+  const old = blank(ATTENTION_MAX, 0);
+  old.ref = { quoteAtoms: 100n * T, tokenAtoms: 100n * T, at: 0, epoch: 0 };
+  agent.attention!['qa:old'] = old;
+  const oldMove = { ...mk(120n * T, 100n * T, 3_000_000), tokenId: 'qa:old' };
+  observeAttention(agent, oldMove, 3_000_000, false, null);
+  equal(old.level, ATTENTION_FLOW_LEVELS[0], 'News after a long quiet period grants at most half interest');
+  equal(old.strikes, 1, 'First strike');
+  let price = 120n;
+  for (let i = 0; i < 8; i++) {
+    price = price * 11n / 10n;
+    observeAttention(agent, { ...mk(price * T, 100n * T, 3_000_001 + i * 10), tokenId: 'qa:old' }, 3_000_001 + i * 10, false, null);
+    check(old.strikes <= ATTENTION_STRIKES_MAX && old.level <= ATTENTION_FLOW_LEVELS[0], 'Strikes saturate and news never exceed half');
+  }
+  equal(old.strikes, ATTENTION_STRIKES_MAX, 'Strikes saturate at the bound');
+  // Causality: stale or tied snapshots, own fills, epochs.
+  const before = old.ref!.at;
+  observeAttention(agent, { ...mk(1n, 100n * T, before), tokenId: 'qa:old' }, 3_100_000, false, null);
+  observeAttention(agent, { ...mk(1n, 100n * T, before - 5), tokenId: 'qa:old' }, 3_100_000, false, null);
+  equal(old.ref!.at, before, 'Tied or older snapshots are not evaluated');
+  absorbOwnFill(agent, 'qa:old', { quoteAtoms: 500n * T, tokenAtoms: 100n * T }, before + 50, 0);
+  equal(old.ref!.at, before + 50, 'Own fill moves the reference');
+  const strikesBefore = old.strikes;
+  observeAttention(agent, { ...mk(1n, 100n * T, before + 20), tokenId: 'qa:old' }, 3_100_000, false, null);
+  equal(old.ref!.quoteAtoms, 500n * T, 'A delayed pre-fill snapshot cannot overwrite the own-fill reference');
+  equal(old.strikes, strikesBefore, 'Delayed snapshot creates no news');
+  absorbOwnFill(agent, 'qa:old', { quoteAtoms: 1n, tokenAtoms: 1n }, before + 10, 0);
+  equal(old.ref!.quoteAtoms, 500n * T, 'An older own fill never rewinds the reference');
+  const levelBeforeEpoch = old.level;
+  observeAttention(agent, { ...mk(900n * T, 100n * T, before + 100, 1), tokenId: 'qa:old' }, 3_100_000, false, null);
+  equal(old.ref!.epoch, 1, 'Epoch change resets the reference');
+  equal(old.level, levelBeforeEpoch, 'Migration is not an attention impulse');
+  equal(old.strikes, ATTENTION_STRIKES_MAX, 'Migration does not touch strikes');
+  // Post impulses: independence, ordering, deduplication.
+  const post = (id: string, kind: 'ORIGINAL' | 'REPOST' | 'QUOTE', narrativeId: string, parent: string | null, publishedAt: number) =>
+    ({ id, authorId: 'a', narrativeId, kind, parentPostId: null, parentNarrativeId: parent, publishedAt, body: '', simulated: true as const });
+  const social: typeof agent = {};
+  check(postImpulse(social, 'qa:p', post('p1', 'ORIGINAL', 'signal', null, 10), 20), 'Independent post creates interest');
+  equal(social.attention!['qa:p'].ref, null, 'Post-created record waits for its first view');
+  observeAttention(social, mk(5n * T, 5n * T, 30), 30, false, null);
+  equal(social.attention!['qa:p'].strikes, 0, 'First view sets the reference without news');
+  check(!postImpulse(social, 'qa:p', post('p1', 'ORIGINAL', 'signal', null, 10), 40), 'Same post deduplicated');
+  check(!postImpulse(social, 'qa:p', post('p0', 'ORIGINAL', 'signal', null, 9), 40), 'Older post ignored');
+  check(!postImpulse(social, 'qa:p', post('p2', 'REPOST', 'signal', null, 50), 60), 'Repost is not independent');
+  check(!postImpulse(social, 'qa:p', post('p3', 'QUOTE', 'signal', 'signal', 50), 60), 'Same-narrative quote is not independent');
+  check(!postImpulse(social, 'qa:p', post('p4', 'ORIGINAL', 'signal', null, 90), 60), 'Future post ignored');
+  social.attention!['qa:p'].strikes = 3;
+  check(postImpulse(social, 'qa:p', post('p5', 'QUOTE', 'echo', 'signal', 55), 60), 'Cross-narrative quote renews');
+  equal(social.attention!['qa:p'].strikes, 0, 'Independent impulse resets strikes');
+  equal(social.attention!['qa:p'].level, ATTENTION_MAX, 'Independent impulse restores full interest');
+  pruneAttention(social, 'qa:p', 61);
+  check(!!social.attention!['qa:p'], 'Interested record is kept');
+  social.attention!['qa:p'].level = 0;
+  pruneAttention(social, 'qa:p', 61);
+  check(!social.attention!['qa:p'], 'Exhausted record is pruned');
+
+  // decideTrade: SELL and RNG consumption are untouched, equal weights reproduce FALLTHROUGH, BUY differs only in target.
+  class Scripted extends RngStreams {
+    used = 0;
+    constructor(private readonly values: number[]) { super('attention-qa'); }
+    override int(_n: string, _i: string, _v: string, exclusive: number) {
+      // Reduced into range so one script serves branches with different draw widths; both policies see the same values.
+      return (this.values[this.used++] ?? 7) % exclusive;
+    }
+  }
+  const world = fixture({ agents: 1, boundedReactive: true, sellFeeReserve: true, tokenExitOnly: true, exitFallthrough: true,
+    opportunityAttention: true });
+  const actor = world.state.agents['agent:00000'];
+  observe(actor, world.publicMarket(world.state.markets[FIRST]), 'qa:att-first', undefined, true);
+  const entry = buy(world, SOL) as Extract<Command, { kind: 'submit' }>;
+  submit(world, 'att-position', { ...entry, intent: { ...entry.intent, agentId: actor.id } });
+  world.advanceTo(350);
+  observe(actor, world.publicMarket(world.state.markets[SECOND]), 'qa:att-second', undefined, true);
+  const decide = (values: number[], weights?: Record<string, number>) => {
+    const rng = new Scripted(values);
+    const intent = decideTrade(actor, 400, world.ledger, rng, () => undefined, SELL_FEE_RESERVE, false, true, false, true,
+      weights ? id => weights[id] ?? 1 : undefined);
+    return { intent, used: rng.used };
+  };
+  for (const [wf, ws] of [[1, 1], [1, 16], [16, 1], [3, 7]] as const) for (let dF = 0; dF < 60; dF += 3) for (let dS = 0; dS < 60; dS += 3) {
+    for (const sellDraw of [0, 99]) {
+      const script = [99, dF, dS, sellDraw, 2, 11];
+      const reference = decide(script);
+      const treated = decide(script, { [FIRST]: wf, [SECOND]: ws });
+      equal(treated.used, reference.used, 'Attention consumes exactly the FALLTHROUGH draws');
+      equal(!!treated.intent, !!reference.intent, 'Attention never changes WAIT versus TRADE');
+      if (!reference.intent || !treated.intent) continue;
+      equal(treated.intent.side, reference.intent.side, 'Attention never changes the side');
+      if (reference.intent.side === 'SELL') equal(canonical(treated.intent), canonical(reference.intent), 'SELL is identical');
+      else {
+        const strip = (intent: Intent) => { const copy: Record<string, unknown> = { ...intent }; delete copy.tokenId; delete copy.evidence; return copy; };
+        equal(canonical(strip(treated.intent)), canonical(strip(reference.intent)), 'BUY differs only by target');
+        const expected = wf === ws ? reference.intent.tokenId : raceBeats(dS, ws, dF, wf) ? SECOND : FIRST;
+        equal(treated.intent.tokenId, expected, 'BUY target follows the race');
+      }
+    }
+  }
+  equal(decide([99, 10, 50, 99, 3], { [FIRST]: 1, [SECOND]: 1 }).intent?.side, 'BUY', 'Equal-weight sanity');
+
+  // Curve-completing execution is reported as MarketMigrated and must still absorb the agent's own fill.
+  const migration = fixture({ agents: 1, boundedReactive: true, sellFeeReserve: true, tokenExitOnly: true, exitFallthrough: true,
+    opportunityAttention: true });
+  const trader = migration.state.agents['agent:00000'];
+  observe(trader, migration.publicMarket(migration.state.markets[FIRST]), 'qa:mig', undefined, true);
+  observeAttention(trader, migration.publicMarket(migration.state.markets[FIRST]), migration.now, true, null);
+  const delta = 150n * SOL;
+  migration.ledger.commit([posting(USER, 'SOL', -delta), posting(trader.id, 'SOL', delta)]);
+  const referenceAt = trader.attention![FIRST].ref!.at;
+  const finishing = buy(migration, 100n * SOL) as Extract<Command, { kind: 'submit' }>;
+  submit(migration, 'att-complete', { ...finishing, intent: { ...finishing.intent, agentId: trader.id } });
+  migration.advanceTo(350);
+  check(migration.kernel.log.some(fact => fact.kind === 'MarketMigrated'), 'The execution completed the curve');
+  const absorbed = trader.attention![FIRST].ref!;
+  check(absorbed.at > referenceAt, 'Completing execution absorbed the own fill');
+  equal(absorbed.epoch, 0, 'Own completing fill belongs to the pre-migration epoch');
+  equal(absorbed.quoteAtoms, migration.state.markets[FIRST].reference!.quoteAtoms, 'Absorbed reference is the migration spot');
+  equal(trader.attention![FIRST].strikes, 0, 'Own completing fill is not news');
+  observeAttention(trader, { ...migration.publicMarket(migration.state.markets[FIRST]), observedAt: absorbed.at - 1 }, migration.now, false, null);
+  equal(trader.attention![FIRST].ref!.at, absorbed.at, 'A pre-completion snapshot cannot overwrite the reference');
+
+  // Configuration, manifest, state bounds, checkpoint and replay.
+  let rejected = false;
+  try { new World({ ...config, boundedReactive: true, sellFeeReserve: true, tokenExitOnly: true, opportunityAttention: true } as WorldConfig); }
+  catch { rejected = true; }
+  check(rejected, 'Attention without exit fallthrough is rejected');
+  equal(world.kernel.manifest.policyVersions.attention, ATTENTION_VERSION, 'Manifest names the attention policy');
+  const options = { ...DEFAULT_WORLD, agents: 30, boundedReactive: true, sellFeeReserve: true, tokenExitOnly: true,
+    exitFallthrough: true, opportunityAttention: true } as const;
+  const run = new World(options); run.advanceTo(199_999);
+  const copy = World.restore(run.snapshot()); run.advanceTo(400_000); copy.advanceTo(200_000); copy.advanceTo(400_000);
+  same(run, copy, 'Attention checkpoint restore');
+  same(run, World.rerun(options, [], 400_000), 'Attention deterministic rerun');
+  let records = 0;
+  for (const holder of Object.values(run.state.agents)) for (const entry of Object.values(holder.attention ?? {})) {
+    records++;
+    check(entry.strikes >= 0 && entry.strikes <= ATTENTION_STRIKES_MAX && entry.level >= 0 && entry.level <= ATTENTION_MAX, 'State stays within bounds');
+  }
+  check(records > 0, 'The attention state machine was exercised');
+  verifyLedger(run);
+  console.log('PASS opportunity attention: arithmetic, strikes, causality, post dedup, race, SELL/RNG parity, completing fill, replay');
+}
+
 function causalSeparationGate() {
   class Draws extends RngStreams {
     constructor(private readonly values: number[]) { super('causal-qa'); }
@@ -781,6 +977,7 @@ boundedReactiveGate();
 tokenInterestGate();
 causalSeparationGate();
 exitFallthroughGate();
+opportunityAttentionGate();
 orderAndMigrationGate();
 priceCrossingGate();
 expiryAndFaultGate();
